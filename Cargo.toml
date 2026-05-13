@@ -1,0 +1,18 @@
+[package]
+name = "agent-core"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.102"
+async-trait = "0.1.89"
+eventsource-stream = "0.2.3"
+futures-core = "0.3.32"
+futures-util = "0.3.32"
+reqwest = { version = "0.13.3", features = ["json", "stream"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tokio = { version = "=1.52.2", features = ["full"] }
+
+[dev-dependencies]
+dotenvy = "0.15.7"
