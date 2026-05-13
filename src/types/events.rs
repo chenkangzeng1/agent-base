@@ -9,6 +9,10 @@ pub enum AgentEvent {
         session_id: SessionId,
         text: String,
     },
+    ThoughtDelta {
+        session_id: SessionId,
+        text: String,
+    },
     ToolCallStarted {
         session_id: SessionId,
         tool_name: String,

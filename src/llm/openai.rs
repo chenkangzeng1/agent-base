@@ -30,13 +30,24 @@ impl OpenAiClient {
 
 #[async_trait]
 impl LlmClient for OpenAiClient {
-    async fn chat(&self, messages: &[Value], tools: &[Value]) -> AgentResult<Value> {
+    async fn chat(
+        &self,
+        messages: &[Value],
+        tools: &[Value],
+        enable_thinking: Option<bool>,
+    ) -> AgentResult<Value> {
         let url = format!("{}/chat/completions", self.base_url);
-        let request_body = json!({
+        let mut request_body = json!({
             "model": self.model,
             "messages": messages,
             "tools": tools,
         });
+        
+        if let Some(thinking) = enable_thinking {
+            if let Some(obj) = request_body.as_object_mut() {
+                obj.insert("enable_thinking".to_string(), json!(thinking));
+            }
+        }
 
         let response = self
             .client
@@ -60,14 +71,21 @@ impl LlmClient for OpenAiClient {
         &self,
         messages: &[Value],
         tools: &[Value],
+        enable_thinking: Option<bool>,
     ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
         let url = format!("{}/chat/completions", self.base_url);
-        let request_body = json!({
+        let mut request_body = json!({
             "model": self.model,
             "messages": messages,
             "tools": tools,
             "stream": true,
         });
+        
+        if let Some(thinking) = enable_thinking {
+            if let Some(obj) = request_body.as_object_mut() {
+                obj.insert("enable_thinking".to_string(), json!(thinking));
+            }
+        }
 
         let response = self
             .client
@@ -98,6 +116,12 @@ impl LlmClient for OpenAiClient {
 
                 if finish_reason == "tool_calls" || delta.get("tool_calls").is_some() {
                     return Ok(StreamChunk::ToolCall(choice.clone()));
+                }
+
+                if let Some(reasoning) = delta.get("reasoning_content") {
+                    if let Some(text) = reasoning.as_str() {
+                        return Ok(StreamChunk::Thought(text.to_string()));
+                    }
                 }
 
                 if let Some(content) = delta.get("content") {

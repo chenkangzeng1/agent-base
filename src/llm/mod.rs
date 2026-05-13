@@ -12,17 +12,24 @@ pub use openai::OpenAiClient;
 #[derive(Clone, Debug)]
 pub enum StreamChunk {
     Text(String),
+    Thought(String),
     ToolCall(Value),
     Stop,
 }
 
 #[async_trait]
 pub trait LlmClient: Send + Sync {
-    async fn chat(&self, messages: &[Value], tools: &[Value]) -> AgentResult<Value>;
+    async fn chat(
+        &self,
+        messages: &[Value],
+        tools: &[Value],
+        enable_thinking: Option<bool>,
+    ) -> AgentResult<Value>;
 
     async fn chat_stream(
         &self,
         messages: &[Value],
         tools: &[Value],
+        enable_thinking: Option<bool>,
     ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>>;
 }

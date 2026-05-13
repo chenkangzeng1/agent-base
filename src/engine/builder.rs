@@ -35,6 +35,16 @@ impl AgentBuilder {
         self
     }
 
+    pub fn enable_thought(mut self, enable: bool) -> Self {
+        self.config.enable_thought = enable;
+        self
+    }
+
+    pub fn enable_thinking(mut self, enable: bool) -> Self {
+        self.config.enable_thinking = Some(enable);
+        self
+    }
+
     pub fn register_tool(mut self, tool: impl Tool + 'static) -> Self {
         self.tools.register(tool);
         self

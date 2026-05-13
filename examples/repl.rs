@@ -218,6 +218,11 @@ impl EventPrinter {
                 print!("{}", text);
                 io::stdout().flush().unwrap();
             }
+            AgentEvent::ThoughtDelta { text, .. } => {
+                print!("[正在思考]：\x1b[90m{} [0m", text);
+                println!();
+                io::stdout().flush().unwrap();
+            }
             AgentEvent::ToolCallStarted { tool_name, args_json, .. } => {
                 println!();
                 println!("[工具调用] {} (参数: {})", tool_name, args_json);
@@ -311,6 +316,8 @@ async fn main() -> Result<()> {
 
     let mut runtime = AgentBuilder::new(llm_client)
         .system_prompt(SYSTEM_PROMPT)
+        .enable_thought(false)
+        .enable_thinking(false)
         .register_tool(AddTool)
         .register_tool(SubtractTool)
         .register_tool(MultiplyTool)

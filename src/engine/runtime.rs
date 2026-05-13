@@ -134,7 +134,7 @@ impl AgentRuntime {
                 .ok_or_else(|| anyhow::anyhow!("session {} not found", session_id.0))?;
             let mut stream = self
                 .client
-                .chat_stream(&raw_messages, &tool_definitions)
+                .chat_stream(&raw_messages, &tool_definitions, self.config.enable_thinking)
                 .await?;
 
             let mut full_text_reply = String::new();
@@ -165,6 +165,17 @@ impl AgentRuntime {
                                         text,
                                     });
                                     Self::drain_async_events(&mut event_rx, &mut on_event)?;
+                                }
+                            }
+                            crate::llm::StreamChunk::Thought(text) => {
+                                if !text.is_empty() && !is_tool_call {
+                                    if self.config.enable_thought {
+                                        self.emit_event(AgentEvent::ThoughtDelta {
+                                            session_id,
+                                            text,
+                                        });
+                                        Self::drain_async_events(&mut event_rx, &mut on_event)?;
+                                    }
                                 }
                             }
                             crate::llm::StreamChunk::ToolCall(choice) => {
