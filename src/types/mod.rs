@@ -7,7 +7,7 @@ mod session;
 
 pub use approval::{ApprovalDecision, ApprovalRequest, RiskLevel};
 pub use config::AgentConfig;
-pub use error::AgentResult;
+pub use error::{AgentError, AgentResult};
 pub use events::AgentEvent;
-pub use message::{Message, MessageRole};
+pub use message::{ChatMessage, Message, MessageRole, ToolCallMessage};
 pub use session::SessionId;

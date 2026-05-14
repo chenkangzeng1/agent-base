@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 
-use crate::types::{Message, MessageRole};
-use serde_json::{Value, json};
+use crate::types::{ChatMessage, Message, MessageRole};
 
 use crate::types::SessionId;
 
@@ -9,7 +8,7 @@ use crate::types::SessionId;
 pub struct AgentSession {
     id: Option<SessionId>,
     messages: Vec<Message>,
-    raw_messages: Vec<Value>,
+    chat_messages: Vec<ChatMessage>,
     always_allowed_actions: HashSet<String>,
 }
 
@@ -18,7 +17,7 @@ impl AgentSession {
         Self {
             id: Some(id),
             messages: Vec::new(),
-            raw_messages: Vec::new(),
+            chat_messages: Vec::new(),
             always_allowed_actions: HashSet::new(),
         }
     }
@@ -31,8 +30,8 @@ impl AgentSession {
         &self.messages
     }
 
-    pub fn raw_messages(&self) -> &[Value] {
-        &self.raw_messages
+    pub fn chat_messages(&self) -> &[ChatMessage] {
+        &self.chat_messages
     }
 
     pub fn is_action_allowed(&self, action_key: &str) -> bool {
@@ -49,10 +48,13 @@ impl AgentSession {
             role: role.clone(),
             content: content.clone(),
         });
-        self.raw_messages.push(json!({
-            "role": role.as_api_role(),
-            "content": content
-        }));
+        let chat_msg = match role {
+            MessageRole::System => ChatMessage::system(content),
+            MessageRole::User => ChatMessage::user(content),
+            MessageRole::Assistant => ChatMessage::assistant(content),
+            MessageRole::Tool => ChatMessage::tool(String::new(), content),
+        };
+        self.chat_messages.push(chat_msg);
     }
 
     pub fn push_assistant_tool_call(
@@ -61,18 +63,11 @@ impl AgentSession {
         tool_name: &str,
         arguments_json: &str,
     ) {
-        self.raw_messages.push(json!({
-            "role": "assistant",
-            "content": null,
-            "tool_calls": [{
-                "id": tool_call_id,
-                "type": "function",
-                "function": {
-                    "name": tool_name,
-                    "arguments": arguments_json
-                }
-            }]
-        }));
+        self.chat_messages.push(ChatMessage::assistant_tool_call(
+            tool_call_id,
+            tool_name,
+            arguments_json,
+        ));
     }
 
     pub fn push_tool_result(&mut self, tool_call_id: &str, content: impl Into<String>) {
@@ -81,10 +76,9 @@ impl AgentSession {
             role: MessageRole::Tool,
             content: content.clone(),
         });
-        self.raw_messages.push(json!({
-            "role": "tool",
-            "tool_call_id": tool_call_id,
-            "content": content
-        }));
+        self.chat_messages.push(ChatMessage::tool(
+            tool_call_id,
+            content,
+        ));
     }
 }

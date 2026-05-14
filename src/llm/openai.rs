@@ -6,8 +6,8 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use std::pin::Pin;
 
-use crate::types::AgentResult;
-use super::{LlmClient, StreamChunk};
+use crate::types::{AgentResult, AgentError, ChatMessage, ToolCallMessage};
+use super::{LlmCapabilities, LlmClient, StreamChunk};
 
 pub struct OpenAiClient {
     api_key: String,
@@ -26,23 +26,70 @@ impl OpenAiClient {
             client: Client::new(),
         }
     }
+
+    fn chat_message_to_json(msg: &ChatMessage) -> Value {
+        match msg {
+            ChatMessage::System { content } => json!({
+                "role": "system",
+                "content": content,
+            }),
+            ChatMessage::User { content } => json!({
+                "role": "user",
+                "content": content,
+            }),
+            ChatMessage::Assistant { content, tool_calls } => {
+                let mut obj = serde_json::Map::new();
+                obj.insert("role".to_string(), json!("assistant"));
+                obj.insert("content".to_string(), json!(content));
+                if let Some(tc) = tool_calls {
+                    let tool_calls_json: Vec<Value> = tc
+                        .iter()
+                        .map(|t| Self::tool_call_to_json(t))
+                        .collect();
+                    obj.insert("tool_calls".to_string(), json!(tool_calls_json));
+                }
+                Value::Object(obj)
+            }
+            ChatMessage::Tool { tool_call_id, content } => json!({
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "content": content,
+            }),
+        }
+    }
+
+    fn tool_call_to_json(tc: &ToolCallMessage) -> Value {
+        json!({
+            "id": tc.id,
+            "type": "function",
+            "function": {
+                "name": tc.name,
+                "arguments": tc.arguments,
+            }
+        })
+    }
+
+    fn messages_to_json(messages: &[ChatMessage]) -> Vec<Value> {
+        messages.iter().map(Self::chat_message_to_json).collect()
+    }
 }
 
 #[async_trait]
 impl LlmClient for OpenAiClient {
     async fn chat(
         &self,
-        messages: &[Value],
+        messages: &[ChatMessage],
         tools: &[Value],
         enable_thinking: Option<bool>,
     ) -> AgentResult<Value> {
         let url = format!("{}/chat/completions", self.base_url);
+        let raw_messages = Self::messages_to_json(messages);
         let mut request_body = json!({
             "model": self.model,
-            "messages": messages,
+            "messages": raw_messages,
             "tools": tools,
         });
-        
+
         if let Some(thinking) = enable_thinking {
             if let Some(obj) = request_body.as_object_mut() {
                 obj.insert("enable_thinking".to_string(), json!(thinking));
@@ -56,12 +103,16 @@ impl LlmClient for OpenAiClient {
             .header("Content-Type", "application/json")
             .json(&request_body)
             .send()
-            .await?;
+            .await
+            .map_err(|e| AgentError::llm(format!("HTTP 请求失败: {e}")))?;
 
-        let res_json: Value = response.json().await?;
+        let res_json: Value = response.json().await
+            .map_err(|e| AgentError::json(format!("响应 JSON 解析失败: {e}")))?;
 
         if let Some(error) = res_json.get("error") {
-            anyhow::bail!("API Error: {:#?}", error);
+            return Err(AgentError::LlmApi {
+                message: format!("{error:#?}"),
+            });
         }
 
         Ok(res_json)
@@ -69,18 +120,19 @@ impl LlmClient for OpenAiClient {
 
     async fn chat_stream(
         &self,
-        messages: &[Value],
+        messages: &[ChatMessage],
         tools: &[Value],
         enable_thinking: Option<bool>,
     ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
         let url = format!("{}/chat/completions", self.base_url);
+        let raw_messages = Self::messages_to_json(messages);
         let mut request_body = json!({
             "model": self.model,
-            "messages": messages,
+            "messages": raw_messages,
             "tools": tools,
             "stream": true,
         });
-        
+
         if let Some(thinking) = enable_thinking {
             if let Some(obj) = request_body.as_object_mut() {
                 obj.insert("enable_thinking".to_string(), json!(thinking));
@@ -94,11 +146,13 @@ impl LlmClient for OpenAiClient {
             .header("Content-Type", "application/json")
             .json(&request_body)
             .send()
-            .await?;
+            .await
+            .map_err(|e| AgentError::llm(format!("HTTP 请求失败: {e}")))?;
 
         if !response.status().is_success() {
-            let err_text = response.text().await?;
-            anyhow::bail!("API Request Failed: {}", err_text);
+            let err_text = response.text().await
+                .map_err(|e| AgentError::llm(format!("读取错误响应失败: {e}")))?;
+            return Err(AgentError::LlmApi { message: err_text });
         }
 
         let stream = response.bytes_stream().eventsource().map(|event| match event {
@@ -108,7 +162,7 @@ impl LlmClient for OpenAiClient {
                 }
 
                 let data: Value = serde_json::from_str(&event.data)
-                    .map_err(|e| anyhow::anyhow!("JSON Parse error: {}", e))?;
+                    .map_err(|e| AgentError::json(format!("JSON Parse error: {e}")))?;
 
                 let choice = &data["choices"][0];
                 let delta = &choice["delta"];
@@ -134,11 +188,22 @@ impl LlmClient for OpenAiClient {
                     return Ok(StreamChunk::Stop);
                 }
 
-                Ok(StreamChunk::Text("".to_string()))
+                Ok(StreamChunk::Text(String::new()))
             }
-            Err(e) => Err(anyhow::anyhow!("SSE Stream error: {}", e)),
+            Err(e) => Err(AgentError::LlmStream(format!("SSE Stream error: {e}"))),
         });
 
         Ok(Box::pin(stream))
+    }
+
+    fn capabilities(&self) -> LlmCapabilities {
+        LlmCapabilities {
+            supports_streaming: true,
+            supports_tools: true,
+            supports_vision: true,
+            supports_thinking: false,
+            max_context_tokens: Some(128_000),
+            max_output_tokens: Some(16_384),
+        }
     }
 }

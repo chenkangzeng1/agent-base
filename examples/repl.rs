@@ -2,10 +2,10 @@ use std::io::{self, Write};
 use std::sync::Arc;
 
 use agent_core::{
-    AgentBuilder, AgentEvent, ApprovalDecision, ApprovalHandler, ApprovalRequest, OpenAiClient,
-    RiskLevel, Tool, ToolContext, ToolControlFlow, ToolOutput, ToolPolicy,
+    AgentBuilder, AgentError, AgentEvent, AgentResult, ApprovalDecision, ApprovalHandler,
+    ApprovalRequest, OpenAiClient, RiskLevel, Tool, ToolContext, ToolControlFlow, ToolOutput,
+    ToolPolicy,
 };
-use anyhow::Result;
 use async_trait::async_trait;
 use dotenvy::dotenv;
 use serde_json::{json, Value};
@@ -40,7 +40,7 @@ impl Tool for AddTool {
         })
     }
 
-    async fn call(&self, args: &Value, _ctx: &ToolContext) -> Result<ToolOutput> {
+    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
         let a = args["a"].as_i64().unwrap_or(0);
         let b = args["b"].as_i64().unwrap_or(0);
         let result = a + b;
@@ -78,7 +78,7 @@ impl Tool for SubtractTool {
         })
     }
 
-    async fn call(&self, args: &Value, _ctx: &ToolContext) -> Result<ToolOutput> {
+    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
         let a = args["a"].as_i64().unwrap_or(0);
         let b = args["b"].as_i64().unwrap_or(0);
         let result = a - b;
@@ -116,7 +116,7 @@ impl Tool for MultiplyTool {
         })
     }
 
-    async fn call(&self, args: &Value, _ctx: &ToolContext) -> Result<ToolOutput> {
+    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
         let a = args["a"].as_i64().unwrap_or(0);
         let b = args["b"].as_i64().unwrap_or(0);
         let result = a * b;
@@ -154,7 +154,7 @@ impl Tool for DivideTool {
         })
     }
 
-    async fn call(&self, args: &Value, _ctx: &ToolContext) -> Result<ToolOutput> {
+    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
         let a = args["a"].as_i64().unwrap_or(0);
         let b = args["b"].as_i64().unwrap_or(0);
         if b == 0 {
@@ -183,7 +183,7 @@ struct CliApprovalHandler;
 
 #[async_trait]
 impl ApprovalHandler for CliApprovalHandler {
-    async fn approve(&self, request: ApprovalRequest) -> Result<ApprovalDecision> {
+    async fn approve(&self, request: ApprovalRequest) -> AgentResult<ApprovalDecision> {
         println!();
         println!("[审批请求] {}", request.title);
         println!("  风险等级: {:?}", request.risk_level);
@@ -191,10 +191,12 @@ impl ApprovalHandler for CliApprovalHandler {
 
         loop {
             print!("  选择 [y=允许 / a=总是允许 / n=拒绝]: ");
-            io::stdout().flush()?;
+            io::stdout().flush().unwrap();
 
             let mut input = String::new();
-            io::stdin().read_line(&mut input)?;
+            io::stdin()
+                .read_line(&mut input)
+                .map_err(|e| AgentError::internal(format!("读取输入失败: {e}")))?;
             match input.trim().to_ascii_lowercase().as_str() {
                 "y" | "yes" => return Ok(ApprovalDecision::AllowOnce),
                 "a" | "always" => return Ok(ApprovalDecision::AllowAlways),
@@ -212,22 +214,26 @@ impl ApprovalHandler for CliApprovalHandler {
 struct EventPrinter;
 
 impl EventPrinter {
-    fn handle(event: AgentEvent) {
+    fn handle(event: AgentEvent) -> AgentResult<()> {
         match event {
             AgentEvent::TextDelta { text, .. } => {
                 print!("{}", text);
                 io::stdout().flush().unwrap();
             }
             AgentEvent::ThoughtDelta { text, .. } => {
-                print!("[正在思考]：\x1b[90m{} [0m", text);
+                print!("[正在思考]：\x1b[90m{} \x1b[0m", text);
                 println!();
                 io::stdout().flush().unwrap();
             }
-            AgentEvent::ToolCallStarted { tool_name, args_json, .. } => {
+            AgentEvent::ToolCallStarted {
+                tool_name, args_json, ..
+            } => {
                 println!();
                 println!("[工具调用] {} (参数: {})", tool_name, args_json);
             }
-            AgentEvent::ToolCallFinished { tool_name, summary, .. } => {
+            AgentEvent::ToolCallFinished {
+                tool_name, summary, ..
+            } => {
                 println!("[工具完成] {} -> {}", tool_name, summary);
             }
             AgentEvent::AwaitingApproval { request, .. } => {
@@ -248,6 +254,7 @@ impl EventPrinter {
                 println!("[自定义事件] {}", payload);
             }
         }
+        Ok(())
     }
 }
 
@@ -278,7 +285,14 @@ impl ToolPolicy for ArithmeticToolPolicy {
 
     fn on_pre_call(&self, _tool_name: &str, _args: &Value, _ctx: &ToolContext) {}
 
-    fn on_post_call(&self, _tool_name: &str, _args: &Value, _result: &ToolOutput, _ctx: &ToolContext) {}
+    fn on_post_call(
+        &self,
+        _tool_name: &str,
+        _args: &Value,
+        _result: &ToolOutput,
+        _ctx: &ToolContext,
+    ) {
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -297,12 +311,12 @@ const SYSTEM_PROMPT: &str = r#"你是一个算术助手，可以帮助用户完�
 可以分步调用工具。每次完成一个计算后，向用户说明计算结果。"#;
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> AgentResult<()> {
     dotenv().ok();
 
     let api_key = std::env::var("OPENAI_API_KEY")
         .or_else(|_| std::env::var("DASHSCOPE_API_KEY"))
-        .expect("请设置 OPENAI_API_KEY 或 DASHSCOPE_API_KEY 环境变量");
+        .map_err(|_| AgentError::internal("请设置 OPENAI_API_KEY 或 DASHSCOPE_API_KEY 环境变量"))?;
 
     let model = std::env::var("OPENAI_MODEL")
         .or_else(|_| std::env::var("DASHSCOPE_MODEL"))
@@ -335,10 +349,12 @@ async fn main() -> Result<()> {
 
     loop {
         print!("> ");
-        io::stdout().flush()?;
+        io::stdout().flush().unwrap();
 
         let mut input = String::new();
-        io::stdin().read_line(&mut input)?;
+        io::stdin()
+            .read_line(&mut input)
+            .map_err(|e| AgentError::internal(format!("读取输入失败: {e}")))?;
         let input = input.trim().to_string();
 
         if input.is_empty() {
@@ -354,14 +370,17 @@ async fn main() -> Result<()> {
         }
 
         match runtime
-            .run_turn_with_handler(session_id, &input, |event| {
-                EventPrinter::handle(event);
-                Ok(())
-            })
+            .run_turn_with_handler(session_id, &input, |event| EventPrinter::handle(event))
             .await
         {
             Ok(()) => {}
-            Err(e) => println!("错误: {}", e),
+            Err(e) => {
+                if e.is_cancelled() {
+                    println!("已取消");
+                } else {
+                    println!("错误: {}", e);
+                }
+            }
         }
     }
 
