@@ -10,17 +10,23 @@ pub use engine::{
     AgentBuilder,
     AgentRuntime,
     AgentSession,
+    InMemorySessionStore,
     SessionId,
+    SessionStore,
 };
 
 // ---------------------------------------------------------------------------
 // LLM 大模型接入
 // ---------------------------------------------------------------------------
 pub use llm::{
+    AnthropicClient,
     LlmCapabilities,
     LlmClient,
+    LlmClientBuilder,
+    LlmProvider,
     OpenAiClient,
     StreamChunk,
+    UsageInfo,
 };
 
 // ---------------------------------------------------------------------------
@@ -32,6 +38,11 @@ pub use engine::{
     ApprovalHandler,
     ApprovalRequest,
     DenyAllApprovalHandler,
+    Middleware,
+    PostLlmCtx,
+    PreLlmCtx,
+    UserMessageCtx,
+    ContextWindowManager,
     RiskLevel,
 };
 
@@ -66,5 +77,7 @@ pub use types::{
     ChatMessage,
     Message,
     MessageRole,
+    ResponseFormat,
+    RetryConfig,
     ToolCallMessage,
 };

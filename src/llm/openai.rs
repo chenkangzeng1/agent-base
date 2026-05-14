@@ -6,8 +6,8 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use std::pin::Pin;
 
-use crate::types::{AgentResult, AgentError, ChatMessage, ToolCallMessage};
-use super::{LlmCapabilities, LlmClient, StreamChunk};
+use crate::types::{AgentResult, AgentError, ChatMessage, ResponseFormat, ToolCallMessage};
+use super::{LlmCapabilities, LlmClient, StreamChunk, UsageInfo};
 
 pub struct OpenAiClient {
     api_key: String,
@@ -37,10 +37,13 @@ impl OpenAiClient {
                 "role": "user",
                 "content": content,
             }),
-            ChatMessage::Assistant { content, tool_calls } => {
+            ChatMessage::Assistant { content, reasoning_content, tool_calls } => {
                 let mut obj = serde_json::Map::new();
                 obj.insert("role".to_string(), json!("assistant"));
                 obj.insert("content".to_string(), json!(content));
+                if let Some(reasoning) = reasoning_content {
+                    obj.insert("reasoning_content".to_string(), json!(reasoning));
+                }
                 if let Some(tc) = tool_calls {
                     let tool_calls_json: Vec<Value> = tc
                         .iter()
@@ -81,6 +84,7 @@ impl LlmClient for OpenAiClient {
         messages: &[ChatMessage],
         tools: &[Value],
         enable_thinking: Option<bool>,
+        response_format: Option<&ResponseFormat>,
     ) -> AgentResult<Value> {
         let url = format!("{}/chat/completions", self.base_url);
         let raw_messages = Self::messages_to_json(messages);
@@ -93,6 +97,12 @@ impl LlmClient for OpenAiClient {
         if let Some(thinking) = enable_thinking {
             if let Some(obj) = request_body.as_object_mut() {
                 obj.insert("enable_thinking".to_string(), json!(thinking));
+            }
+        }
+
+        if let Some(rf) = response_format {
+            if let Some(obj) = request_body.as_object_mut() {
+                obj.insert("response_format".to_string(), rf.to_api_value());
             }
         }
 
@@ -123,6 +133,7 @@ impl LlmClient for OpenAiClient {
         messages: &[ChatMessage],
         tools: &[Value],
         enable_thinking: Option<bool>,
+        response_format: Option<&ResponseFormat>,
     ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
         let url = format!("{}/chat/completions", self.base_url);
         let raw_messages = Self::messages_to_json(messages);
@@ -131,11 +142,18 @@ impl LlmClient for OpenAiClient {
             "messages": raw_messages,
             "tools": tools,
             "stream": true,
+            "stream_options": { "include_usage": true },
         });
 
         if let Some(thinking) = enable_thinking {
             if let Some(obj) = request_body.as_object_mut() {
                 obj.insert("enable_thinking".to_string(), json!(thinking));
+            }
+        }
+
+        if let Some(rf) = response_format {
+            if let Some(obj) = request_body.as_object_mut() {
+                obj.insert("response_format".to_string(), rf.to_api_value());
             }
         }
 
@@ -164,7 +182,20 @@ impl LlmClient for OpenAiClient {
                 let data: Value = serde_json::from_str(&event.data)
                     .map_err(|e| AgentError::json(format!("JSON Parse error: {e}")))?;
 
-                let choice = &data["choices"][0];
+                let choices = data.get("choices").and_then(Value::as_array);
+
+                if choices.is_none() || choices.map_or(true, |c| c.is_empty()) {
+                    if let Some(usage) = data.get("usage") {
+                        return Ok(StreamChunk::Usage(UsageInfo {
+                            prompt_tokens: usage.get("prompt_tokens").and_then(Value::as_u64).map(|v| v as u32),
+                            completion_tokens: usage.get("completion_tokens").and_then(Value::as_u64).map(|v| v as u32),
+                            total_tokens: usage.get("total_tokens").and_then(Value::as_u64).map(|v| v as u32),
+                        }));
+                    }
+                    return Ok(StreamChunk::Text(String::new()));
+                }
+
+                let choice = &choices.unwrap()[0];
                 let delta = &choice["delta"];
                 let finish_reason = choice["finish_reason"].as_str().unwrap_or("");
 
