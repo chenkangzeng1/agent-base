@@ -29,7 +29,7 @@ pub struct Message {
     pub content: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum ChatMessage {
     System {
         content: String,
@@ -39,6 +39,7 @@ pub enum ChatMessage {
     },
     Assistant {
         content: Option<String>,
+        reasoning_content: Option<String>,
         tool_calls: Option<Vec<ToolCallMessage>>,
     },
     Tool {
@@ -47,7 +48,7 @@ pub enum ChatMessage {
     },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ToolCallMessage {
     pub id: String,
     pub name: String,
@@ -70,6 +71,18 @@ impl ChatMessage {
     pub fn assistant(content: impl Into<String>) -> Self {
         Self::Assistant {
             content: Some(content.into()),
+            reasoning_content: None,
+            tool_calls: None,
+        }
+    }
+
+    pub fn assistant_with_reasoning(
+        content: impl Into<String>,
+        reasoning: impl Into<String>,
+    ) -> Self {
+        Self::Assistant {
+            content: Some(content.into()),
+            reasoning_content: Some(reasoning.into()),
             tool_calls: None,
         }
     }
@@ -77,6 +90,7 @@ impl ChatMessage {
     pub fn assistant_tool_call(tool_call_id: impl Into<String>, tool_name: impl Into<String>, arguments: impl Into<String>) -> Self {
         Self::Assistant {
             content: None,
+            reasoning_content: None,
             tool_calls: Some(vec![ToolCallMessage {
                 id: tool_call_id.into(),
                 name: tool_name.into(),
