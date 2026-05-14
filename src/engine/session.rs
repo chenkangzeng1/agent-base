@@ -1,10 +1,12 @@
 use std::collections::HashSet;
 
-use crate::types::{ChatMessage, Message, MessageRole};
+use serde::{Deserialize, Serialize};
+
+use crate::types::{ChatMessage, Message, MessageRole, ToolCallMessage};
 
 use crate::types::SessionId;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct AgentSession {
     id: Option<SessionId>,
     messages: Vec<Message>,
@@ -23,7 +25,7 @@ impl AgentSession {
     }
 
     pub fn id(&self) -> Option<SessionId> {
-        self.id
+        self.id.clone()
     }
 
     pub fn messages(&self) -> &[Message] {
@@ -68,6 +70,22 @@ impl AgentSession {
             tool_name,
             arguments_json,
         ));
+    }
+
+    pub fn push_assistant_tool_calls(&mut self, tool_calls: &[(String, String, String)]) {
+        let calls: Vec<ToolCallMessage> = tool_calls
+            .iter()
+            .map(|(id, name, args)| ToolCallMessage {
+                id: id.clone(),
+                name: name.clone(),
+                arguments: args.clone(),
+            })
+            .collect();
+        self.chat_messages.push(ChatMessage::Assistant {
+            content: None,
+            reasoning_content: None,
+            tool_calls: Some(calls),
+        });
     }
 
     pub fn push_tool_result(&mut self, tool_call_id: &str, content: impl Into<String>) {

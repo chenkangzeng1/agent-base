@@ -48,6 +48,7 @@ impl Tool for AddTool {
             summary: format!("{} + {} = {}", a, b, result),
             raw: Some(json!({ "result": result })),
             control_flow: ToolControlFlow::Break,
+            truncated: false,
         })
     }
 }
@@ -86,6 +87,7 @@ impl Tool for SubtractTool {
             summary: format!("{} - {} = {}", a, b, result),
             raw: Some(json!({ "result": result })),
             control_flow: ToolControlFlow::Break,
+            truncated: false,
         })
     }
 }
@@ -124,6 +126,7 @@ impl Tool for MultiplyTool {
             summary: format!("{} × {} = {}", a, b, result),
             raw: Some(json!({ "result": result })),
             control_flow: ToolControlFlow::Break,
+            truncated: false,
         })
     }
 }
@@ -162,6 +165,7 @@ impl Tool for DivideTool {
                 summary: "错误：除数不能为 0".to_string(),
                 raw: Some(json!({ "error": "division by zero" })),
                 control_flow: ToolControlFlow::Break,
+                truncated: false,
             });
         }
         let quotient = a / b;
@@ -170,6 +174,7 @@ impl Tool for DivideTool {
             summary: format!("{} ÷ {} = {}（余 {}）", a, b, quotient, remainder),
             raw: Some(json!({ "quotient": quotient, "remainder": remainder })),
             control_flow: ToolControlFlow::Break,
+            truncated: false,
         })
     }
 }
@@ -370,7 +375,7 @@ async fn main() -> AgentResult<()> {
         }
 
         match runtime
-            .run_turn_with_handler(session_id, &input, |event| EventPrinter::handle(event))
+            .run_turn_with_handler(session_id.clone(), &input, |event| EventPrinter::handle(event))
             .await
         {
             Ok(()) => {}

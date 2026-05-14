@@ -4,7 +4,7 @@ use std::sync::Mutex;
 
 use agent_core::{
     AgentBuilder, AgentEvent, AgentResult, ApprovalDecision, ApprovalHandler,
-    ApprovalRequest, ChatMessage, LlmCapabilities, LlmClient, RiskLevel, StreamChunk, Tool,
+    ApprovalRequest, ChatMessage, LlmCapabilities, LlmClient, ResponseFormat, RiskLevel, StreamChunk, Tool,
     ToolContext, ToolControlFlow, ToolOutput, ToolPolicy,
 };
 use async_trait::async_trait;
@@ -38,6 +38,7 @@ impl LlmClient for MockLlmClient {
         _messages: &[ChatMessage],
         _tools: &[Value],
         _enable_thinking: Option<bool>,
+        _response_format: Option<&ResponseFormat>,
     ) -> AgentResult<Value> {
         unimplemented!()
     }
@@ -47,6 +48,7 @@ impl LlmClient for MockLlmClient {
         _messages: &[ChatMessage],
         _tools: &[Value],
         _enable_thinking: Option<bool>,
+        _response_format: Option<&ResponseFormat>,
     ) -> AgentResult<ChunkStream> {
         *self.call_count.lock().unwrap() += 1;
 
@@ -107,6 +109,7 @@ impl Tool for EchoTool {
             summary: format!("echo: {msg}"),
             raw: Some(json!({ "echo": msg })),
             control_flow: ToolControlFlow::Continue,
+            truncated: false,
         })
     }
 }
@@ -128,10 +131,10 @@ async fn test_simple_text_reply() {
         .build();
 
     let session_id = runtime.create_session();
-    let result = runtime.run_turn_stream(session_id, "Hi").await;
+    let result = runtime.run_turn_stream(session_id.clone(), "Hi").await;
     assert!(result.is_ok(), "Expected ok, got: {result:?}");
 
-    let session = runtime.session(session_id).unwrap();
+    let session = runtime.session(&session_id).unwrap();
     let messages = session.chat_messages();
     assert_eq!(messages.len(), 3);
     assert!(matches!(messages[0], ChatMessage::System { .. }));

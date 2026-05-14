@@ -15,10 +15,14 @@ serde_json = "1.0.149"
 schemars = { version = "1.0.0", optional = true, features = ["preserve_order"] }
 thiserror = "2.0.17"
 tokio = { version = "=1.52.2", features = ["full"] }
+tracing = "0.1"
+opentelemetry = { version = "0.30", optional = true }
+tracing-opentelemetry = { version = "0.30", optional = true }
 
 [features]
 default = []
 typed-tools = ["schemars"]
+telemetry = ["opentelemetry", "tracing-opentelemetry"]
 
 [dev-dependencies]
 dotenvy = "0.15.7"

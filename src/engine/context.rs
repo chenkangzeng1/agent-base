@@ -1,0 +1,180 @@
+use crate::types::ChatMessage;
+
+#[derive(Clone, Debug)]
+pub struct ContextWindowManager {
+    pub max_tokens: usize,
+    /// 始终保留消息历史开头 N 条（通常用于 system prompt）
+    pub keep_first_n: usize,
+    /// 始终保留消息历史末尾 N 条
+    pub keep_last_n: usize,
+}
+
+impl Default for ContextWindowManager {
+    fn default() -> Self {
+        Self {
+            max_tokens: 128_000,
+            keep_first_n: 1,
+            keep_last_n: 20,
+        }
+    }
+}
+
+impl ContextWindowManager {
+    pub fn new(max_tokens: usize) -> Self {
+        Self {
+            max_tokens,
+            ..Default::default()
+        }
+    }
+
+    pub fn with_keep_first_n(mut self, n: usize) -> Self {
+        self.keep_first_n = n;
+        self
+    }
+
+    pub fn with_keep_last_n(mut self, n: usize) -> Self {
+        self.keep_last_n = n;
+        self
+    }
+
+    /// 简单 token 估算：英文约 4 字符/token，CJK 约 1.5 字符/token。
+    /// 混合文本取折中值 3 字符/token。
+    pub fn estimate_tokens(text: &str) -> usize {
+        if text.is_empty() {
+            return 0;
+        }
+        let chars = text.chars().count();
+        let cjk_count = text.chars().filter(|c| is_cjk(*c)).count();
+        let latin_count = chars - cjk_count;
+        // CJK: ~1.5 chars/token, Latin: ~4 chars/token
+        (cjk_count as f64 / 1.5 + latin_count as f64 / 4.0).ceil() as usize
+    }
+
+    fn message_tokens(msg: &ChatMessage) -> usize {
+        match msg {
+            ChatMessage::System { content } => Self::estimate_tokens(content),
+            ChatMessage::User { content } => Self::estimate_tokens(content),
+            ChatMessage::Assistant { content, reasoning_content: _, tool_calls } => {
+                let mut tokens = content
+                    .as_deref()
+                    .map(|c| Self::estimate_tokens(c))
+                    .unwrap_or(0);
+                if let Some(tc) = tool_calls {
+                    for t in tc {
+                        tokens += Self::estimate_tokens(&t.name);
+                        tokens += Self::estimate_tokens(&t.arguments);
+                        tokens += Self::estimate_tokens(&t.id);
+                    }
+                }
+                tokens
+            }
+            ChatMessage::Tool { tool_call_id, content } => {
+                Self::estimate_tokens(tool_call_id) + Self::estimate_tokens(content)
+            }
+        }
+    }
+
+    /// 对消息列表进行裁剪，确保总 token 数不超过 `max_tokens`。
+    ///
+    /// 裁剪策略：
+    /// - 始终保留前 `keep_first_n` 条消息（通常为 system prompt）
+    /// - 始终保留末尾 `keep_last_n` 条消息（最近对话）
+    /// - 从中间删除最旧的消息，直到 token 数符合要求
+    pub fn trim(&self, messages: &mut Vec<ChatMessage>) {
+        if messages.is_empty() || self.max_tokens == 0 {
+            return;
+        }
+
+        let total_tokens: usize = messages.iter().map(|m| Self::message_tokens(m)).sum();
+        if total_tokens <= self.max_tokens {
+            return;
+        }
+
+        let keep_first = self.keep_first_n.min(messages.len());
+        let keep_last = self.keep_last_n.min(messages.len().saturating_sub(keep_first));
+
+        // 可裁剪区域：[keep_first, messages.len() - keep_last)
+        let trim_start = keep_first;
+        let trim_end = messages.len().saturating_sub(keep_last);
+        if trim_start >= trim_end {
+            return;
+        }
+
+        let mut current_tokens: usize = total_tokens;
+        let remove_idx = trim_start;
+
+        while current_tokens > self.max_tokens && remove_idx < trim_end {
+            let removed = Self::message_tokens(&messages[remove_idx]);
+            messages.remove(remove_idx);
+            current_tokens = current_tokens.saturating_sub(removed);
+            // 不递增 remove_idx，因为 remove 后下一个元素移到了当前位置
+            let new_trim_end = messages.len().saturating_sub(keep_last);
+            if remove_idx >= new_trim_end {
+                break;
+            }
+        }
+    }
+}
+
+fn is_cjk(c: char) -> bool {
+    matches!(
+        c,
+        '\u{4E00}'..='\u{9FFF}'   // CJK Unified Ideographs
+        | '\u{3400}'..='\u{4DBF}' // CJK Unified Ideographs Extension A
+        | '\u{3000}'..='\u{303F}' // CJK Symbols and Punctuation
+        | '\u{FF00}'..='\u{FFEF}' // Halfwidth and Fullwidth Forms
+        | '\u{3040}'..='\u{309F}' // Hiragana
+        | '\u{30A0}'..='\u{30FF}' // Katakana
+        | '\u{AC00}'..='\u{D7AF}' // Hangul Syllables
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_estimate_tokens_empty() {
+        assert_eq!(ContextWindowManager::estimate_tokens(""), 0);
+    }
+
+    #[test]
+    fn test_estimate_tokens_english() {
+        let text = "Hello world this is a test";
+        let tokens = ContextWindowManager::estimate_tokens(text);
+        // ~28 chars / 4 ≈ 7
+        assert!(tokens > 0 && tokens <= 15);
+    }
+
+    #[test]
+    fn test_trim_no_trim_needed() {
+        let mgr = ContextWindowManager::new(1000);
+        let mut msgs = vec![
+            ChatMessage::system("You are a helpful assistant."),
+            ChatMessage::user("Hello"),
+            ChatMessage::assistant("Hi there!"),
+        ];
+        let original_len = msgs.len();
+        mgr.trim(&mut msgs);
+        assert_eq!(msgs.len(), original_len);
+    }
+
+    #[test]
+    fn test_trim_keeps_first_and_last() {
+        let mgr = ContextWindowManager::new(8)
+            .with_keep_first_n(1)
+            .with_keep_last_n(2);
+        let mut msgs = vec![
+            ChatMessage::system("system"),
+            ChatMessage::user("message number one"),
+            ChatMessage::assistant("message number two"),
+            ChatMessage::user("message number three"),
+            ChatMessage::assistant("message number four"),
+            ChatMessage::user("message number five"),
+            ChatMessage::assistant("message number six"),
+        ];
+        mgr.trim(&mut msgs);
+        assert_eq!(msgs.len(), 3);
+        assert!(matches!(msgs[0], ChatMessage::System { .. }));
+    }
+}

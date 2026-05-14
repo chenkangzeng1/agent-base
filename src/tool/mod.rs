@@ -5,7 +5,9 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 use tokio::sync::broadcast;
 
+use crate::llm::LlmClient;
 use crate::types::{AgentResult, AgentError, AgentEvent, SessionId};
+use crate::engine::SessionStore;
 
 pub mod policy;
 
@@ -16,6 +18,7 @@ pub struct ToolOutput {
     pub summary: String,
     pub raw: Option<Value>,
     pub control_flow: ToolControlFlow,
+    pub truncated: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -29,6 +32,8 @@ pub enum ToolControlFlow {
 pub struct ToolContext {
     pub session_id: SessionId,
     pub event_bus: broadcast::Sender<AgentEvent>,
+    pub llm_client: Option<Arc<dyn LlmClient>>,
+    pub session_store: Option<Arc<dyn SessionStore>>,
 }
 
 #[async_trait]
@@ -47,6 +52,13 @@ pub trait TypedTool: Send + Sync {
     fn description(&self) -> &'static str;
     fn parameters_schema(&self) -> Value;
     async fn call_typed(&self, args: Self::Args, ctx: &ToolContext) -> AgentResult<Self::Output>;
+
+    fn control_flow() -> ToolControlFlow
+    where
+        Self: Sized,
+    {
+        ToolControlFlow::Break
+    }
 
     fn format_output(&self, output: Self::Output) -> String {
         serde_json::to_string(&output).unwrap_or_default()
@@ -82,7 +94,8 @@ impl<T: TypedTool + Send + Sync + 'static> Tool for T {
         Ok(ToolOutput {
             summary,
             raw: output_json,
-            control_flow: ToolControlFlow::Break,
+            control_flow: T::control_flow(),
+            truncated: false,
         })
     }
 }
