@@ -1,8 +1,19 @@
 # agent-base
 
+[![crates.io](https://img.shields.io/crates/v/agent-base.svg)](https://crates.io/crates/agent-base)
+[![Documentation](https://docs.rs/agent-base/badge.svg)](https://docs.rs/agent-base)
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 A lightweight **Agent Runtime Kernel** for building AI agents in Rust.
 
 `agent-base` provides the minimal orchestration layer needed to build custom AI agents — LLM integration, tool dispatch, multi-turn conversation, approval flows, event streaming, and error recovery — all with zero business assumptions.
+
+## Installation
+
+```toml
+[dependencies]
+agent-base = "0.1.0"
+```
 
 ## Design Principles
 
