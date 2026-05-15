@@ -1,8 +1,8 @@
-# agent-core review
+# agent-base review
 
 ## 总体结论
 
-`agent-core` 目前已经具备通用 Agent Runtime 的核心骨架，方向是正确的。作为后续衍生 `ops-agent`、`db-agent`、`browser-agent`、`code-agent` 等定制 Agent 的底座，这个工程是成立的。
+`agent-base` 目前已经具备通用 Agent Runtime 的核心骨架，方向是正确的。作为后续衍生 `ops-agent`、`db-agent`、`browser-agent`、`code-agent` 等定制 Agent 的底座，这个工程是成立的。
 
 当前阶段更接近“能跑通的一版通用 Agent 框架”，而不是“可长期稳定承载多种 Agent 的成熟内核”。
 
@@ -326,7 +326,7 @@ README 中提到“内置 OpenAI / DashScope 实现”，但代码中当前内�
 
 ## 建议的项目定位
 
-建议将 `agent-core` 的定位明确为：
+建议将 `agent-base` 的定位明确为：
 
 > 一个偏“运行时编排层”的 Agent Kernel，而不是完整的 Agent Platform。
 
@@ -412,4 +412,4 @@ README 中提到“内置 OpenAI / DashScope 实现”，但代码中当前内�
 2. tool error recovery 是 runtime 默认行为，还是策略注入
 3. session 的 source of truth 在 runtime 还是 store
 4. SubAgentTool 默认复用 session 是否符合预期
-5. `agent-core` 最终是轻内核，还是更完整的执行框架
+5. `agent-base` 最终是轻内核，还是更完整的执行框架

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agent_core::{
+use agent_base::{
     AgentBuilder, AgentEvent, AgentResult, OpenAiClient,
     Skill,
     Tool, ToolContext, ToolControlFlow, ToolOutput,

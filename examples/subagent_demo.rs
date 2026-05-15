@@ -2,7 +2,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use agent_core::{
+use agent_base::{
     AgentBuilder, AgentEvent, AgentResult, ChatMessage, LlmCapabilities, LlmClient,
     ResponseFormat, StreamChunk, SubAgentTool,
 };
@@ -70,7 +70,7 @@ impl LlmClient for MockLlmClient {
 
 #[tokio::main]
 async fn main() -> AgentResult<()> {
-    println!("=== agent-core SubAgent Demo ===\n");
+    println!("=== agent-base SubAgent Demo ===\n");
 
     println!("[1] 创建子 Agent (数据分析专家) ...");
 

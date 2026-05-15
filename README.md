@@ -1,4 +1,4 @@
-# agent-core
+# agent-base
 
 轻量 Agent Runtime Kernel。提供最小必要的会话执行编排能力，不承载复杂 workflow、memory 平台和强业务恢复策略。
 
@@ -24,7 +24,7 @@
 
 ```rust
 use std::sync::Arc;
-use agent_core::{
+use agent_base::{
     AgentBuilder, AgentEvent, AgentResult, RunOutcome,
     OpenAiClient, Tool, ToolContext, ToolOutput, ToolControlFlow,
 };
@@ -70,7 +70,7 @@ cargo run --example repl
 
 ```
 ops-agent / db-agent / browser-agent    ← 业务 agent
-    └── agent-core                       ← 轻量运行时 Kernel
+    └── agent-base                       ← 轻量运行时 Kernel
 ```
 
 ## v1 语义约定

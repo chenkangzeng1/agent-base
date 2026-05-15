@@ -2,7 +2,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use agent_core::{
+use agent_base::{
     AgentBuilder, AgentEvent, AgentResult, ChatMessage, LlmCapabilities, LlmClient,
     McpToolRegistry, ResponseFormat, StreamChunk,
 };
@@ -183,7 +183,7 @@ async fn start_mock_mcp_server() -> (String, tokio::task::JoinHandle<()>) {
 
 #[tokio::main]
 async fn main() -> AgentResult<()> {
-    println!("=== agent-core MCP Demo ===\n");
+    println!("=== agent-base MCP Demo ===\n");
 
     println!("[1] 启动模拟 MCP Server ...");
     let (server_url, _server_handle) = start_mock_mcp_server().await;

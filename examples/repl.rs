@@ -1,7 +1,7 @@
 use std::io::{self, Write};
 use std::sync::Arc;
 
-use agent_core::{
+use agent_base::{
     AgentBuilder, AgentError, AgentEvent, AgentResult, ApprovalDecision, ApprovalHandler,
     ApprovalRequest, OpenAiClient, RiskLevel, Tool, ToolContext, ToolControlFlow, ToolOutput,
     ToolPolicy,
@@ -344,7 +344,7 @@ async fn main() -> AgentResult<()> {
 
     let mut session_id = runtime.create_session();
 
-    println!("=== agent-core REPL (算术 Demo) ===");
+    println!("=== agent-base REPL (算术 Demo) ===");
     println!("模型: {}", model);
     println!("输入 'exit' 退出, 'reset' 重建会话");
     println!();

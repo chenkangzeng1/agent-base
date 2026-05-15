@@ -2,7 +2,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use agent_core::{
+use agent_base::{
     AgentBuilder, AgentEvent, AgentResult, ApprovalDecision, ApprovalHandler,
     ApprovalRequest, ChatMessage, LlmCapabilities, LlmClient, ResponseFormat, RiskLevel, RunOutcome, StreamChunk, Tool,
     ToolContext, ToolControlFlow, ToolOutput, ToolPolicy,
@@ -270,7 +270,7 @@ async fn test_approval_deny_stops_execution() {
         .register_tool(EchoTool)
         .approval_handler(Arc::new(DenyHandler))
         .tool_policy(Arc::new(RequireApprovalPolicy))
-        .error_recovery(Arc::new(agent_core::RetryOnError))
+        .error_recovery(Arc::new(agent_base::RetryOnError))
         .build();
 
     let session_id = runtime.create_session();
@@ -429,7 +429,7 @@ async fn test_event_collection() {
 
 #[test]
 fn test_chat_message_user_with_images() {
-    use agent_core::{ChatMessage, ImageAttachment, ImageDetail};
+    use agent_base::{ChatMessage, ImageAttachment, ImageDetail};
 
     let msg = ChatMessage::user("hello");
     match &msg {
@@ -464,7 +464,7 @@ fn test_chat_message_user_with_images() {
 
 #[test]
 fn test_image_attachment_serialization() {
-    use agent_core::ImageAttachment;
+    use agent_base::ImageAttachment;
     use serde_json;
 
     let img = ImageAttachment::Url {
@@ -497,8 +497,8 @@ fn test_image_attachment_serialization() {
 
 #[test]
 fn test_session_push_user_with_images() {
-    use agent_core::types::SessionId;
-    use agent_core::{AgentSession, ChatMessage, ImageAttachment, MessageRole};
+    use agent_base::types::SessionId;
+    use agent_base::{AgentSession, ChatMessage, ImageAttachment, MessageRole};
 
     let session_id = SessionId {
         id: 1,
@@ -573,17 +573,17 @@ async fn test_checkpoint_events_emitted() {
     );
 
     let has_after_user_input = events.iter().any(|e| {
-        matches!(e, AgentEvent::Checkpoint { checkpoint, .. } if matches!(checkpoint.step, agent_core::CheckpointStep::AfterUserInput))
+        matches!(e, AgentEvent::Checkpoint { checkpoint, .. } if matches!(checkpoint.step, agent_base::CheckpointStep::AfterUserInput))
     });
     assert!(has_after_user_input, "Should have AfterUserInput checkpoint");
 
     let has_before_llm = events.iter().any(|e| {
-        matches!(e, AgentEvent::Checkpoint { checkpoint, .. } if matches!(checkpoint.step, agent_core::CheckpointStep::BeforeLlm { .. }))
+        matches!(e, AgentEvent::Checkpoint { checkpoint, .. } if matches!(checkpoint.step, agent_base::CheckpointStep::BeforeLlm { .. }))
     });
     assert!(has_before_llm, "Should have BeforeLlm checkpoint");
 
     let has_before_tool_calls = events.iter().any(|e| {
-        matches!(e, AgentEvent::Checkpoint { checkpoint, .. } if matches!(checkpoint.step, agent_core::CheckpointStep::BeforeToolCalls { .. }))
+        matches!(e, AgentEvent::Checkpoint { checkpoint, .. } if matches!(checkpoint.step, agent_base::CheckpointStep::BeforeToolCalls { .. }))
     });
     assert!(has_before_tool_calls, "Should have BeforeToolCalls checkpoint");
 }
@@ -603,13 +603,13 @@ async fn test_resume_from_after_user_input_checkpoint() {
 
     let session_id = runtime.create_session();
 
-    let mut checkpoint_opt: Option<agent_core::CheckpointData> = None;
+    let mut checkpoint_opt: Option<agent_base::CheckpointData> = None;
     let _ = runtime
         .run_turn_with_handler(session_id.clone(), "resume test", |event| {
             if let AgentEvent::Checkpoint { checkpoint, .. } = &event {
-                if matches!(checkpoint.step, agent_core::CheckpointStep::AfterUserInput) {
+                if matches!(checkpoint.step, agent_base::CheckpointStep::AfterUserInput) {
                     checkpoint_opt = Some(checkpoint.clone());
-                    return Err(agent_core::AgentError::Cancelled);
+                    return Err(agent_base::AgentError::Cancelled);
                 }
             }
             Ok(())
@@ -659,13 +659,13 @@ async fn test_resume_from_before_tool_calls_checkpoint() {
 
     let session_id = runtime.create_session();
 
-    let mut checkpoint_opt: Option<agent_core::CheckpointData> = None;
+    let mut checkpoint_opt: Option<agent_base::CheckpointData> = None;
     let _ = runtime
         .run_turn_with_handler(session_id.clone(), "echo hello", |event| {
             if let AgentEvent::Checkpoint { checkpoint, .. } = &event {
-                if matches!(checkpoint.step, agent_core::CheckpointStep::BeforeToolCalls { .. }) {
+                if matches!(checkpoint.step, agent_base::CheckpointStep::BeforeToolCalls { .. }) {
                     checkpoint_opt = Some(checkpoint.clone());
-                    return Err(agent_core::AgentError::Cancelled);
+                    return Err(agent_base::AgentError::Cancelled);
                 }
             }
             Ok(())
@@ -692,7 +692,7 @@ async fn test_resume_from_before_tool_calls_checkpoint() {
 
 #[tokio::test]
 async fn test_sub_agent_tool() {
-    use agent_core::SubAgentTool;
+    use agent_base::SubAgentTool;
 
     let sub_llm = Arc::new(MockLlmClient::new(vec![
         vec![

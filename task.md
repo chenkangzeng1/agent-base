@@ -1,8 +1,8 @@
-# agent-core v1 实施清单
+# agent-base v1 实施清单
 
 ## 目标
 
-本次实施以 `agent-core` 作为“轻内核”前提进行，不追求扩展更多能力，而是优先完成语义收敛、状态边界收敛和默认行为保守化。
+本次实施以 `agent-base` 作为“轻内核”前提进行，不追求扩展更多能力，而是优先完成语义收敛、状态边界收敛和默认行为保守化。
 
 核心目标：
 
@@ -11,7 +11,7 @@
 3. 默认保守
 4. 策略外置
 
-本轮改造聚焦于让 `agent-core` 从“能跑的 Agent Runtime”收敛为“语义清晰、默认保守、状态简单、策略外置的轻内核”。
+本轮改造聚焦于让 `agent-base` 从“能跑的 Agent Runtime”收敛为“语义清晰、默认保守、状态简单、策略外置的轻内核”。
 
 ---
 
@@ -293,7 +293,7 @@
 
 重点更新：
 
-- `agent-core` 的轻内核定位
+- `agent-base` 的轻内核定位
 - provider 说明与实际代码一致
 - session / store 边界说明
 - SubAgent 默认行为说明
@@ -387,7 +387,7 @@
 
 ## 最终目标状态
 
-本次实施完成后，希望 `agent-core` 具备以下特征：
+本次实施完成后，希望 `agent-base` 具备以下特征：
 
 - 一次 run 的结果语义清晰
 - 事件与返回值不冲突
@@ -437,7 +437,7 @@
 
 - [x] README 更新为轻内核定位、设计原则、v1 语义约定
 - [x] review.md 追加 v1 改造完成记录
-- [x] agent-core 15 tests + 4 unit tests = 19 passed
+- [x] agent-base 15 tests + 4 unit tests = 19 passed
 - [x] ops-agent 4 tests passed
 
 ---
@@ -446,4 +446,4 @@
 
 本次 v1 改造的本质是：
 
-> 把 `agent-core` 从“能跑的 Agent Runtime”收敛成“语义清晰、默认保守、状态简单、策略外置的轻内核”。
+> 把 `agent-base` 从“能跑的 Agent Runtime”收敛成“语义清晰、默认保守、状态简单、策略外置的轻内核”。
