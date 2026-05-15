@@ -135,7 +135,7 @@ async fn main() -> AgentResult<()> {
     println!("    父 Agent 已就绪\n");
     println!("--- 开始执行 ---\n");
 
-    let events = parent_runtime
+    let (events, _outcome) = parent_runtime
         .run_turn_stream(session_id, "请分析一下本月的销售情况")
         .await?;
 
@@ -169,7 +169,7 @@ async fn main() -> AgentResult<()> {
                                             print!("  [子Agent] {t}");
                                         }
                                     }
-                                    "RunCompleted" => {
+                                    "RunFinished" => {
                                         println!();
                                         println!("  [子Agent] 分析完成");
                                     }
@@ -180,7 +180,7 @@ async fn main() -> AgentResult<()> {
                     }
                 }
             }
-            AgentEvent::RunCompleted { .. } => {
+            AgentEvent::RunFinished { .. } => {
                 println!();
                 println!();
                 println!("--- 执行完成 ---");

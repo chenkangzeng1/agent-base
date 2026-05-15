@@ -219,7 +219,7 @@ async fn main() {
     println!("用户: {}", user_input);
     println!("---");
 
-    let events = runtime
+    let (events, _outcome) = runtime
         .run_turn_stream(session_id.clone(), user_input)
         .await
         .expect("执行失败");

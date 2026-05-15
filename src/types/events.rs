@@ -32,12 +32,8 @@ pub enum AgentEvent {
         session_id: SessionId,
         checkpoint: CheckpointData,
     },
-    RunCompleted {
+    RunFinished {
         session_id: SessionId,
-    },
-    RunFailed {
-        session_id: SessionId,
-        error: String,
     },
     Custom {
         session_id: SessionId,

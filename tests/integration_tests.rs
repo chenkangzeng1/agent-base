@@ -4,7 +4,7 @@ use std::sync::Mutex;
 
 use agent_core::{
     AgentBuilder, AgentEvent, AgentResult, ApprovalDecision, ApprovalHandler,
-    ApprovalRequest, ChatMessage, LlmCapabilities, LlmClient, ResponseFormat, RiskLevel, StreamChunk, Tool,
+    ApprovalRequest, ChatMessage, LlmCapabilities, LlmClient, ResponseFormat, RiskLevel, RunOutcome, StreamChunk, Tool,
     ToolContext, ToolControlFlow, ToolOutput, ToolPolicy,
 };
 use async_trait::async_trait;
@@ -133,6 +133,8 @@ async fn test_simple_text_reply() {
     let session_id = runtime.create_session();
     let result = runtime.run_turn_stream(session_id.clone(), "Hi").await;
     assert!(result.is_ok(), "Expected ok, got: {result:?}");
+    let (_events, outcome) = result.unwrap();
+    assert_eq!(outcome, RunOutcome::Completed);
 
     let session = runtime.session(&session_id).unwrap();
     let messages = session.chat_messages();
@@ -203,7 +205,7 @@ async fn test_tool_not_found() {
     let result = runtime.run_turn_stream(session_id, "test").await;
     assert!(result.is_ok(), "Tool not found should not crash: {result:?}");
 
-    let events = result.unwrap();
+    let (events, _outcome) = result.unwrap();
     let has_tool_error = events.iter().any(|e| {
         matches!(e, AgentEvent::ToolCallFinished { summary, .. } if summary.contains("not found"))
     });
@@ -268,11 +270,12 @@ async fn test_approval_deny_stops_execution() {
         .register_tool(EchoTool)
         .approval_handler(Arc::new(DenyHandler))
         .tool_policy(Arc::new(RequireApprovalPolicy))
+        .error_recovery(Arc::new(agent_core::RetryOnError))
         .build();
 
     let session_id = runtime.create_session();
     let result = runtime.run_turn_stream(session_id, "test").await;
-    let events = result.expect("Approval denial should be handled gracefully");
+    let (events, _outcome) = result.expect("Approval denial should be handled gracefully");
 
     let has_awaiting_approval = events
         .iter()
@@ -410,14 +413,14 @@ async fn test_event_collection() {
     let mut runtime = AgentBuilder::new(llm.clone()).build();
 
     let session_id = runtime.create_session();
-    let events = runtime.run_turn_stream(session_id, "test").await.unwrap();
+    let (events, _outcome) = runtime.run_turn_stream(session_id, "test").await.unwrap();
 
     let has_text_delta = events.iter().any(|e| matches!(e, AgentEvent::TextDelta { .. }));
-    let has_run_completed =
-        events.iter().any(|e| matches!(e, AgentEvent::RunCompleted { .. }));
+    let has_run_finished =
+        events.iter().any(|e| matches!(e, AgentEvent::RunFinished { .. }));
 
     assert!(has_text_delta, "Should have TextDelta event");
-    assert!(has_run_completed, "Should have RunCompleted event");
+    assert!(has_run_finished, "Should have RunFinished event");
 }
 
 // ---------------------------------------------------------------------------
@@ -558,7 +561,7 @@ async fn test_checkpoint_events_emitted() {
         .build();
 
     let session_id = runtime.create_session();
-    let events = runtime.run_turn_stream(session_id, "test checkpoint").await.unwrap();
+    let (events, _outcome) = runtime.run_turn_stream(session_id, "test checkpoint").await.unwrap();
 
     let checkpoint_count = events
         .iter()

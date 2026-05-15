@@ -9,10 +9,11 @@ use crate::types::{AgentConfig, MessageRole, AgentError, CheckpointData, Checkpo
 use tokio::sync::broadcast;
 use tracing::Span;
 
-use crate::types::{AgentResult, AgentEvent, SessionId};
+use crate::types::{AgentResult, AgentEvent, SessionId, RunOutcome};
 use super::approval::ApprovalHandler;
 use super::context::ContextWindowManager;
 use super::middleware::{MiddlewareRef, UserMessageCtx, PreLlmCtx, PostLlmCtx};
+use super::recovery::{ToolErrorAction, ToolErrorRecovery};
 use super::session_store::SessionStore;
 use super::AgentSession;
 
@@ -39,6 +40,7 @@ pub struct AgentRuntime {
     pub(crate) skills: Vec<Arc<dyn Skill>>,
     #[allow(dead_code)]
     pub(crate) skill_prompter: Arc<dyn SkillPrompter>,
+    pub(crate) error_recovery: Arc<dyn ToolErrorRecovery>,
 }
 
 impl AgentRuntime {
@@ -53,6 +55,23 @@ impl AgentRuntime {
         }
         self.sessions.insert(id.clone(), session);
         id
+    }
+
+    /// 从持久层恢复一个已有 session 到运行时内存
+    ///
+    /// 成功后可通过 session_id 继续执行。
+    /// 恢复失败时返回 None（session 不存在或持久层错误）。
+    pub async fn restore_session(&mut self, session_id: &SessionId) -> Option<&AgentSession> {
+        if self.sessions.contains_key(session_id) {
+            return self.sessions.get(session_id);
+        }
+        match self.session_store.load(session_id).await {
+            Ok(Some(session)) => {
+                self.sessions.insert(session_id.clone(), session);
+                self.sessions.get(session_id)
+            }
+            _ => None,
+        }
     }
 
     pub fn session(&self, session_id: &SessionId) -> Option<&AgentSession> {
@@ -138,7 +157,7 @@ impl AgentRuntime {
         session_id: SessionId,
         user_input: &str,
         mut on_event: F,
-    ) -> AgentResult<()>
+    ) -> AgentResult<RunOutcome>
     where
         F: FnMut(AgentEvent) -> AgentResult<()>,
     {
@@ -186,9 +205,8 @@ impl AgentRuntime {
             turn_count += 1;
 
             if turn_count > max_turns {
-                self.emit_event(AgentEvent::RunFailed {
+                self.emit_event(AgentEvent::RunFinished {
                     session_id: session_id.clone(),
-                    error: format!("达到最大轮次限制（{max_turns}次），强制停止"),
                 });
                 Self::drain_async_events(&mut event_rx, &mut on_event)?;
                 break;
@@ -302,7 +320,7 @@ impl AgentRuntime {
                         continue;
                     }
                     Ok(ToolCallResult::Break) => {
-                        self.emit_event(AgentEvent::RunCompleted { session_id: session_id.clone() });
+                        self.emit_event(AgentEvent::RunFinished { session_id: session_id.clone() });
                         Self::drain_async_events(&mut event_rx, &mut on_event)?;
                         break;
                     }
@@ -310,52 +328,72 @@ impl AgentRuntime {
                         if e.is_cancelled() {
                             return Err(e);
                         }
-                        let names: Vec<&str> = tool_calls.iter().map(|(_, n, _)| n.as_str()).collect();
-                        let session = self.session_mut_or_err(&session_id)?;
-                        session.push_message(
-                            MessageRole::Assistant,
-                            format!("(尝试调用工具 {} 失败)", names.join(", ")),
-                        );
-                        session.push_message(
-                            MessageRole::User,
-                            "你刚才尝试调用工具时出现了错误。请简化你的计划，然后重新调用工具。",
-                        );
-                        continue;
+                        let names: Vec<String> = tool_calls.iter().map(|(_, n, _)| n.clone()).collect();
+                        let action = self.error_recovery.on_error(&session_id, &names, &e).await?;
+                        match action {
+                            ToolErrorAction::Stop => {
+                                self.emit_event(AgentEvent::RunFinished { session_id: session_id.clone() });
+                                Self::drain_async_events(&mut event_rx, &mut on_event)?;
+                                let session = self.session_or_err(&session_id)?;
+                                let _ = self.session_store.save(session).await;
+                                return Ok(RunOutcome::Failed {
+                                    error: format!("工具执行失败: {}", e),
+                                });
+                            }
+                            ToolErrorAction::Retry => {
+                                let session = self.session_mut_or_err(&session_id)?;
+                                session.push_message(
+                                    MessageRole::Assistant,
+                                    format!("(尝试调用工具 {} 失败)", names.join(", ")),
+                                );
+                                session.push_message(
+                                    MessageRole::User,
+                                    "你刚才尝试调用工具时出现了错误。请简化你的计划，然后重新调用工具。",
+                                );
+                                continue;
+                            }
+                        }
                     }
                 }
             }
 
-            self.emit_event(AgentEvent::RunCompleted { session_id: session_id.clone() });
+            self.emit_event(AgentEvent::RunFinished { session_id: session_id.clone() });
             Self::drain_async_events(&mut event_rx, &mut on_event)?;
             break;
         }
+
+        let outcome = if turn_count > max_turns {
+            RunOutcome::Failed { error: format!("达到最大轮次限制（{max_turns}次），强制停止") }
+        } else {
+            RunOutcome::Completed
+        };
 
         let session = self.session_or_err(&session_id)?;
         let _ = self.session_store.save(session).await;
 
         tracing::info!(session_id = session_id.id, turn_count, "agent turn completed");
-        Ok(())
+        Ok(outcome)
     }
 
     pub async fn run_turn_stream(
         &mut self,
         session_id: SessionId,
         user_input: &str,
-    ) -> AgentResult<Vec<AgentEvent>> {
+    ) -> AgentResult<(Vec<AgentEvent>, RunOutcome)> {
         let mut events = Vec::new();
-        self.run_turn_with_handler(session_id, user_input, |event| {
+        let outcome = self.run_turn_with_handler(session_id, user_input, |event| {
             events.push(event);
             Ok(())
         })
         .await?;
-        Ok(events)
+        Ok((events, outcome))
     }
 
     pub async fn resume_from_checkpoint<F>(
         &mut self,
         checkpoint: CheckpointData,
         mut on_event: F,
-    ) -> AgentResult<()>
+    ) -> AgentResult<RunOutcome>
     where
         F: FnMut(AgentEvent) -> AgentResult<()>,
     {
@@ -383,24 +421,38 @@ impl AgentRuntime {
                 {
                     Ok(ToolCallResult::Continue) => {}
                     Ok(ToolCallResult::Break) => {
-                        self.emit_event(AgentEvent::RunCompleted { session_id: session_id.clone() });
+                        self.emit_event(AgentEvent::RunFinished { session_id: session_id.clone() });
                         Self::drain_async_events(&mut event_rx, &mut on_event)?;
-                        return Ok(());
+                        return Ok(RunOutcome::Completed);
                     }
                     Err(e) => {
                         if e.is_cancelled() {
                             return Err(e);
                         }
-                        let names: Vec<&str> = tool_calls.iter().map(|(_, n, _)| n.as_str()).collect();
-                        let session = self.session_mut_or_err(&session_id)?;
-                        session.push_message(
-                            MessageRole::Assistant,
-                            format!("(尝试调用工具 {} 失败)", names.join(", ")),
-                        );
-                        session.push_message(
-                            MessageRole::User,
-                            "你刚才尝试调用工具时出现了错误。请简化你的计划，然后重新调用工具。",
-                        );
+                        let names: Vec<String> = tool_calls.iter().map(|(_, n, _)| n.clone()).collect();
+                        let action = self.error_recovery.on_error(&session_id, &names, &e).await?;
+                        match action {
+                            ToolErrorAction::Stop => {
+                                self.emit_event(AgentEvent::RunFinished { session_id: session_id.clone() });
+                                Self::drain_async_events(&mut event_rx, &mut on_event)?;
+                                let session = self.session_or_err(&session_id)?;
+                                let _ = self.session_store.save(session).await;
+                                return Ok(RunOutcome::Failed {
+                                    error: format!("工具执行失败: {}", e),
+                                });
+                            }
+                            ToolErrorAction::Retry => {
+                                let session = self.session_mut_or_err(&session_id)?;
+                                session.push_message(
+                                    MessageRole::Assistant,
+                                    format!("(尝试调用工具 {} 失败)", names.join(", ")),
+                                );
+                                session.push_message(
+                                    MessageRole::User,
+                                    "你刚才尝试调用工具时出现了错误。请简化你的计划，然后重新调用工具。",
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -411,9 +463,8 @@ impl AgentRuntime {
             turn_count += 1;
 
             if turn_count > max_turns {
-                self.emit_event(AgentEvent::RunFailed {
+                self.emit_event(AgentEvent::RunFinished {
                     session_id: session_id.clone(),
-                    error: format!("达到最大轮次限制（{max_turns}次），强制停止"),
                 });
                 Self::drain_async_events(&mut event_rx, &mut on_event)?;
                 break;
@@ -524,7 +575,7 @@ impl AgentRuntime {
                         continue;
                     }
                     Ok(ToolCallResult::Break) => {
-                        self.emit_event(AgentEvent::RunCompleted { session_id: session_id.clone() });
+                        self.emit_event(AgentEvent::RunFinished { session_id: session_id.clone() });
                         Self::drain_async_events(&mut event_rx, &mut on_event)?;
                         break;
                     }
@@ -532,30 +583,50 @@ impl AgentRuntime {
                         if e.is_cancelled() {
                             return Err(e);
                         }
-                        let names: Vec<&str> = tool_calls.iter().map(|(_, n, _)| n.as_str()).collect();
-                        let session = self.session_mut_or_err(&session_id)?;
-                        session.push_message(
-                            MessageRole::Assistant,
-                            format!("(尝试调用工具 {} 失败)", names.join(", ")),
-                        );
-                        session.push_message(
-                            MessageRole::User,
-                            "你刚才尝试调用工具时出现了错误。请简化你的计划，然后重新调用工具。",
-                        );
-                        continue;
+                        let names: Vec<String> = tool_calls.iter().map(|(_, n, _)| n.clone()).collect();
+                        let action = self.error_recovery.on_error(&session_id, &names, &e).await?;
+                        match action {
+                            ToolErrorAction::Stop => {
+                                self.emit_event(AgentEvent::RunFinished { session_id: session_id.clone() });
+                                Self::drain_async_events(&mut event_rx, &mut on_event)?;
+                                let session = self.session_or_err(&session_id)?;
+                                let _ = self.session_store.save(session).await;
+                                return Ok(RunOutcome::Failed {
+                                    error: format!("工具执行失败: {}", e),
+                                });
+                            }
+                            ToolErrorAction::Retry => {
+                                let session = self.session_mut_or_err(&session_id)?;
+                                session.push_message(
+                                    MessageRole::Assistant,
+                                    format!("(尝试调用工具 {} 失败)", names.join(", ")),
+                                );
+                                session.push_message(
+                                    MessageRole::User,
+                                    "你刚才尝试调用工具时出现了错误。请简化你的计划，然后重新调用工具。",
+                                );
+                                continue;
+                            }
+                        }
                     }
                 }
             }
 
-            self.emit_event(AgentEvent::RunCompleted { session_id: session_id.clone() });
+            self.emit_event(AgentEvent::RunFinished { session_id: session_id.clone() });
             Self::drain_async_events(&mut event_rx, &mut on_event)?;
             break;
         }
+
+        let outcome = if turn_count > max_turns {
+            RunOutcome::Failed { error: format!("达到最大轮次限制（{max_turns}次），强制停止") }
+        } else {
+            RunOutcome::Completed
+        };
 
         let session = self.session_or_err(&session_id)?;
         let _ = self.session_store.save(session).await;
 
         tracing::info!(session_id = session_id.id, turn_count, "agent resume completed");
-        Ok(())
+        Ok(outcome)
     }
 }

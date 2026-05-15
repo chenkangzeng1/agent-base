@@ -45,6 +45,10 @@ pub use engine::{
     UserMessageCtx,
     ContextWindowManager,
     RiskLevel,
+    RetryOnError,
+    StopOnError,
+    ToolErrorAction,
+    ToolErrorRecovery,
 };
 
 // ---------------------------------------------------------------------------
@@ -54,6 +58,7 @@ pub use tool::{
     McpClient,
     McpToolInfo,
     McpToolRegistry,
+    SubAgentSessionPolicy,
     SubAgentTool,
     Tool,
     ToolContext,
@@ -98,6 +103,7 @@ pub use types::{
     MessageRole,
     ResponseFormat,
     RetryConfig,
+    RunOutcome,
     ToolCallMessage,
     ToolResultData,
 };

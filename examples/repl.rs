@@ -247,13 +247,9 @@ impl EventPrinter {
                     request.title, request.risk_level
                 );
             }
-            AgentEvent::RunCompleted { .. } => {
+            AgentEvent::RunFinished { .. } => {
                 println!();
                 println!("[运行完成]");
-            }
-            AgentEvent::RunFailed { error, .. } => {
-                println!();
-                println!("[运行失败] {}", error);
             }
             AgentEvent::Custom { payload, .. } => {
                 println!("[自定义事件] {}", payload);
@@ -379,7 +375,7 @@ async fn main() -> AgentResult<()> {
             .run_turn_with_handler(session_id.clone(), &input, |event| EventPrinter::handle(event))
             .await
         {
-            Ok(()) => {}
+            Ok(_outcome) => {}
             Err(e) => {
                 if e.is_cancelled() {
                     println!("已取消");

@@ -244,7 +244,7 @@ async fn main() -> AgentResult<()> {
     let session_id = runtime.create_session();
 
     println!("\n--- Agent 运行 ---\n");
-    let events = runtime
+    let (events, _outcome) = runtime
         .run_turn_stream(session_id, "深圳今天天气怎么样？")
         .await?;
 
@@ -257,7 +257,7 @@ async fn main() -> AgentResult<()> {
             AgentEvent::ToolCallFinished { summary, .. } => {
                 println!("[工具结果] {summary}");
             }
-            AgentEvent::RunCompleted { .. } => println!("\n[运行完成]"),
+            AgentEvent::RunFinished { .. } => println!("\n[运行完成]"),
             AgentEvent::Custom { payload, .. } => {
                 println!("[自定义事件] {payload}");
             }

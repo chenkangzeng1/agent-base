@@ -14,7 +14,7 @@ pub mod policy;
 pub mod subagent;
 
 pub use mcp::{McpClient, McpToolInfo, McpToolRegistry};
-pub use subagent::SubAgentTool;
+pub use subagent::{SubAgentSessionPolicy, SubAgentTool};
 
 pub use policy::ToolPolicy;
 

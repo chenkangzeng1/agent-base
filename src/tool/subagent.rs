@@ -6,11 +6,21 @@ use crate::engine::AgentRuntime;
 use crate::types::{AgentError, AgentEvent, AgentResult, SessionId};
 use super::{Tool, ToolContext, ToolControlFlow, ToolOutput};
 
+/// 子 Agent 的 session 策略
+#[derive(Clone, Debug)]
+pub enum SubAgentSessionPolicy {
+    /// 每次调用创建新 session（默认）
+    Ephemeral,
+    /// 复用同一个 session，子 Agent 会积累历史上下文
+    Persistent,
+}
+
 pub struct SubAgentTool {
     name: &'static str,
     description: &'static str,
     sub_runtime: Mutex<AgentRuntime>,
-    sub_session_id: SessionId,
+    sub_session_id: Mutex<Option<SessionId>>,
+    session_policy: SubAgentSessionPolicy,
 }
 
 impl SubAgentTool {
@@ -24,7 +34,23 @@ impl SubAgentTool {
             name,
             description,
             sub_runtime: Mutex::new(sub_runtime),
-            sub_session_id,
+            sub_session_id: Mutex::new(Some(sub_session_id)),
+            session_policy: SubAgentSessionPolicy::Ephemeral,
+        }
+    }
+
+    pub fn with_persistent(
+        name: &'static str,
+        description: &'static str,
+        mut sub_runtime: AgentRuntime,
+    ) -> Self {
+        let sub_session_id = sub_runtime.create_session();
+        Self {
+            name,
+            description,
+            sub_runtime: Mutex::new(sub_runtime),
+            sub_session_id: Mutex::new(Some(sub_session_id)),
+            session_policy: SubAgentSessionPolicy::Persistent,
         }
     }
 }
@@ -76,10 +102,24 @@ impl Tool for SubAgentTool {
         let parent_event_bus = ctx.event_bus.clone();
         let parent_session_id = ctx.session_id.clone();
 
-        let events = {
+        let sub_session_id = match self.session_policy {
+            SubAgentSessionPolicy::Ephemeral => {
+                let mut runtime = self.sub_runtime.lock().await;
+                let new_id = runtime.create_session();
+                let mut sid_guard = self.sub_session_id.lock().await;
+                *sid_guard = Some(new_id.clone());
+                new_id
+            }
+            SubAgentSessionPolicy::Persistent => {
+                let sid_guard = self.sub_session_id.lock().await;
+                sid_guard.clone().expect("sub session not initialized")
+            }
+        };
+
+        let (events, _outcome) = {
             let mut runtime = self.sub_runtime.lock().await;
             runtime
-                .run_turn_stream(self.sub_session_id.clone(), task)
+                .run_turn_stream(sub_session_id, task)
                 .await
                 .map_err(|e| AgentError::ToolExecution {
                     name: self.name.to_string(),
@@ -134,8 +174,7 @@ fn event_to_value(event: &AgentEvent) -> Value {
             json!({"type": "AwaitingApproval", "title": request.title})
         }
         AgentEvent::Checkpoint { .. } => json!({"type": "Checkpoint"}),
-        AgentEvent::RunCompleted { .. } => json!({"type": "RunCompleted"}),
-        AgentEvent::RunFailed { error, .. } => json!({"type": "RunFailed", "error": error}),
+        AgentEvent::RunFinished { .. } => json!({"type": "RunFinished"}),
         AgentEvent::Custom { payload, .. } => json!({"type": "Custom", "payload": payload}),
     }
 }

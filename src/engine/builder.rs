@@ -12,6 +12,7 @@ use crate::types::{AgentConfig, ResponseFormat, RetryConfig};
 use super::approval::ApprovalHandler;
 use super::context::ContextWindowManager;
 use super::middleware::{Middleware, MiddlewareRef};
+use super::recovery::{StopOnError, ToolErrorRecovery};
 use super::session_store::{InMemorySessionStore, SessionStore};
 use super::AgentRuntime;
 
@@ -28,6 +29,7 @@ pub struct AgentBuilder {
     skill_prompter: Option<Arc<dyn SkillPrompter>>,
     skill_detail_tool_name: String,
     disable_skill_prompt_injection: bool,
+    error_recovery: Option<Arc<dyn ToolErrorRecovery>>,
 }
 
 impl AgentBuilder {
@@ -45,6 +47,7 @@ impl AgentBuilder {
             skill_prompter: None,
             skill_detail_tool_name: "get_skill_detail".to_string(),
             disable_skill_prompt_injection: false,
+            error_recovery: None,
         }
     }
 
@@ -143,6 +146,11 @@ impl AgentBuilder {
         self
     }
 
+    pub fn error_recovery(mut self, recovery: Arc<dyn ToolErrorRecovery>) -> Self {
+        self.error_recovery = Some(recovery);
+        self
+    }
+
     pub fn build(mut self) -> AgentRuntime {
         let prompter: Arc<dyn SkillPrompter> = self
             .skill_prompter
@@ -200,6 +208,9 @@ impl AgentBuilder {
         let session_store = self
             .session_store
             .unwrap_or_else(|| Arc::new(InMemorySessionStore::new()));
+        let error_recovery = self
+            .error_recovery
+            .unwrap_or_else(|| Arc::new(StopOnError));
 
         AgentRuntime {
             client: self.client,
@@ -215,6 +226,7 @@ impl AgentBuilder {
             session_store,
             skills: skill_refs,
             skill_prompter: prompter,
+            error_recovery,
         }
     }
 }
