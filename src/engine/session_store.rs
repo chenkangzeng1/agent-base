@@ -8,12 +8,14 @@ use super::AgentSession;
 
 /// Session Persistence Adapter
 ///
-/// `SessionStore` :
-/// - `AgentRuntime.sessions`  live state
-/// - `SessionStore`  persistence adapter save/load/list/delete
+/// `SessionStore` is an optional persistence interface for agent sessions.
+/// Under the lightweight kernel design:
+/// - `AgentRuntime.sessions` is the authoritative live state during execution
+/// - `SessionStore` is a persistence adapter for save/load/list/delete
 /// - Does not participate in the execution control flow
 ///
-/// The upper layer can inject custom implementations at build time (e.g. file, database).
+/// Replace the default [`InMemorySessionStore`] with a custom implementation
+/// to persist sessions to a database, filesystem, or other storage.
 #[async_trait]
 pub trait SessionStore: Send + Sync {
     /// Save a session snapshot to the persistence layer

@@ -13,8 +13,9 @@ pub enum ToolErrorAction {
 
 /// Recovery strategy after a tool execution failure
 ///
-/// Defaults to StopOnError, following the lightweight kernel""
-/// Upper-layer agents can inject custom strategies such as RetryOnError.
+/// Defaults to [`StopOnError`], following the lightweight kernel design of
+/// conservative defaults and strategy injection.
+/// Upper-layer agents can inject custom strategies such as [`RetryOnError`].
 #[async_trait]
 pub trait ToolErrorRecovery: Send + Sync {
     async fn on_error(
@@ -25,9 +26,10 @@ pub trait ToolErrorRecovery: Send + Sync {
     ) -> AgentResult<ToolErrorAction>;
 }
 
-/// Default: stop on tool failure
+/// Default strategy: stop on tool failure.
 ///
-/// This is the most conservative strategy. The kernel only reports the fact, without making business recovery decisions.
+/// This is the most conservative strategy. The kernel only reports the fact
+/// without making business recovery decisions for the upper layer.
 pub struct StopOnError;
 
 #[async_trait]

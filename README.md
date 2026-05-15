@@ -28,64 +28,177 @@ A lightweight **Agent Runtime Kernel** for building AI agents in Rust.
 
 ## Quick Start
 
+### 1. Define a Tool
+
+Any capability you want your agent to have is expressed as a `Tool`:
+
 ```rust
-use std::sync::Arc;
-use agent_base::{
-    AgentBuilder, AgentEvent, AgentResult, RunOutcome,
-    AnthropicClient, Tool, ToolContext, ToolOutput,
-};
+use agent_base::{Tool, ToolContext, ToolOutput, ToolControlFlow, AgentResult};
+use async_trait::async_trait;
 use serde_json::{json, Value};
 
-// 1. Define a tool
-struct GreetTool;
+struct WeatherTool;
 
-#[async_trait::async_trait]
-impl Tool for GreetTool {
-    fn name(&self) -> &'static str { "greet" }
+#[async_trait]
+impl Tool for WeatherTool {
+    fn name(&self) -> &'static str { "get_weather" }
 
     fn definition(&self) -> Value {
         json!({
             "type": "function",
             "function": {
-                "name": "greet",
+                "name": "get_weather",
+                "description": "Get current weather for a city",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "name": { "type": "string" }
+                        "city": { "type": "string", "description": "City name" }
                     },
-                    "required": ["name"]
+                    "required": ["city"]
                 }
             }
         })
     }
 
     async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
-        let name = args["name"].as_str().unwrap_or("world");
+        let city = args["city"].as_str().unwrap_or("unknown");
         Ok(ToolOutput {
-            summary: format!("Hello, {}!", name),
+            summary: format!("Weather in {}: 22°C, sunny", city),
             raw: None,
-            control_flow: ToolControlFlow::Break,
+            control_flow: ToolControlFlow::Continue,
             truncated: false,
         })
     }
 }
+```
 
-// 2. Build the runtime
-let client = Arc::new(AnthropicClient::new(
-    "sk-ant-xxx".into(),
-    "claude-3-5-sonnet-20241022".into(),
-    None,
-));
-let mut runtime = AgentBuilder::new(client)
-    .system_prompt("You are a friendly assistant.")
-    .register_tool(GreetTool)
+### 2. Build the Agent
+
+```rust
+use std::sync::Arc;
+use agent_base::{
+    AgentBuilder, AgentEvent, AgentResult, RunOutcome,
+    OpenAiClient, StopOnError,
+};
+
+#[tokio::main]
+async fn main() -> AgentResult<()> {
+    let llm = Arc::new(OpenAiClient::new(
+        std::env::var("OPENAI_API_KEY").unwrap(),
+        "gpt-4o".into(),
+        None,
+    ));
+
+    let mut runtime = AgentBuilder::new(llm)
+        .system_prompt("You are a helpful weather assistant.")
+        .register_tool(WeatherTool)
+        .build();
+
+    let session_id = runtime.create_session();
+    let (events, outcome) = runtime.run_turn_stream(
+        session_id,
+        "What's the weather in Tokyo?",
+    ).await?;
+
+    for event in &events {
+        match event {
+            AgentEvent::TextDelta { text, .. } => print!("{}", text),
+            AgentEvent::ToolCallStarted { tool_name, .. } => {
+                println!("\n[Calling tool: {}]", tool_name);
+            }
+            AgentEvent::ToolCallFinished { summary, .. } => {
+                println!("[Tool result: {}]", summary);
+            }
+            AgentEvent::RunFinished { .. } => println!("\n[Done]"),
+            _ => {}
+        }
+    }
+
+    assert_eq!(outcome, RunOutcome::Completed);
+    Ok(())
+}
+```
+
+### 3. Handle Tool Errors
+
+By default, tool failures stop the run. For self-healing agents (e.g. code agents that retry compilation), inject `RetryOnError`:
+
+```rust
+use agent_base::RetryOnError;
+
+let mut runtime = AgentBuilder::new(llm)
+    .register_tool(MyTool)
+    .error_recovery(Arc::new(RetryOnError))  // ← retry on failure
+    .build();
+```
+
+### 4. Add Approval for Sensitive Tools
+
+```rust
+use agent_base::{
+    ApprovalHandler, ApprovalRequest, ApprovalDecision,
+    ToolPolicy, RiskLevel,
+};
+
+struct MyApprovalHandler;
+#[async_trait::async_trait]
+impl ApprovalHandler for MyApprovalHandler {
+    async fn approve(&self, _req: ApprovalRequest) -> AgentResult<ApprovalDecision> {
+        // Ask user via UI, CLI, etc.
+        Ok(ApprovalDecision::AllowOnce)
+    }
+}
+
+struct MyToolPolicy;
+impl ToolPolicy for MyToolPolicy {
+    fn evaluate_approval(&self, tool_name: &str, _args: &Value, _json: &str)
+        -> Option<ApprovalRequest>
+    {
+        if tool_name == "dangerous_tool" {
+            Some(ApprovalRequest {
+                title: "Confirm action".into(),
+                message: format!("Execute `{}`?", tool_name),
+                risk_level: RiskLevel::Sensitive,
+                ..Default::default()
+            })
+        } else {
+            None  // auto-allow
+        }
+    }
+}
+
+let mut runtime = AgentBuilder::new(llm)
+    .register_tool(DangerousTool)
+    .tool_policy(Arc::new(MyToolPolicy))
+    .approval_handler(Arc::new(MyApprovalHandler))
+    .build();
+```
+
+### 5. Use a Sub-Agent
+
+```rust
+use agent_base::SubAgentTool;
+
+// Build a sub-agent runtime
+let sub_llm = Arc::new(OpenAiClient::new(key, model, None));
+let sub_runtime = AgentBuilder::new(sub_llm)
+    .system_prompt("You are a math expert.")
     .build();
 
-// 3. Run a turn
-let session_id = runtime.create_session();
-let (events, outcome) = runtime.run_turn_stream(session_id, "Greet Alice").await?;
-assert_eq!(outcome, RunOutcome::Completed);
+// Wrap it as a tool
+let math_tool = SubAgentTool::new(
+    "calculate",
+    "Delegate math problems to a math expert",
+    sub_runtime,
+);
+
+// Register in the parent agent
+let mut parent = AgentBuilder::new(parent_llm)
+    .register_tool(math_tool)
+    .build();
 ```
+
+Each sub-agent call creates a fresh session by default. Use `SubAgentTool::with_persistent()` to share context across calls.
 
 ## Examples
 
