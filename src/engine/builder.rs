@@ -1,10 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
 use tokio::sync::broadcast;
 
 use crate::llm::LlmClient;
+use crate::skill::{Skill, SkillDetailTool, SkillPrompter, LazySkillPrompter};
 use crate::tool::{Tool, ToolPolicy, ToolRegistry};
 use crate::types::{AgentConfig, ResponseFormat, RetryConfig};
 
@@ -23,6 +24,10 @@ pub struct AgentBuilder {
     middlewares: Vec<MiddlewareRef>,
     context_manager: Option<ContextWindowManager>,
     session_store: Option<Arc<dyn SessionStore>>,
+    skills: Vec<Arc<dyn Skill>>,
+    skill_prompter: Option<Arc<dyn SkillPrompter>>,
+    skill_detail_tool_name: String,
+    disable_skill_prompt_injection: bool,
 }
 
 impl AgentBuilder {
@@ -36,6 +41,10 @@ impl AgentBuilder {
             middlewares: Vec::new(),
             context_manager: None,
             session_store: None,
+            skills: Vec::new(),
+            skill_prompter: None,
+            skill_detail_tool_name: "get_skill_detail".to_string(),
+            disable_skill_prompt_injection: false,
         }
     }
 
@@ -114,11 +123,84 @@ impl AgentBuilder {
         self
     }
 
-    pub fn build(self) -> AgentRuntime {
+    pub fn register_skill(mut self, skill: impl Skill + 'static) -> Self {
+        self.skills.push(Arc::new(skill));
+        self
+    }
+
+    pub fn skill_prompter(mut self, prompter: Arc<dyn SkillPrompter>) -> Self {
+        self.skill_prompter = Some(prompter);
+        self
+    }
+
+    pub fn disable_skill_prompt_injection(mut self) -> Self {
+        self.disable_skill_prompt_injection = true;
+        self
+    }
+
+    pub fn skill_detail_tool_name(mut self, name: impl Into<String>) -> Self {
+        self.skill_detail_tool_name = name.into();
+        self
+    }
+
+    pub fn build(mut self) -> AgentRuntime {
+        let prompter: Arc<dyn SkillPrompter> = self
+            .skill_prompter
+            .unwrap_or_else(|| Arc::new(LazySkillPrompter::new()));
+
+        let mut skill_refs: Vec<Arc<dyn Skill>> = Vec::new();
+        let mut known_tool_names: HashSet<String> = self
+            .tools
+            .definitions()
+            .iter()
+            .filter_map(|d| {
+                d.get("function")
+                    .and_then(|f| f.get("name"))
+                    .and_then(|n| n.as_str())
+                    .map(|s| s.to_string())
+            })
+            .collect();
+
+        for skill in self.skills {
+            for tool in skill.tools() {
+                let tool_name = tool.name().to_string();
+                if known_tool_names.contains(&tool_name) {
+                    panic!(
+                        "工具名冲突: `{}` 已注册 (Skill `{}` 中的工具与已有工具重名)",
+                        tool_name,
+                        skill.name()
+                    );
+                }
+                known_tool_names.insert(tool_name.clone());
+                self.tools.register_arc(tool);
+            }
+            skill_refs.push(skill);
+        }
+
+        if !skill_refs.is_empty() && !self.disable_skill_prompt_injection {
+            let skill_prompt = prompter.build_prompt(&skill_refs);
+            if !skill_prompt.is_empty() {
+                let new_prompt = match self.config.system_prompt.take() {
+                    Some(existing) => format!("{}\n\n---\n\n{}", existing, skill_prompt),
+                    None => skill_prompt,
+                };
+                self.config.system_prompt = Some(new_prompt);
+            }
+        }
+
+        if !skill_refs.is_empty() {
+            let detail_tool = SkillDetailTool::new(
+                skill_refs.clone(),
+                std::mem::take(&mut self.skill_detail_tool_name),
+            );
+            self.tools.register(detail_tool);
+        }
+
         let (event_bus, _) = broadcast::channel(2048);
-        let session_store = self.session_store.unwrap_or_else(|| {
-            Arc::new(InMemorySessionStore::new())
-        });
+        let session_store = self
+            .session_store
+            .unwrap_or_else(|| Arc::new(InMemorySessionStore::new()));
+
         AgentRuntime {
             client: self.client,
             config: self.config,
@@ -131,6 +213,8 @@ impl AgentBuilder {
             sessions: HashMap::new(),
             context_manager: self.context_manager,
             session_store,
+            skills: skill_refs,
+            skill_prompter: prompter,
         }
     }
 }

@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::llm::LlmClient;
+use crate::skill::{Skill, SkillPrompter};
 use crate::tool::{ToolPolicy, ToolRegistry};
 use crate::types::{AgentConfig, MessageRole, AgentError, CheckpointData, CheckpointStep};
 use tokio::sync::broadcast;
@@ -35,6 +36,9 @@ pub struct AgentRuntime {
     pub(crate) sessions: HashMap<SessionId, AgentSession>,
     pub(crate) context_manager: Option<ContextWindowManager>,
     pub(crate) session_store: Arc<dyn SessionStore>,
+    pub(crate) skills: Vec<Arc<dyn Skill>>,
+    #[allow(dead_code)]
+    pub(crate) skill_prompter: Arc<dyn SkillPrompter>,
 }
 
 impl AgentRuntime {
@@ -77,6 +81,10 @@ impl AgentRuntime {
 
     pub fn session_store(&self) -> &Arc<dyn SessionStore> {
         &self.session_store
+    }
+
+    pub fn skills(&self) -> &[Arc<dyn Skill>] {
+        &self.skills
     }
 
     fn cached_approval(&self, session_id: &SessionId, action_key: &str) -> bool {
