@@ -21,7 +21,7 @@ Thank you for your interest in contributing!
 
 ```bash
 # Clone and build
-git clone https://github.com/YOUR_USERNAME/agent-base.git
+git clone https://github.com/chenkangzeng1/agent-base.git
 cd agent-base
 cargo build
 
