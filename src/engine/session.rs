@@ -113,4 +113,34 @@ impl AgentSession {
             content,
         ));
     }
+
+    pub fn close_dangling_tool_calls(&mut self, error_summary: &str) {
+        let assistant_idx = self.chat_messages.iter().rposition(|m| {
+            matches!(m, ChatMessage::Assistant { tool_calls: Some(tc), .. } if !tc.is_empty())
+        });
+
+        let Some(assistant_idx) = assistant_idx else {
+            return;
+        };
+
+        let ChatMessage::Assistant { tool_calls: Some(tc), .. } = &self.chat_messages[assistant_idx] else {
+            return;
+        };
+
+        let all_ids: Vec<String> = tc.iter().map(|t| t.id.clone()).collect();
+
+        let answered_ids: Vec<String> = self.chat_messages[assistant_idx + 1..]
+            .iter()
+            .filter_map(|m| match m {
+                ChatMessage::Tool { tool_call_id, .. } => Some(tool_call_id.clone()),
+                _ => None,
+            })
+            .collect();
+
+        for id in &all_ids {
+            if !answered_ids.iter().any(|a| a == id) {
+                self.push_tool_result(id, error_summary);
+            }
+        }
+    }
 }

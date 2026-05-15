@@ -85,6 +85,7 @@ pub struct AgentConfig {
     pub max_tool_output_chars: Option<usize>,
     pub response_format: Option<ResponseFormat>,
     pub llm_retry: Option<RetryConfig>,
+    pub tool_error_retry_prompt: Option<String>,
 }
 
 impl Default for AgentConfig {
@@ -98,6 +99,7 @@ impl Default for AgentConfig {
             max_tool_output_chars: None,
             response_format: None,
             llm_retry: None,
+            tool_error_retry_prompt: None,
         }
     }
 }

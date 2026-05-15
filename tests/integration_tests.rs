@@ -3,8 +3,9 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use agent_base::{
-    AgentBuilder, AgentEvent, AgentResult, ApprovalDecision, ApprovalHandler,
-    ApprovalRequest, ChatMessage, LlmCapabilities, LlmClient, ResponseFormat, RiskLevel, RunOutcome, StreamChunk, Tool,
+    AgentBuilder, AgentError, AgentEvent, AgentResult, ApprovalDecision, ApprovalHandler,
+    ApprovalRequest, ChatMessage, LlmCapabilities, LlmClient, ResponseFormat, RetryOnError,
+    RiskLevel, RunOutcome, StreamChunk, Tool,
     ToolContext, ToolControlFlow, ToolOutput, ToolPolicy,
 };
 use async_trait::async_trait;
@@ -751,4 +752,482 @@ async fn test_sub_agent_tool() {
         matches!(m, ChatMessage::Assistant { content, .. } if content.as_deref() == Some("parent final reply"))
     });
     assert!(has_parent_final, "Should have parent final reply");
+}
+
+// =========================================================================
+// 7. handle_tool_error 全面测试
+// =========================================================================
+
+fn tool_call_chunk(id: &str, name: &str, args: Value) -> StreamChunk {
+    StreamChunk::ToolCall(serde_json::json!({
+        "delta": {
+            "tool_calls": [{
+                "id": id,
+                "function": {
+                    "name": name,
+                    "arguments": args.to_string()
+                }
+            }]
+        }
+    }))
+}
+
+struct FailingTool {
+    name: &'static str,
+    error: String,
+    call_count: Mutex<usize>,
+}
+
+impl FailingTool {
+    fn new(name: &'static str, error: impl Into<String>) -> Self {
+        Self { name, error: error.into(), call_count: Mutex::new(0) }
+    }
+}
+
+#[async_trait]
+impl Tool for FailingTool {
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": "a tool that always fails",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "input": { "type": "string" }
+                    }
+                }
+            }
+        })
+    }
+
+    async fn call(&self, _args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
+        *self.call_count.lock().unwrap() += 1;
+        Err(AgentError::internal(&self.error))
+    }
+}
+
+fn assert_valid_message_history(messages: &[ChatMessage]) {
+    for (i, msg) in messages.iter().enumerate() {
+        if let ChatMessage::Assistant { tool_calls: Some(tc), .. } = msg {
+            assert!(!tc.is_empty(), "message[{i}]: Assistant tool_calls must not be empty");
+            let mut found = std::collections::HashSet::new();
+            for j in i + 1..messages.len() {
+                if let ChatMessage::Tool { tool_call_id, .. } = &messages[j] {
+                    found.insert(tool_call_id.clone());
+                } else if matches!(&messages[j], ChatMessage::User { .. }) {
+                    break;
+                } else if matches!(&messages[j], ChatMessage::Assistant { .. }) {
+                    break;
+                }
+            }
+            for tc_msg in tc {
+                assert!(
+                    found.contains(&tc_msg.id),
+                    "message[{i}]: Assistant tool_calls references id={} but no Tool result follows before next User/Assistant",
+                    tc_msg.id
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn tool_execution_error_retry_llm_receives_error_and_recovers() {
+    let llm = Arc::new(MockLlmClient::new(vec![
+        vec![
+            tool_call_chunk("call_1", "failing", json!({"input": "test"})),
+            StreamChunk::Stop,
+        ],
+        vec![
+            StreamChunk::Text("I saw the error and will try a different approach.".to_string()),
+            StreamChunk::Stop,
+        ],
+    ]));
+
+    let failing_tool = FailingTool::new("failing", "connection refused: ssh timeout");
+
+    let mut runtime = AgentBuilder::new(llm.clone())
+        .register_tool(failing_tool)
+        .system_prompt("sys")
+        .error_recovery(Arc::new(RetryOnError))
+        .build();
+
+    let session_id = runtime.create_session();
+    let result = runtime.run_turn_stream(session_id.clone(), "do something").await;
+    assert!(result.is_ok(), "Expected ok: {result:?}");
+
+    let (events, outcome) = result.unwrap();
+    assert_eq!(outcome, RunOutcome::Completed);
+
+    let session = runtime.session(&session_id).unwrap();
+    let messages = session.chat_messages();
+    assert_valid_message_history(messages);
+
+    let retry_user_msg = messages.iter().any(|m| {
+        matches!(m, ChatMessage::User { content, .. }
+            if content.contains("failing") && content.contains("connection refused"))
+    });
+    assert!(retry_user_msg, "LLM should receive error details in retry message");
+
+    let recovery_msg = messages.iter().any(|m| {
+        matches!(m, ChatMessage::Assistant { content, .. }
+            if content.as_deref() == Some("I saw the error and will try a different approach."))
+    });
+    assert!(recovery_msg, "LLM should respond after seeing error");
+
+    assert_eq!(llm.call_count(), 2, "Should make 2 LLM calls (tool call then recovery)");
+
+    let has_run_finished = events.iter().any(|e| matches!(e, AgentEvent::RunFinished { .. }));
+    assert!(has_run_finished, "Should emit RunFinished on completion");
+}
+
+#[tokio::test]
+async fn tool_execution_error_stop_on_error_default() {
+    let llm = Arc::new(MockLlmClient::new(vec![vec![
+        tool_call_chunk("call_1", "failing", json!({"input": "test"})),
+        StreamChunk::Stop,
+    ]]));
+
+    let failing_tool = FailingTool::new("failing", "ssh connection lost");
+
+    let mut runtime = AgentBuilder::new(llm.clone())
+        .register_tool(failing_tool)
+        .system_prompt("sys")
+        .build();
+
+    let session_id = runtime.create_session();
+    let result = runtime.run_turn_stream(session_id, "do something").await;
+    assert!(result.is_ok(), "Expected ok: {result:?}");
+
+    let (events, outcome) = result.unwrap();
+    assert!(matches!(outcome, RunOutcome::Failed { .. }), "Should be Failed, got: {outcome:?}");
+
+    let has_run_finished = events.iter().any(|e| matches!(e, AgentEvent::RunFinished { .. }));
+    assert!(has_run_finished, "Should emit RunFinished even on failure");
+
+    assert_eq!(llm.call_count(), 1, "Should only make 1 LLM call before stopping");
+}
+
+#[tokio::test]
+async fn tool_args_parse_error_fed_back_to_llm_on_retry() {
+    let llm = Arc::new(MockLlmClient::new(vec![
+        vec![
+            StreamChunk::ToolCall(json!({
+                "delta": {
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "function": {
+                            "name": "echo",
+                            "arguments": "not valid json {{{"
+                        }
+                    }]
+                }
+            })),
+            StreamChunk::Stop,
+        ],
+        vec![
+            StreamChunk::Text("I'll fix the JSON".to_string()),
+            StreamChunk::Stop,
+        ],
+    ]));
+
+    let mut runtime = AgentBuilder::new(llm.clone())
+        .register_tool(EchoTool)
+        .system_prompt("sys")
+        .error_recovery(Arc::new(RetryOnError))
+        .build();
+
+    let session_id = runtime.create_session();
+    let result = runtime.run_turn_stream(session_id.clone(), "test").await;
+    assert!(result.is_ok(), "Expected ok: {result:?}");
+
+    let (_events, outcome) = result.unwrap();
+    assert_eq!(outcome, RunOutcome::Completed);
+
+    let session = runtime.session(&session_id).unwrap();
+    let messages = session.chat_messages();
+    assert_valid_message_history(messages);
+
+    let has_parse_error = messages.iter().any(|m| {
+        matches!(m, ChatMessage::User { content, .. }
+            if content.contains("echo") && content.contains("argument parsing failed"))
+    });
+    assert!(has_parse_error, "LLM should receive parse error details");
+
+    assert_eq!(llm.call_count(), 2);
+}
+
+#[tokio::test]
+async fn consecutive_tool_failures_message_integrity() {
+    let llm = Arc::new(MockLlmClient::new(vec![
+        vec![
+            tool_call_chunk("call_1", "failing", json!({"input": "a"})),
+            StreamChunk::Stop,
+        ],
+        vec![
+            tool_call_chunk("call_2", "failing", json!({"input": "b"})),
+            StreamChunk::Stop,
+        ],
+        vec![
+            StreamChunk::Text("I give up.".to_string()),
+            StreamChunk::Stop,
+        ],
+    ]));
+
+    let failing_tool = FailingTool::new("failing", "persistent failure");
+
+    let mut runtime = AgentBuilder::new(llm.clone())
+        .register_tool(failing_tool)
+        .system_prompt("sys")
+        .error_recovery(Arc::new(RetryOnError))
+        .build();
+
+    let session_id = runtime.create_session();
+    let result = runtime.run_turn_stream(session_id.clone(), "test").await;
+    assert!(result.is_ok(), "Expected ok: {result:?}");
+
+    let session = runtime.session(&session_id).unwrap();
+    let messages = session.chat_messages();
+    assert_valid_message_history(messages);
+
+    let failure_count = messages.iter().filter(|m| {
+        matches!(m, ChatMessage::User { content, .. } if content.contains("persistent failure"))
+    }).count();
+    assert!(failure_count >= 2, "Should have at least 2 failure messages: got {failure_count}");
+}
+
+#[tokio::test]
+async fn approval_deny_with_stop_messages_remain_valid() {
+    let llm = Arc::new(MockLlmClient::new(vec![vec![
+        tool_call_chunk("call_1", "echo", json!({"message": "test"})),
+        StreamChunk::Stop,
+    ]]));
+
+    struct DenyHandler;
+    #[async_trait]
+    impl ApprovalHandler for DenyHandler {
+        async fn approve(&self, _request: ApprovalRequest) -> AgentResult<ApprovalDecision> {
+            Ok(ApprovalDecision::Deny)
+        }
+    }
+
+    struct RequireApprovalPolicy;
+    impl ToolPolicy for RequireApprovalPolicy {
+        fn evaluate_approval(&self, _: &str, _: &Value, _: &str) -> Option<ApprovalRequest> {
+            Some(ApprovalRequest {
+                title: "Test".to_string(),
+                message: "Require approval".to_string(),
+                action_key: None,
+                risk_level: RiskLevel::Sensitive,
+                raw: None,
+            })
+        }
+        fn on_pre_call(&self, _: &str, _: &Value, _: &ToolContext) {}
+        fn on_post_call(&self, _: &str, _: &Value, _: &ToolOutput, _: &ToolContext) {}
+    }
+
+    let mut runtime = AgentBuilder::new(llm.clone())
+        .register_tool(EchoTool)
+        .approval_handler(Arc::new(DenyHandler))
+        .tool_policy(Arc::new(RequireApprovalPolicy))
+        .build();
+
+    let session_id = runtime.create_session();
+    let result = runtime.run_turn_stream(session_id.clone(), "test").await;
+    assert!(result.is_ok(), "Expected ok: {result:?}");
+
+    let (_events, outcome) = result.unwrap();
+    assert!(matches!(outcome, RunOutcome::Failed { .. }), "StopOnError should produce Failed, got: {outcome:?}");
+
+    let session = runtime.session(&session_id).unwrap();
+    let messages = session.chat_messages();
+    assert_valid_message_history(messages);
+}
+
+#[tokio::test]
+async fn approval_deny_with_retry_tool_result_still_present() {
+    let llm = Arc::new(MockLlmClient::new(vec![
+        vec![
+            tool_call_chunk("call_1", "echo", json!({"message": "test"})),
+            StreamChunk::Stop,
+        ],
+        vec![
+            StreamChunk::Text("I understand you denied that.".to_string()),
+            StreamChunk::Stop,
+        ],
+    ]));
+
+    struct DenyHandler;
+    #[async_trait]
+    impl ApprovalHandler for DenyHandler {
+        async fn approve(&self, _request: ApprovalRequest) -> AgentResult<ApprovalDecision> {
+            Ok(ApprovalDecision::Deny)
+        }
+    }
+
+    struct RequireApprovalPolicy;
+    impl ToolPolicy for RequireApprovalPolicy {
+        fn evaluate_approval(&self, _: &str, _: &Value, _: &str) -> Option<ApprovalRequest> {
+            Some(ApprovalRequest {
+                title: "Test".to_string(),
+                message: "Require approval".to_string(),
+                action_key: None,
+                risk_level: RiskLevel::Sensitive,
+                raw: None,
+            })
+        }
+        fn on_pre_call(&self, _: &str, _: &Value, _: &ToolContext) {}
+        fn on_post_call(&self, _: &str, _: &Value, _: &ToolOutput, _: &ToolContext) {}
+    }
+
+    let mut runtime = AgentBuilder::new(llm.clone())
+        .register_tool(EchoTool)
+        .approval_handler(Arc::new(DenyHandler))
+        .tool_policy(Arc::new(RequireApprovalPolicy))
+        .error_recovery(Arc::new(RetryOnError))
+        .build();
+
+    let session_id = runtime.create_session();
+    let result = runtime.run_turn_stream(session_id.clone(), "test").await;
+    assert!(result.is_ok(), "Expected ok: {result:?}");
+
+    let (_events, outcome) = result.unwrap();
+    assert_eq!(outcome, RunOutcome::Completed);
+
+    let session = runtime.session(&session_id).unwrap();
+    let messages = session.chat_messages();
+    assert_valid_message_history(messages);
+
+    let has_denial = messages.iter().any(|m| {
+        matches!(m, ChatMessage::Tool { content, .. } if content.contains("[Action Denied]"))
+    });
+    assert!(has_denial, "Denial tool result should be visible to LLM");
+
+    let has_llm_recovery = messages.iter().any(|m| {
+        matches!(m, ChatMessage::Assistant { content, .. } if content.as_deref() == Some("I understand you denied that."))
+    });
+    assert!(has_llm_recovery, "LLM should respond to denial");
+}
+
+#[tokio::test]
+async fn custom_retry_prompt_template_replacements() {
+    let llm = Arc::new(MockLlmClient::new(vec![
+        vec![
+            tool_call_chunk("call_1", "failing", json!({"input": "x"})),
+            StreamChunk::Stop,
+        ],
+        vec![
+            StreamChunk::Text("got it".to_string()),
+            StreamChunk::Stop,
+        ],
+    ]));
+
+    let failing_tool = FailingTool::new("failing", "disk full");
+
+    let mut runtime = AgentBuilder::new(llm.clone())
+        .register_tool(failing_tool)
+        .system_prompt("sys")
+        .error_recovery(Arc::new(RetryOnError))
+        .tool_error_retry_prompt("[自定义] 工具 {tool_names} 失败：{error}，请重试")
+        .build();
+
+    let session_id = runtime.create_session();
+    let result = runtime.run_turn_stream(session_id.clone(), "test").await;
+    assert!(result.is_ok(), "Expected ok: {result:?}");
+
+    let session = runtime.session(&session_id).unwrap();
+    let messages = session.chat_messages();
+
+    let custom_msg = messages.iter().find(|m| {
+        matches!(m, ChatMessage::User { content, .. }
+            if content.contains("[自定义]") && content.contains("failing") && content.contains("disk full"))
+    });
+    assert!(custom_msg.is_some(), "Custom template should have placeholders replaced");
+    let msg_content = match custom_msg.unwrap() {
+        ChatMessage::User { content, .. } => content,
+        _ => unreachable!(),
+    };
+    assert!(msg_content.contains("[自定义] 工具 failing 失败：")
+        && msg_content.contains("disk full")
+        && msg_content.contains("请重试"),
+        "Template replacement mismatch: {msg_content}");
+}
+
+#[tokio::test]
+async fn run_with_handler_cancelled_emits_run_finished_and_saves() {
+    let llm = Arc::new(MockLlmClient::new(vec![
+        vec![
+            tool_call_chunk("call_1", "echo", json!({"message": "test"})),
+            StreamChunk::Stop,
+        ],
+        vec![
+            StreamChunk::Text("should not be reached".to_string()),
+            StreamChunk::Stop,
+        ],
+    ]));
+
+    let mut runtime = AgentBuilder::new(llm.clone())
+        .register_tool(EchoTool)
+        .system_prompt("sys")
+        .build();
+
+    let session_id = runtime.create_session();
+
+    let result = runtime
+        .run_turn_with_handler(session_id.clone(), "test", |event| {
+            if matches!(event, AgentEvent::ToolCallStarted { .. }) {
+                return Err(AgentError::Cancelled);
+            }
+            Ok(())
+        })
+        .await;
+
+    assert!(result.is_err(), "Should be cancelled: {result:?}");
+    let err = result.unwrap_err();
+    assert!(err.is_cancelled(), "Should be Cancelled error, got: {err}");
+
+    let stored_ok = runtime.session_store().load(&session_id).await.is_ok_and(|s| s.is_some());
+    assert!(stored_ok, "Session should be saved even on cancellation");
+}
+
+#[tokio::test]
+async fn retry_then_empty_llm_response_continues() {
+    let llm = Arc::new(MockLlmClient::new(vec![
+        vec![
+            tool_call_chunk("call_1", "failing", json!({"input": "test"})),
+            StreamChunk::Stop,
+        ],
+        vec![StreamChunk::Text(String::new()), StreamChunk::Stop],
+        vec![
+            StreamChunk::Text("recovered after empty".to_string()),
+            StreamChunk::Stop,
+        ],
+    ]));
+
+    let failing_tool = FailingTool::new("failing", "transient error");
+
+    let mut runtime = AgentBuilder::new(llm.clone())
+        .register_tool(failing_tool)
+        .system_prompt("sys")
+        .error_recovery(Arc::new(RetryOnError))
+        .build();
+
+    let session_id = runtime.create_session();
+    let result = runtime.run_turn_stream(session_id.clone(), "test").await;
+    assert!(result.is_ok(), "Expected ok: {result:?}");
+
+    let (_events, outcome) = result.unwrap();
+    assert_eq!(outcome, RunOutcome::Completed);
+
+    let session = runtime.session(&session_id).unwrap();
+    let messages = session.chat_messages();
+    assert_valid_message_history(messages);
+
+    assert_eq!(llm.call_count(), 3, "Should make 3 LLM calls (tool fail + empty + recovery)");
 }

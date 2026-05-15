@@ -151,6 +151,11 @@ impl AgentBuilder {
         self
     }
 
+    pub fn tool_error_retry_prompt(mut self, prompt: impl Into<String>) -> Self {
+        self.config.tool_error_retry_prompt = Some(prompt.into());
+        self
+    }
+
     pub fn build(mut self) -> AgentRuntime {
         let prompter: Arc<dyn SkillPrompter> = self
             .skill_prompter
