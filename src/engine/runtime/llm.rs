@@ -64,6 +64,7 @@ impl AgentRuntime {
     {
         let _span = info_span!("llm_turn", session_id = session_id.id).entered();
         tracing::debug!(session_id = session_id.id, msg_count = messages.len(), tool_count = tool_definitions.len(), "calling LLM");
+        drop(_span);
         let stream = self
             .call_llm_with_retry(messages, tool_definitions, session_id, event_rx, on_event)
             .await?;

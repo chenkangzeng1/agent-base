@@ -6,8 +6,9 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use std::pin::Pin;
 
-use crate::types::{AgentResult, AgentError, ChatMessage, ResponseFormat, ToolCallMessage};
+use crate::types::{AgentResult, AgentError, ChatMessage, ImageAttachment, ImageDetail, ResponseFormat, ToolCallMessage};
 use super::{LlmCapabilities, LlmClient, StreamChunk, UsageInfo};
+
 
 pub struct OpenAiClient {
     api_key: String,
@@ -33,10 +34,24 @@ impl OpenAiClient {
                 "role": "system",
                 "content": content,
             }),
-            ChatMessage::User { content } => json!({
-                "role": "user",
-                "content": content,
-            }),
+            ChatMessage::User { content, images } => {
+                if images.is_empty() {
+                    json!({
+                        "role": "user",
+                        "content": content,
+                    })
+                } else {
+                    let mut content_parts: Vec<Value> = Vec::new();
+                    content_parts.push(json!({"type": "text", "text": content}));
+                    for img in images {
+                        content_parts.push(Self::image_to_json(img));
+                    }
+                    json!({
+                        "role": "user",
+                        "content": content_parts,
+                    })
+                }
+            }
             ChatMessage::Assistant { content, reasoning_content, tool_calls } => {
                 let mut obj = serde_json::Map::new();
                 obj.insert("role".to_string(), json!("assistant"));
@@ -70,6 +85,45 @@ impl OpenAiClient {
                 "arguments": tc.arguments,
             }
         })
+    }
+
+    fn image_to_json(img: &ImageAttachment) -> Value {
+        match img {
+            ImageAttachment::Url { url, detail } => {
+                let mut obj = serde_json::Map::new();
+                obj.insert("url".to_string(), json!(url));
+                if let Some(d) = detail {
+                    let detail_str = match d {
+                        ImageDetail::Low => "low",
+                        ImageDetail::High => "high",
+                        ImageDetail::Auto => "auto",
+                    };
+                    obj.insert("detail".to_string(), json!(detail_str));
+                }
+                json!({
+                    "type": "image_url",
+                    "image_url": Value::Object(obj),
+                })
+            }
+            ImageAttachment::Base64 { data, media_type, detail } => {
+                let mime = media_type.as_deref().unwrap_or("image/jpeg");
+                let data_url = format!("data:{mime};base64,{data}");
+                let mut obj = serde_json::Map::new();
+                obj.insert("url".to_string(), json!(data_url));
+                if let Some(d) = detail {
+                    let detail_str = match d {
+                        ImageDetail::Low => "low",
+                        ImageDetail::High => "high",
+                        ImageDetail::Auto => "auto",
+                    };
+                    obj.insert("detail".to_string(), json!(detail_str));
+                }
+                json!({
+                    "type": "image_url",
+                    "image_url": Value::Object(obj),
+                })
+            }
+        }
     }
 
     fn messages_to_json(messages: &[ChatMessage]) -> Vec<Value> {

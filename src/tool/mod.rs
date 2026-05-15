@@ -9,7 +9,12 @@ use crate::llm::LlmClient;
 use crate::types::{AgentResult, AgentError, AgentEvent, SessionId};
 use crate::engine::SessionStore;
 
+pub mod mcp;
 pub mod policy;
+pub mod subagent;
+
+pub use mcp::{McpClient, McpToolInfo, McpToolRegistry};
+pub use subagent::SubAgentTool;
 
 pub use policy::ToolPolicy;
 
@@ -110,6 +115,10 @@ pub struct ToolRegistry {
 impl ToolRegistry {
     pub fn register(&mut self, tool: impl Tool + 'static) {
         self.tools.insert(tool.name().to_string(), Arc::new(tool));
+    }
+
+    pub fn register_arc(&mut self, tool: Arc<dyn Tool>) {
+        self.tools.insert(tool.name().to_string(), tool);
     }
 
     pub fn get(&self, name: &str) -> Option<ToolRef> {

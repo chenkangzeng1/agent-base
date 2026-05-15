@@ -50,6 +50,10 @@ pub use engine::{
 // 工具
 // ---------------------------------------------------------------------------
 pub use tool::{
+    McpClient,
+    McpToolInfo,
+    McpToolRegistry,
+    SubAgentTool,
     Tool,
     ToolContext,
     ToolControlFlow,
@@ -75,9 +79,14 @@ pub use types::{AgentError, AgentResult};
 pub use types::{
     AgentConfig,
     ChatMessage,
+    CheckpointData,
+    CheckpointStep,
+    ImageAttachment,
+    ImageDetail,
     Message,
     MessageRole,
     ResponseFormat,
     RetryConfig,
     ToolCallMessage,
+    ToolResultData,
 };

@@ -258,6 +258,7 @@ impl EventPrinter {
             AgentEvent::Custom { payload, .. } => {
                 println!("[自定义事件] {}", payload);
             }
+            AgentEvent::Checkpoint { .. } => {}
         }
         Ok(())
     }

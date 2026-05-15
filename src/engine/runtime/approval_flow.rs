@@ -44,6 +44,8 @@ impl AgentRuntime {
         });
         Self::drain_async_events(event_rx, on_event)?;
 
+        drop(_span);
+
         let decision = match self.approval_handler() {
             Some(handler) => handler
                 .approve(request.clone())

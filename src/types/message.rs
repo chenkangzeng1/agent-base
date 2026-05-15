@@ -36,6 +36,8 @@ pub enum ChatMessage {
     },
     User {
         content: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        images: Vec<ImageAttachment>,
     },
     Assistant {
         content: Option<String>,
@@ -55,6 +57,29 @@ pub struct ToolCallMessage {
     pub arguments: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum ImageAttachment {
+    Url {
+        url: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<ImageDetail>,
+    },
+    Base64 {
+        data: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        media_type: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        detail: Option<ImageDetail>,
+    },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum ImageDetail {
+    Low,
+    High,
+    Auto,
+}
+
 impl ChatMessage {
     pub fn system(content: impl Into<String>) -> Self {
         Self::System {
@@ -65,6 +90,14 @@ impl ChatMessage {
     pub fn user(content: impl Into<String>) -> Self {
         Self::User {
             content: content.into(),
+            images: Vec::new(),
+        }
+    }
+
+    pub fn user_with_images(content: impl Into<String>, images: Vec<ImageAttachment>) -> Self {
+        Self::User {
+            content: content.into(),
+            images,
         }
     }
 

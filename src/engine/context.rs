@@ -20,6 +20,9 @@ impl Default for ContextWindowManager {
 }
 
 impl ContextWindowManager {
+    /// OpenAI Vision API 每张图片的固定基础 token 开销
+    const IMAGE_OVERHEAD_TOKENS: usize = 85;
+
     pub fn new(max_tokens: usize) -> Self {
         Self {
             max_tokens,
@@ -53,7 +56,24 @@ impl ContextWindowManager {
     fn message_tokens(msg: &ChatMessage) -> usize {
         match msg {
             ChatMessage::System { content } => Self::estimate_tokens(content),
-            ChatMessage::User { content } => Self::estimate_tokens(content),
+            ChatMessage::User { content, images } => {
+                let mut tokens = Self::estimate_tokens(content);
+                for img in images {
+                    match img {
+                        crate::types::ImageAttachment::Url { url, detail: _ } => {
+                            tokens += Self::estimate_tokens(url);
+                        }
+                        crate::types::ImageAttachment::Base64 { data, media_type, detail: _ } => {
+                            tokens += data.len() / 4;
+                            if let Some(mt) = media_type {
+                                tokens += Self::estimate_tokens(mt);
+                            }
+                        }
+                    }
+                    tokens += Self::IMAGE_OVERHEAD_TOKENS;
+                }
+                tokens
+            }
             ChatMessage::Assistant { content, reasoning_content: _, tool_calls } => {
                 let mut tokens = content
                     .as_deref()

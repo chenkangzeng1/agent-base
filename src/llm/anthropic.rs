@@ -6,7 +6,7 @@ use reqwest::Client;
 use serde_json::{json, Value};
 use std::pin::Pin;
 
-use crate::types::{AgentResult, AgentError, ChatMessage, ResponseFormat};
+use crate::types::{AgentResult, AgentError, ChatMessage, ImageAttachment, ResponseFormat};
 use super::{LlmCapabilities, LlmClient, StreamChunk, UsageInfo};
 
 pub struct AnthropicClient {
@@ -36,10 +36,36 @@ impl AnthropicClient {
                 ChatMessage::System { content } => {
                     system_prompt = Some(content.clone());
                 }
-                ChatMessage::User { content } => {
+                ChatMessage::User { content, images } => {
+                    let mut content_parts: Vec<Value> = Vec::new();
+                    content_parts.push(json!({"type": "text", "text": content}));
+                    for img in images {
+                        match img {
+                            ImageAttachment::Url { url, detail: _ } => {
+                                content_parts.push(json!({
+                                    "type": "image",
+                                    "source": {
+                                        "type": "url",
+                                        "url": url,
+                                    }
+                                }));
+                            }
+                            ImageAttachment::Base64 { data, media_type, detail: _ } => {
+                                let mime = media_type.as_deref().unwrap_or("image/jpeg");
+                                content_parts.push(json!({
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": mime,
+                                        "data": data,
+                                    }
+                                }));
+                            }
+                        }
+                    }
                     result.push(json!({
                         "role": "user",
-                        "content": [{ "type": "text", "text": content }],
+                        "content": content_parts,
                     }));
                 }
                 ChatMessage::Assistant { content, reasoning_content: _, tool_calls } => {

@@ -25,6 +25,7 @@ impl AgentRuntime {
     {
         let _span = info_span!("tools_exec", session_id = session_id.id).entered();
         tracing::debug!(session_id = session_id.id, tool_count = tool_calls.len(), "executing tools");
+        drop(_span);
 
         let tool_ctx = ToolContext {
             session_id: session_id.clone(),

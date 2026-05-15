@@ -69,6 +69,11 @@ impl AgentBuilder {
         self
     }
 
+    pub fn register_tool_arc(mut self, tool: Arc<dyn Tool>) -> Self {
+        self.tools.register_arc(tool);
+        self
+    }
+
     pub fn approval_handler(mut self, handler: Arc<dyn ApprovalHandler>) -> Self {
         self.approval_handler = Some(handler);
         self

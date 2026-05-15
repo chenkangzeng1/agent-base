@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::llm::LlmClient;
 use crate::tool::{ToolPolicy, ToolRegistry};
-use crate::types::{AgentConfig, MessageRole, AgentError};
+use crate::types::{AgentConfig, MessageRole, AgentError, CheckpointData, CheckpointStep};
 use tokio::sync::broadcast;
 use tracing::Span;
 
@@ -137,6 +137,7 @@ impl AgentRuntime {
         let span = Span::current();
         let _guard = span.enter();
         tracing::info!(session_id = session_id.id, user_input = %user_input, "agent turn start");
+        drop(_guard);
 
         let mut event_rx = self.subscribe_events();
         let tool_definitions = self.tools.definitions();
@@ -159,6 +160,16 @@ impl AgentRuntime {
             let session = self.session_mut_or_err(&session_id)?;
             session.push_message(MessageRole::User, &user_input_owned);
         }
+
+        self.emit_event(AgentEvent::Checkpoint {
+            session_id: session_id.clone(),
+            checkpoint: CheckpointData {
+                session_id: session_id.clone(),
+                user_input: user_input_owned.clone(),
+                step: CheckpointStep::AfterUserInput,
+                turn_count: 0,
+            },
+        });
 
         let max_turns = self.config.max_turns.unwrap_or(DEFAULT_MAX_TURNS);
         let mut turn_count: u32 = 0;
@@ -201,6 +212,19 @@ impl AgentRuntime {
                 tools_for_turn = ctx.tools;
             }
 
+            self.emit_event(AgentEvent::Checkpoint {
+                session_id: session_id.clone(),
+                checkpoint: CheckpointData {
+                    session_id: session_id.clone(),
+                    user_input: user_input_owned.clone(),
+                    step: CheckpointStep::BeforeLlm {
+                        messages: messages.clone(),
+                        tools: tools_for_turn.clone(),
+                    },
+                    turn_count,
+                },
+            });
+
             let aggregator = self
                 .execute_llm_turn(&session_id, &messages, &tools_for_turn, &mut event_rx, &mut on_event)
                 .await?;
@@ -233,6 +257,18 @@ impl AgentRuntime {
             }
 
             if is_tool_call && !tool_calls.is_empty() {
+                self.emit_event(AgentEvent::Checkpoint {
+                    session_id: session_id.clone(),
+                    checkpoint: CheckpointData {
+                        session_id: session_id.clone(),
+                        user_input: user_input_owned.clone(),
+                        step: CheckpointStep::BeforeToolCalls {
+                            tool_calls: tool_calls.clone(),
+                        },
+                        turn_count,
+                    },
+                });
+
                 match self
                     .handle_tool_calls(
                         &session_id,
@@ -242,7 +278,21 @@ impl AgentRuntime {
                     )
                     .await
                 {
-                    Ok(ToolCallResult::Continue) => continue,
+                    Ok(ToolCallResult::Continue) => {
+                        self.emit_event(AgentEvent::Checkpoint {
+                            session_id: session_id.clone(),
+                            checkpoint: CheckpointData {
+                                session_id: session_id.clone(),
+                                user_input: user_input_owned.clone(),
+                                step: CheckpointStep::AfterToolCalls {
+                                    tool_calls: tool_calls.clone(),
+                                    results: Vec::new(),
+                                },
+                                turn_count,
+                            },
+                        });
+                        continue;
+                    }
                     Ok(ToolCallResult::Break) => {
                         self.emit_event(AgentEvent::RunCompleted { session_id: session_id.clone() });
                         Self::drain_async_events(&mut event_rx, &mut on_event)?;
@@ -291,5 +341,213 @@ impl AgentRuntime {
         })
         .await?;
         Ok(events)
+    }
+
+    pub async fn resume_from_checkpoint<F>(
+        &mut self,
+        checkpoint: CheckpointData,
+        mut on_event: F,
+    ) -> AgentResult<()>
+    where
+        F: FnMut(AgentEvent) -> AgentResult<()>,
+    {
+        let session_id = checkpoint.session_id;
+        let user_input = checkpoint.user_input;
+        let turn_count = checkpoint.turn_count;
+
+        tracing::info!(session_id = session_id.id, turn_count, step = ?checkpoint.step, "resuming from checkpoint");
+
+        let mut event_rx = self.subscribe_events();
+        let tool_definitions = self.tools.definitions();
+        let max_turns = self.config.max_turns.unwrap_or(DEFAULT_MAX_TURNS);
+        let mut turn_count = turn_count;
+
+        match checkpoint.step {
+            CheckpointStep::BeforeToolCalls { tool_calls } => {
+                match self
+                    .handle_tool_calls(
+                        &session_id,
+                        &tool_calls,
+                        &mut event_rx,
+                        &mut on_event,
+                    )
+                    .await
+                {
+                    Ok(ToolCallResult::Continue) => {}
+                    Ok(ToolCallResult::Break) => {
+                        self.emit_event(AgentEvent::RunCompleted { session_id: session_id.clone() });
+                        Self::drain_async_events(&mut event_rx, &mut on_event)?;
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        if e.is_cancelled() {
+                            return Err(e);
+                        }
+                        let names: Vec<&str> = tool_calls.iter().map(|(_, n, _)| n.as_str()).collect();
+                        let session = self.session_mut_or_err(&session_id)?;
+                        session.push_message(
+                            MessageRole::Assistant,
+                            format!("(尝试调用工具 {} 失败)", names.join(", ")),
+                        );
+                        session.push_message(
+                            MessageRole::User,
+                            "你刚才尝试调用工具时出现了错误。请简化你的计划，然后重新调用工具。",
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        loop {
+            turn_count += 1;
+
+            if turn_count > max_turns {
+                self.emit_event(AgentEvent::RunFailed {
+                    session_id: session_id.clone(),
+                    error: format!("达到最大轮次限制（{max_turns}次），强制停止"),
+                });
+                Self::drain_async_events(&mut event_rx, &mut on_event)?;
+                break;
+            }
+
+            Self::drain_async_events(&mut event_rx, &mut on_event)?;
+
+            let mut messages: Vec<_> = self.session_or_err(&session_id)?.chat_messages().to_vec();
+            let mut tools_for_turn = tool_definitions.clone();
+
+            if let Some(ref ctx_mgr) = self.context_manager {
+                ctx_mgr.trim(&mut messages);
+            }
+
+            {
+                let mut ctx = PreLlmCtx {
+                    session_id: session_id.clone(),
+                    messages: messages.clone(),
+                    tools: tools_for_turn.clone(),
+                    event_bus: self.event_bus.clone(),
+                };
+                for mw in &self.middlewares {
+                    mw.on_pre_llm(&mut ctx).await?;
+                }
+                messages = ctx.messages;
+                tools_for_turn = ctx.tools;
+            }
+
+            self.emit_event(AgentEvent::Checkpoint {
+                session_id: session_id.clone(),
+                checkpoint: CheckpointData {
+                    session_id: session_id.clone(),
+                    user_input: user_input.clone(),
+                    step: CheckpointStep::BeforeLlm {
+                        messages: messages.clone(),
+                        tools: tools_for_turn.clone(),
+                    },
+                    turn_count,
+                },
+            });
+
+            let aggregator = self
+                .execute_llm_turn(&session_id, &messages, &tools_for_turn, &mut event_rx, &mut on_event)
+                .await?;
+
+            let (mut full_text, mut is_tool_call, mut tool_calls) = aggregator.into_parts();
+
+            {
+                let mut ctx = PostLlmCtx {
+                    session_id: session_id.clone(),
+                    full_text: full_text.clone(),
+                    is_tool_call,
+                    tool_calls: tool_calls.clone(),
+                    event_bus: self.event_bus.clone(),
+                };
+                for mw in &self.middlewares {
+                    mw.on_post_llm(&mut ctx).await?;
+                }
+                full_text = ctx.full_text;
+                is_tool_call = ctx.is_tool_call;
+                tool_calls = ctx.tool_calls;
+            }
+
+            if full_text.is_empty() && !is_tool_call {
+                continue;
+            }
+
+            if !full_text.is_empty() {
+                let session = self.session_mut_or_err(&session_id)?;
+                session.push_message(MessageRole::Assistant, full_text);
+            }
+
+            if is_tool_call && !tool_calls.is_empty() {
+                self.emit_event(AgentEvent::Checkpoint {
+                    session_id: session_id.clone(),
+                    checkpoint: CheckpointData {
+                        session_id: session_id.clone(),
+                        user_input: user_input.clone(),
+                        step: CheckpointStep::BeforeToolCalls {
+                            tool_calls: tool_calls.clone(),
+                        },
+                        turn_count,
+                    },
+                });
+
+                match self
+                    .handle_tool_calls(
+                        &session_id,
+                        &tool_calls,
+                        &mut event_rx,
+                        &mut on_event,
+                    )
+                    .await
+                {
+                    Ok(ToolCallResult::Continue) => {
+                        self.emit_event(AgentEvent::Checkpoint {
+                            session_id: session_id.clone(),
+                            checkpoint: CheckpointData {
+                                session_id: session_id.clone(),
+                                user_input: user_input.clone(),
+                                step: CheckpointStep::AfterToolCalls {
+                                    tool_calls: tool_calls.clone(),
+                                    results: Vec::new(),
+                                },
+                                turn_count,
+                            },
+                        });
+                        continue;
+                    }
+                    Ok(ToolCallResult::Break) => {
+                        self.emit_event(AgentEvent::RunCompleted { session_id: session_id.clone() });
+                        Self::drain_async_events(&mut event_rx, &mut on_event)?;
+                        break;
+                    }
+                    Err(e) => {
+                        if e.is_cancelled() {
+                            return Err(e);
+                        }
+                        let names: Vec<&str> = tool_calls.iter().map(|(_, n, _)| n.as_str()).collect();
+                        let session = self.session_mut_or_err(&session_id)?;
+                        session.push_message(
+                            MessageRole::Assistant,
+                            format!("(尝试调用工具 {} 失败)", names.join(", ")),
+                        );
+                        session.push_message(
+                            MessageRole::User,
+                            "你刚才尝试调用工具时出现了错误。请简化你的计划，然后重新调用工具。",
+                        );
+                        continue;
+                    }
+                }
+            }
+
+            self.emit_event(AgentEvent::RunCompleted { session_id: session_id.clone() });
+            Self::drain_async_events(&mut event_rx, &mut on_event)?;
+            break;
+        }
+
+        let session = self.session_or_err(&session_id)?;
+        let _ = self.session_store.save(session).await;
+
+        tracing::info!(session_id = session_id.id, turn_count, "agent resume completed");
+        Ok(())
     }
 }

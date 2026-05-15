@@ -419,3 +419,333 @@ async fn test_event_collection() {
     assert!(has_text_delta, "Should have TextDelta event");
     assert!(has_run_completed, "Should have RunCompleted event");
 }
+
+// ---------------------------------------------------------------------------
+// 6.2 多模态消息测试
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_chat_message_user_with_images() {
+    use agent_core::{ChatMessage, ImageAttachment, ImageDetail};
+
+    let msg = ChatMessage::user("hello");
+    match &msg {
+        ChatMessage::User { images, .. } => {
+            assert!(images.is_empty());
+        }
+        _ => panic!("expected User variant"),
+    }
+
+    let images = vec![
+        ImageAttachment::Url {
+            url: "https://example.com/img.jpg".to_string(),
+            detail: Some(ImageDetail::High),
+        },
+        ImageAttachment::Base64 {
+            data: "abc123".to_string(),
+            media_type: Some("image/png".to_string()),
+            detail: None,
+        },
+    ];
+    let msg_with_images = ChatMessage::user_with_images("describe this", images);
+    match &msg_with_images {
+        ChatMessage::User { content, images } => {
+            assert_eq!(content, "describe this");
+            assert_eq!(images.len(), 2);
+            assert!(matches!(images[0], ImageAttachment::Url { .. }));
+            assert!(matches!(images[1], ImageAttachment::Base64 { .. }));
+        }
+        _ => panic!("expected User variant"),
+    }
+}
+
+#[test]
+fn test_image_attachment_serialization() {
+    use agent_core::ImageAttachment;
+    use serde_json;
+
+    let img = ImageAttachment::Url {
+        url: "https://example.com/img.jpg".to_string(),
+        detail: None,
+    };
+    let json_str = serde_json::to_string(&img).unwrap();
+    let parsed: ImageAttachment = serde_json::from_str(&json_str).unwrap();
+    match parsed {
+        ImageAttachment::Url { url, .. } => {
+            assert_eq!(url, "https://example.com/img.jpg");
+        }
+        _ => panic!("expected Url variant"),
+    }
+
+    let img_base64 = ImageAttachment::Base64 {
+        data: "abc123".to_string(),
+        media_type: Some("image/jpeg".to_string()),
+        detail: None,
+    };
+    let json_str = serde_json::to_string(&img_base64).unwrap();
+    let parsed: ImageAttachment = serde_json::from_str(&json_str).unwrap();
+    match parsed {
+        ImageAttachment::Base64 { data, .. } => {
+            assert_eq!(data, "abc123");
+        }
+        _ => panic!("expected Base64 variant"),
+    }
+}
+
+#[test]
+fn test_session_push_user_with_images() {
+    use agent_core::types::SessionId;
+    use agent_core::{AgentSession, ChatMessage, ImageAttachment, MessageRole};
+
+    let session_id = SessionId {
+        id: 1,
+        external_id: None,
+    };
+    let mut session = AgentSession::new(session_id);
+
+    let images = vec![ImageAttachment::Url {
+        url: "https://example.com/img.jpg".to_string(),
+        detail: None,
+    }];
+    session.push_user_message_with_images("describe this image", images);
+
+    let chat_msgs = session.chat_messages();
+    assert_eq!(chat_msgs.len(), 1);
+    match &chat_msgs[0] {
+        ChatMessage::User { content, images } => {
+            assert_eq!(content, "describe this image");
+            assert_eq!(images.len(), 1);
+        }
+        _ => panic!("expected User variant"),
+    }
+
+    let msgs = session.messages();
+    assert_eq!(msgs.len(), 1);
+    assert_eq!(msgs[0].role, MessageRole::User);
+    assert_eq!(msgs[0].content, "describe this image");
+}
+
+// ---------------------------------------------------------------------------
+// 6.4 Checkpoint / Resume 测试
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_checkpoint_events_emitted() {
+    let llm = Arc::new(MockLlmClient::new(vec![
+        vec![
+            StreamChunk::ToolCall(json!({
+                "delta": {
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "function": {
+                            "name": "echo",
+                            "arguments": "{\"message\": \"hello\"}"
+                        }
+                    }]
+                }
+            })),
+            StreamChunk::Stop,
+        ],
+        vec![
+            StreamChunk::Text("done".to_string()),
+            StreamChunk::Stop,
+        ],
+    ]));
+
+    let mut runtime = AgentBuilder::new(llm.clone())
+        .register_tool(EchoTool)
+        .system_prompt("sys")
+        .build();
+
+    let session_id = runtime.create_session();
+    let events = runtime.run_turn_stream(session_id, "test checkpoint").await.unwrap();
+
+    let checkpoint_count = events
+        .iter()
+        .filter(|e| matches!(e, AgentEvent::Checkpoint { .. }))
+        .count();
+    assert!(
+        checkpoint_count >= 2,
+        "Should have at least AfterUserInput and BeforeLlm checkpoints, got {checkpoint_count}"
+    );
+
+    let has_after_user_input = events.iter().any(|e| {
+        matches!(e, AgentEvent::Checkpoint { checkpoint, .. } if matches!(checkpoint.step, agent_core::CheckpointStep::AfterUserInput))
+    });
+    assert!(has_after_user_input, "Should have AfterUserInput checkpoint");
+
+    let has_before_llm = events.iter().any(|e| {
+        matches!(e, AgentEvent::Checkpoint { checkpoint, .. } if matches!(checkpoint.step, agent_core::CheckpointStep::BeforeLlm { .. }))
+    });
+    assert!(has_before_llm, "Should have BeforeLlm checkpoint");
+
+    let has_before_tool_calls = events.iter().any(|e| {
+        matches!(e, AgentEvent::Checkpoint { checkpoint, .. } if matches!(checkpoint.step, agent_core::CheckpointStep::BeforeToolCalls { .. }))
+    });
+    assert!(has_before_tool_calls, "Should have BeforeToolCalls checkpoint");
+}
+
+#[tokio::test]
+async fn test_resume_from_after_user_input_checkpoint() {
+    let llm = Arc::new(MockLlmClient::new(vec![
+        vec![
+            StreamChunk::Text("resumed reply".to_string()),
+            StreamChunk::Stop,
+        ],
+    ]));
+
+    let mut runtime = AgentBuilder::new(llm.clone())
+        .system_prompt("sys")
+        .build();
+
+    let session_id = runtime.create_session();
+
+    let mut checkpoint_opt: Option<agent_core::CheckpointData> = None;
+    let _ = runtime
+        .run_turn_with_handler(session_id.clone(), "resume test", |event| {
+            if let AgentEvent::Checkpoint { checkpoint, .. } = &event {
+                if matches!(checkpoint.step, agent_core::CheckpointStep::AfterUserInput) {
+                    checkpoint_opt = Some(checkpoint.clone());
+                    return Err(agent_core::AgentError::Cancelled);
+                }
+            }
+            Ok(())
+        })
+        .await;
+
+    let checkpoint = checkpoint_opt.expect("Should have captured AfterUserInput checkpoint");
+
+    let result = runtime.resume_from_checkpoint(checkpoint, |_| Ok(())).await;
+    assert!(result.is_ok(), "Resume should succeed: {result:?}");
+
+    let session = runtime.session(&session_id).unwrap();
+    let chat_msgs = session.chat_messages();
+    let has_assistant_reply = chat_msgs
+        .iter()
+        .any(|m| matches!(m, ChatMessage::Assistant { content, .. } if content.as_deref() == Some("resumed reply")));
+    assert!(has_assistant_reply, "Should have resumed reply in session");
+}
+
+#[tokio::test]
+async fn test_resume_from_before_tool_calls_checkpoint() {
+    let llm = Arc::new(MockLlmClient::new(vec![
+        vec![
+            StreamChunk::ToolCall(json!({
+                "delta": {
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "function": {
+                            "name": "echo",
+                            "arguments": "{\"message\":\"hello\"}"
+                        }
+                    }]
+                }
+            })),
+            StreamChunk::Stop,
+        ],
+        vec![
+            StreamChunk::Text("tool results processed".to_string()),
+            StreamChunk::Stop,
+        ],
+    ]));
+
+    let mut runtime = AgentBuilder::new(llm.clone())
+        .register_tool(EchoTool)
+        .system_prompt("sys")
+        .build();
+
+    let session_id = runtime.create_session();
+
+    let mut checkpoint_opt: Option<agent_core::CheckpointData> = None;
+    let _ = runtime
+        .run_turn_with_handler(session_id.clone(), "echo hello", |event| {
+            if let AgentEvent::Checkpoint { checkpoint, .. } = &event {
+                if matches!(checkpoint.step, agent_core::CheckpointStep::BeforeToolCalls { .. }) {
+                    checkpoint_opt = Some(checkpoint.clone());
+                    return Err(agent_core::AgentError::Cancelled);
+                }
+            }
+            Ok(())
+        })
+        .await;
+
+    let checkpoint =
+        checkpoint_opt.expect("Should have captured BeforeToolCalls checkpoint");
+
+    let result = runtime.resume_from_checkpoint(checkpoint, |_| Ok(())).await;
+    assert!(result.is_ok(), "Resume from BeforeToolCalls should succeed: {result:?}");
+
+    let session = runtime.session(&session_id).unwrap();
+    let chat_msgs = session.chat_messages();
+    let has_tool_result = chat_msgs.iter().any(|m| {
+        matches!(m, ChatMessage::Tool { content, .. } if content.contains("echo: hello"))
+    });
+    assert!(has_tool_result, "Should have echo tool result in session");
+}
+
+// ---------------------------------------------------------------------------
+// 6.3 子 Agent 测试
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_sub_agent_tool() {
+    use agent_core::SubAgentTool;
+
+    let sub_llm = Arc::new(MockLlmClient::new(vec![
+        vec![
+            StreamChunk::Text("sub-agent processed: ".to_string()),
+            StreamChunk::Text("task completed".to_string()),
+            StreamChunk::Stop,
+        ],
+    ]));
+
+    let sub_runtime = AgentBuilder::new(sub_llm.clone())
+        .system_prompt("you are a sub-agent")
+        .build();
+
+    let sub_agent_tool = SubAgentTool::new(
+        "delegate_task",
+        "delegate a task to a sub-agent",
+        sub_runtime,
+    );
+
+    let parent_llm = Arc::new(MockLlmClient::new(vec![
+        vec![
+            StreamChunk::ToolCall(json!({
+                "delta": {
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "function": {
+                            "name": "delegate_task",
+                            "arguments": "{\"task\": \"analyze the data\"}"
+                        }
+                    }]
+                }
+            })),
+            StreamChunk::Stop,
+        ],
+        vec![
+            StreamChunk::Text("parent final reply".to_string()),
+            StreamChunk::Stop,
+        ],
+    ]));
+
+    let mut parent_runtime = AgentBuilder::new(parent_llm.clone())
+        .register_tool(sub_agent_tool)
+        .system_prompt("you are the main agent")
+        .build();
+
+    let session_id = parent_runtime.create_session();
+    let result = parent_runtime
+        .run_turn_stream(session_id.clone(), "delegate this task")
+        .await;
+    assert!(result.is_ok(), "Sub-agent delegation should succeed: {result:?}");
+    assert_eq!(parent_llm.call_count(), 2, "Parent should make 2 LLM calls");
+
+    let session = parent_runtime.session(&session_id).unwrap();
+    let chat_msgs = session.chat_messages();
+    let has_parent_final = chat_msgs.iter().any(|m| {
+        matches!(m, ChatMessage::Assistant { content, .. } if content.as_deref() == Some("parent final reply"))
+    });
+    assert!(has_parent_final, "Should have parent final reply");
+}

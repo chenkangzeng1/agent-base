@@ -1,6 +1,7 @@
 use serde_json::Value;
 
 use super::approval::ApprovalRequest;
+use super::checkpoint::CheckpointData;
 use super::session::SessionId;
 
 #[derive(Clone, Debug)]
@@ -26,6 +27,10 @@ pub enum AgentEvent {
     AwaitingApproval {
         session_id: SessionId,
         request: ApprovalRequest,
+    },
+    Checkpoint {
+        session_id: SessionId,
+        checkpoint: CheckpointData,
     },
     RunCompleted {
         session_id: SessionId,

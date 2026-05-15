@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::{ChatMessage, Message, MessageRole, ToolCallMessage};
+use crate::types::{ChatMessage, ImageAttachment, Message, MessageRole, ToolCallMessage};
 
 use crate::types::SessionId;
 
@@ -57,6 +57,20 @@ impl AgentSession {
             MessageRole::Tool => ChatMessage::tool(String::new(), content),
         };
         self.chat_messages.push(chat_msg);
+    }
+
+    pub fn push_user_message_with_images(
+        &mut self,
+        content: impl Into<String>,
+        images: Vec<ImageAttachment>,
+    ) {
+        let content = content.into();
+        self.messages.push(Message {
+            role: MessageRole::User,
+            content: content.clone(),
+        });
+        self.chat_messages
+            .push(ChatMessage::user_with_images(content, images));
     }
 
     pub fn push_assistant_tool_call(
