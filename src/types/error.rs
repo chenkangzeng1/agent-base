@@ -2,44 +2,44 @@ use thiserror::Error;
 
 #[derive(Debug, Error)]
 pub enum AgentError {
-    #[error("LLM 调用失败: {0}")]
+    #[error("LLM call failed: {0}")]
     Llm(String),
 
-    #[error("LLM API 错误: {message}")]
+    #[error("LLM API error: {message}")]
     LlmApi { message: String },
 
-    #[error("SSE 流错误: {0}")]
+    #[error("SSE stream error: {0}")]
     LlmStream(String),
 
-    #[error("JSON 解析错误: {0}")]
+    #[error("JSON parse error: {0}")]
     Json(String),
 
-    #[error("工具 '{name}' 未注册")]
+    #[error("Tool '{name}' not registered")]
     ToolNotFound { name: String },
 
-    #[error("工具 '{name}' 参数解析失败: {raw}")]
+    #[error("Tool '{name}' argument parsing failed: {raw}")]
     ToolArgsInvalid { name: String, raw: String },
 
-    #[error("工具 '{name}' 执行失败: {source}")]
+    #[error("Tool '{name}' execution failed: {source}")]
     ToolExecution {
         name: String,
         #[source]
         source: Box<AgentError>,
     },
 
-    #[error("工具调用被审批拒绝: {tool_name}")]
+    #[error("Tool call rejected by approval: {tool_name}")]
     ApprovalDenied { tool_name: String },
 
-    #[error("会话 {0} 不存在")]
+    #[error("Session {0} not found")]
     SessionNotFound(u64),
 
-    #[error("达到最大轮次限制 ({limit})，强制停止")]
+    #[error("Max turns ({limit}) reached, stopping forcibly")]
     MaxTurnsExceeded { limit: u32 },
 
-    #[error("操作已取消")]
+    #[error("Operation cancelled")]
     Cancelled,
 
-    #[error("内部错误: {0}")]
+    #[error("Internal error: {0}")]
     Internal(String),
 }
 

@@ -8,12 +8,12 @@ pub mod prompter;
 pub(crate) use detail_tool::SkillDetailTool;
 pub use prompter::{FullDetailPrompter, LazySkillPrompter};
 
-/// Skill — 可复用的能力单元
+/// Skill - a reusable capability unit
 ///
-/// 每个 Skill 声明：
-/// - 简要描述（常驻 system prompt）
-/// - 详细描述（按需加载）
-/// - 工具集合（自动注册）
+/// Each Skill declares:
+/// - Brief description (resident in system prompt)
+/// - Detailed description (loaded on demand)
+/// - Tool collection (auto-registered)
 pub trait Skill: Send + Sync {
     fn name(&self) -> &'static str;
     fn brief_description(&self) -> String;
@@ -33,9 +33,9 @@ pub trait Skill: Send + Sync {
     }
 }
 
-/// 提示词注入策略
+/// Prompt injection strategy
 ///
-/// 根据已注册的 skills，生成要注入 system prompt 的文本。
+/// Generates prompt text to inject into the system prompt based on registered skills.
 pub trait SkillPrompter: Send + Sync {
     fn build_prompt(&self, skills: &[Arc<dyn Skill>]) -> String;
 }

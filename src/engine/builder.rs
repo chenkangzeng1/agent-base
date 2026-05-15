@@ -174,7 +174,7 @@ impl AgentBuilder {
                 let tool_name = tool.name().to_string();
                 if known_tool_names.contains(&tool_name) {
                     panic!(
-                        "工具名冲突: `{}` 已注册 (Skill `{}` 中的工具与已有工具重名)",
+                        "Tool name conflict: `{}` (Skill `{}`)",
                         tool_name,
                         skill.name()
                     );

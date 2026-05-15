@@ -3,9 +3,9 @@ use crate::types::ChatMessage;
 #[derive(Clone, Debug)]
 pub struct ContextWindowManager {
     pub max_tokens: usize,
-    /// 始终保留消息历史开头 N 条（通常用于 system prompt）
+    /// Always keep first N messages (typically system prompt)
     pub keep_first_n: usize,
-    /// 始终保留消息历史末尾 N 条
+    /// Always keep last N messages
     pub keep_last_n: usize,
 }
 
@@ -20,7 +20,7 @@ impl Default for ContextWindowManager {
 }
 
 impl ContextWindowManager {
-    /// OpenAI Vision API 每张图片的固定基础 token 开销
+    /// OpenAI Vision API fixed token overhead per image
     const IMAGE_OVERHEAD_TOKENS: usize = 85;
 
     pub fn new(max_tokens: usize) -> Self {
@@ -40,8 +40,8 @@ impl ContextWindowManager {
         self
     }
 
-    /// 简单 token 估算：英文约 4 字符/token，CJK 约 1.5 字符/token。
-    /// 混合文本取折中值 3 字符/token。
+    /// Simple token estimation: ~4 chars/token for Latin, ~1.5 for CJK
+    /// Mixed text uses a compromise of 3 chars/token
     pub fn estimate_tokens(text: &str) -> usize {
         if text.is_empty() {
             return 0;
@@ -94,12 +94,12 @@ impl ContextWindowManager {
         }
     }
 
-    /// 对消息列表进行裁剪，确保总 token 数不超过 `max_tokens`。
+    /// Trim message list to keep total tokens under `max_tokens`。
     ///
-    /// 裁剪策略：
-    /// - 始终保留前 `keep_first_n` 条消息（通常为 system prompt）
-    /// - 始终保留末尾 `keep_last_n` 条消息（最近对话）
-    /// - 从中间删除最旧的消息，直到 token 数符合要求
+    /// Trimming strategy:
+    /// - Always keep the first `keep_first_n` messages (typically system prompt)
+    /// - Always keep the last `keep_last_n` messages (recent conversation)
+    /// - Remove oldest messages from the middle until within budget
     pub fn trim(&self, messages: &mut Vec<ChatMessage>) {
         if messages.is_empty() || self.max_tokens == 0 {
             return;
@@ -113,7 +113,7 @@ impl ContextWindowManager {
         let keep_first = self.keep_first_n.min(messages.len());
         let keep_last = self.keep_last_n.min(messages.len().saturating_sub(keep_first));
 
-        // 可裁剪区域：[keep_first, messages.len() - keep_last)
+        // Trimmable range: [keep_first, messages.len() - keep_last)
         let trim_start = keep_first;
         let trim_end = messages.len().saturating_sub(keep_last);
         if trim_start >= trim_end {
@@ -127,7 +127,7 @@ impl ContextWindowManager {
             let removed = Self::message_tokens(&messages[remove_idx]);
             messages.remove(remove_idx);
             current_tokens = current_tokens.saturating_sub(removed);
-            // 不递增 remove_idx，因为 remove 后下一个元素移到了当前位置
+            // Do not increment remove_idx because remove shifts elements down
             let new_trim_end = messages.len().saturating_sub(keep_last);
             if remove_idx >= new_trim_end {
                 break;

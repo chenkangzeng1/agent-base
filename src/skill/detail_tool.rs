@@ -31,13 +31,13 @@ impl Tool for SkillDetailTool {
             "type": "function",
             "function": {
                 "name": self.name,
-                "description": "获取指定 Skill 的详细操作指南。当你需要了解某个 Skill 的完整使用方式时调用。",
+                "description": "Get detailed instructions for a Skill. Call this when you need the complete usage guide for a Skill.",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "name": {
                             "type": "string",
-                            "description": "Skill 名称"
+                            "description": "Skill name"
                         }
                     },
                     "required": ["name"]
@@ -55,7 +55,7 @@ impl Tool for SkillDetailTool {
         if name.is_empty() {
             return Ok(ToolOutput {
                 summary: format!(
-                    "请提供 Skill 名称。可用 Skills: {}",
+                    "Please provide a Skill name. Available Skills: {}",
                     self.skills
                         .iter()
                         .map(|s| s.name())
@@ -93,7 +93,7 @@ impl Tool for SkillDetailTool {
                 let available: Vec<&str> = self.skills.iter().map(|s| s.name()).collect();
                 Ok(ToolOutput {
                     summary: format!(
-                        "未找到 Skill '{}'。可用 Skills: {}",
+                        "Skill '{}' not found. Available Skills: {}",
                         name,
                         available.join(", ")
                     ),

@@ -128,7 +128,7 @@ impl AgentRuntime {
                                 tool_call_id_for_timeout,
                                 tool_name_for_timeout.clone(),
                                 ToolOutput {
-                                    summary: format!("[Tool Timeout]: 工具 {tool_name_for_timeout} 执行超时"),
+                                    summary: format!("[Tool Timeout]"),
                                     raw: None,
                                     control_flow: ToolControlFlow::Continue,
                                     truncated: false,

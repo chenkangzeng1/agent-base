@@ -57,10 +57,10 @@ impl AgentRuntime {
         id
     }
 
-    /// 从持久层恢复一个已有 session 到运行时内存
+    /// Restore an existing session from persistence into runtime memory
     ///
-    /// 成功后可通过 session_id 继续执行。
-    /// 恢复失败时返回 None（session 不存在或持久层错误）。
+    /// On success, the session can be used for continued execution.
+    /// Returns None if not found in persistence layer.
     pub async fn restore_session(&mut self, session_id: &SessionId) -> Option<&AgentSession> {
         if self.sessions.contains_key(session_id) {
             return self.sessions.get(session_id);
@@ -337,18 +337,18 @@ impl AgentRuntime {
                                 let session = self.session_or_err(&session_id)?;
                                 let _ = self.session_store.save(session).await;
                                 return Ok(RunOutcome::Failed {
-                                    error: format!("工具执行失败: {}", e),
+                                    error: format!("Tool execution failed: {}", e),
                                 });
                             }
                             ToolErrorAction::Retry => {
                                 let session = self.session_mut_or_err(&session_id)?;
                                 session.push_message(
                                     MessageRole::Assistant,
-                                    format!("(尝试调用工具 {} 失败)", names.join(", ")),
+                                    format!("(Failed to call tools: {})", names.join(", ")),
                                 );
                                 session.push_message(
                                     MessageRole::User,
-                                    "你刚才尝试调用工具时出现了错误。请简化你的计划，然后重新调用工具。",
+                                    "Tool calls failed. Please simplify your plan and retry.",
                                 );
                                 continue;
                             }
@@ -363,7 +363,7 @@ impl AgentRuntime {
         }
 
         let outcome = if turn_count > max_turns {
-            RunOutcome::Failed { error: format!("达到最大轮次限制（{max_turns}次），强制停止") }
+            RunOutcome::Failed { error: format!("Max turns ({max_turns}) reached, stopping forcibly") }
         } else {
             RunOutcome::Completed
         };
@@ -438,18 +438,18 @@ impl AgentRuntime {
                                 let session = self.session_or_err(&session_id)?;
                                 let _ = self.session_store.save(session).await;
                                 return Ok(RunOutcome::Failed {
-                                    error: format!("工具执行失败: {}", e),
+                                    error: format!("Tool execution failed: {}", e),
                                 });
                             }
                             ToolErrorAction::Retry => {
                                 let session = self.session_mut_or_err(&session_id)?;
                                 session.push_message(
                                     MessageRole::Assistant,
-                                    format!("(尝试调用工具 {} 失败)", names.join(", ")),
+                                    format!("(Failed to call tools: {})", names.join(", ")),
                                 );
                                 session.push_message(
                                     MessageRole::User,
-                                    "你刚才尝试调用工具时出现了错误。请简化你的计划，然后重新调用工具。",
+                                    "Tool calls failed. Please simplify your plan and retry.",
                                 );
                             }
                         }
@@ -592,18 +592,18 @@ impl AgentRuntime {
                                 let session = self.session_or_err(&session_id)?;
                                 let _ = self.session_store.save(session).await;
                                 return Ok(RunOutcome::Failed {
-                                    error: format!("工具执行失败: {}", e),
+                                    error: format!("Tool execution failed: {}", e),
                                 });
                             }
                             ToolErrorAction::Retry => {
                                 let session = self.session_mut_or_err(&session_id)?;
                                 session.push_message(
                                     MessageRole::Assistant,
-                                    format!("(尝试调用工具 {} 失败)", names.join(", ")),
+                                    format!("(Failed to call tools: {})", names.join(", ")),
                                 );
                                 session.push_message(
                                     MessageRole::User,
-                                    "你刚才尝试调用工具时出现了错误。请简化你的计划，然后重新调用工具。",
+                                    "Tool calls failed. Please simplify your plan and retry.",
                                 );
                                 continue;
                             }
@@ -618,7 +618,7 @@ impl AgentRuntime {
         }
 
         let outcome = if turn_count > max_turns {
-            RunOutcome::Failed { error: format!("达到最大轮次限制（{max_turns}次），强制停止") }
+            RunOutcome::Failed { error: format!("Max turns ({max_turns}) reached, stopping forcibly") }
         } else {
             RunOutcome::Completed
         };

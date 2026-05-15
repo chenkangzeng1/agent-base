@@ -281,11 +281,11 @@ impl LlmClient for AnthropicClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| AgentError::llm(format!("HTTP 请求失败: {e}")))?;
+            .map_err(|e| AgentError::llm(format!("HTTP request failed: {e}")))?;
 
         let status = response.status();
         let res_json: Value = response.json().await
-            .map_err(|e| AgentError::json(format!("响应 JSON 解析失败: {e}")))?;
+            .map_err(|e| AgentError::json(format!("Response JSON parse failed: {e}")))?;
 
         if !status.is_success() {
             let err_msg = res_json
@@ -324,11 +324,11 @@ impl LlmClient for AnthropicClient {
             .json(&body)
             .send()
             .await
-            .map_err(|e| AgentError::llm(format!("HTTP 请求失败: {e}")))?;
+            .map_err(|e| AgentError::llm(format!("HTTP request failed: {e}")))?;
 
         if !response.status().is_success() {
             let err_text = response.text().await
-                .map_err(|e| AgentError::llm(format!("读取错误响应失败: {e}")))?;
+                .map_err(|e| AgentError::llm(format!("Failed to read error response: {e}")))?;
             return Err(AgentError::LlmApi { message: err_text });
         }
 

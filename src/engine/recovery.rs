@@ -2,19 +2,19 @@ use async_trait::async_trait;
 
 use crate::types::{AgentError, AgentResult, SessionId};
 
-/// 工具执行失败后运行时采取的动作
+/// Action taken by the runtime after a tool execution failure
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolErrorAction {
-    /// 停止当前 run，以失败态结束
+    /// Stop the current run with a failed outcome
     Stop,
-    /// 将错误信息回灌给模型，继续推理
+    /// Feed the error back to the LLM and continue reasoning
     Retry,
 }
 
-/// 工具执行失败后的恢复策略
+/// Recovery strategy after a tool execution failure
 ///
-/// 默认使用 StopOnError，符合轻内核“默认保守、策略外置”的设计原则。
-/// 上层 agent 可按需注入 RetryOnError 等自定义策略。
+/// Defaults to StopOnError, following the lightweight kernel""
+/// Upper-layer agents can inject custom strategies such as RetryOnError.
 #[async_trait]
 pub trait ToolErrorRecovery: Send + Sync {
     async fn on_error(
@@ -25,9 +25,9 @@ pub trait ToolErrorRecovery: Send + Sync {
     ) -> AgentResult<ToolErrorAction>;
 }
 
-/// 默认策略：工具失败后停止运行
+/// Default: stop on tool failure
 ///
-/// 这是最保守的策略，内核只表达事实，不替上层做业务恢复决策。
+/// This is the most conservative strategy. The kernel only reports the fact, without making business recovery decisions.
 pub struct StopOnError;
 
 #[async_trait]
@@ -42,9 +42,9 @@ impl ToolErrorRecovery for StopOnError {
     }
 }
 
-/// 工具失败后继续运行，将错误回灌给模型
+/// Continue on tool failure, feeding the error back to the model
 ///
-/// 适用于需要模型自恢复的场景（如 code-agent、browser-agent）。
+/// Suitable for scenarios where model self-healing is desired (e.g. code-agent, browser-agent).
 pub struct RetryOnError;
 
 #[async_trait]

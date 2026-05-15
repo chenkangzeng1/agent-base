@@ -2,6 +2,12 @@
 name = "agent-base"
 version = "0.1.0"
 edition = "2024"
+description = "A lightweight Agent Runtime Kernel for building AI agents in Rust"
+license = "MIT"
+repository = "https://github.com/YOUR_USERNAME/agent-base"
+readme = "README.md"
+keywords = ["agent", "ai", "llm", "runtime", "tool-calling"]
+categories = ["development-tools", "asynchronous"]
 
 [dependencies]
 anyhow = "1.0.102"

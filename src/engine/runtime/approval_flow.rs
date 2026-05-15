@@ -50,7 +50,7 @@ impl AgentRuntime {
             Some(handler) => handler
                 .approve(request.clone())
                 .await
-                .map_err(|e| AgentError::internal(format!("审批处理失败: {e}")))?,
+                .map_err(|e| AgentError::internal(format!("Approval handler failed: {e}")))?,
             None => ApprovalDecision::Deny,
         };
 
@@ -63,7 +63,7 @@ impl AgentRuntime {
             }
             ApprovalDecision::Deny => {
                 let denial_summary =
-                    format!("[Action Denied]: 审批拒绝执行工具 {tool_name}。");
+                    format!("[Action Denied]: tool {} rejected by approval", tool_name);
                 let session = self.session_mut_or_err(session_id)?;
                 session.push_assistant_tool_call("", tool_name, tool_args_json);
                 session.push_tool_result("", denial_summary.clone());

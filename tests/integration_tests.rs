@@ -283,7 +283,7 @@ async fn test_approval_deny_stops_execution() {
     assert!(has_awaiting_approval, "Should emit AwaitingApproval event");
 
     let has_denial_finished = events.iter().any(|e| {
-        matches!(e, AgentEvent::ToolCallFinished { summary, .. } if summary.contains("审批拒绝"))
+        matches!(e, AgentEvent::ToolCallFinished { summary, .. } if summary.contains("rejected by approval"))
     });
     assert!(has_denial_finished, "Should emit ToolCallFinished with denial summary");
 

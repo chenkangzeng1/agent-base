@@ -1,82 +1,143 @@
 # agent-base
 
-轻量 Agent Runtime Kernel。提供最小必要的会话执行编排能力，不承载复杂 workflow、memory 平台和强业务恢复策略。
+A lightweight **Agent Runtime Kernel** for building AI agents in Rust.
 
-## 设计原则
+`agent-base` provides the minimal orchestration layer needed to build custom AI agents — LLM integration, tool dispatch, multi-turn conversation, approval flows, event streaming, and error recovery — all with zero business assumptions.
 
-- **语义清晰** — 运行结果通过 `RunOutcome` 显式表达，事件与返回值不冲突
-- **状态简单** — runtime 内存态是 session 的 source of truth，store 是 persistence adapter
-- **默认保守** — 内核默认行为保守，工具失败后默认停止，不做业务恢复猜测
-- **策略外置** — 可变行为通过 trait / policy / middleware 注入，不固化在 runtime 中
+## Design Principles
 
-## 能力
+- **Clear semantics** — `RunOutcome` explicitly distinguishes `Completed` from `Failed`; events capture the process, the return value captures the final result.
+- **Simple state model** — Runtime memory is the source of truth for live sessions; `SessionStore` is an optional persistence adapter.
+- **Conservative by default** — On tool failure, the runtime stops by default (`StopOnError`) rather than guessing how to recover.
+- **Strategy injection** — All variable behaviors are injected via traits (`ToolErrorRecovery`, `ToolPolicy`, `ApprovalHandler`, `Middleware`), not hardcoded.
 
-- **LLM 对话** — `LlmClient` trait，内置 OpenAI / Anthropic 实现
-- **工具系统** — `Tool` trait + `ToolRegistry`，注册与自动分发
-- **审批机制** — `ApprovalHandler` trait，支持 AllowOnce / AllowAlways / Deny
-- **错误恢复** — `ToolErrorRecovery` trait，默认 `StopOnError`，可选 `RetryOnError`
-- **事件流** — 执行过程以 `AgentEvent` 结构化事件外抛
-- **多轮会话** — `AgentSession` 管理消息历史，`SessionStore` 负责可选持久化
-- **子 Agent** — `SubAgentTool` 支持委托子 Agent 执行，默认 ephemeral session
-- **运行结果** — `RunOutcome` 区分 `Completed` / `Failed`，消除语义歧义
+## Features
 
-## 用法
+- **LLM Abstraction** — `LlmClient` trait with built-in OpenAI and Anthropic implementations
+- **Tool System** — `Tool` trait + `ToolRegistry` for registration and dispatch
+- **Approval Flow** — `ApprovalHandler` trait with `AllowOnce` / `AllowAlways` / `Deny` decisions
+- **Error Recovery** — `ToolErrorRecovery` trait; defaults to `StopOnError`, opt-in `RetryOnError`
+- **Event Streaming** — Structured `AgentEvent` stream for UI, logging, auditing, and debugging
+- **Multi-turn Sessions** — `AgentSession` manages message history; `SessionStore` for optional persistence
+- **Sub-Agents** — `SubAgentTool` with `Ephemeral` (default) or `Persistent` session policies
+- **Context Management** — configurable `ContextWindowManager` for token budget control
+- **Middleware** — hooks at `on_user_message`, `on_pre_llm`, and `on_post_llm` for extensions
+- **Checkpoints** — structured `Checkpoint` events enable future replay, debugging, and resume
+- **MCP Support** — built-in `McpClient` for the Model Context Protocol
+- **Skills** — composable capability units with auto-registered tools and on-demand detailed prompts
+
+## Quick Start
 
 ```rust
 use std::sync::Arc;
 use agent_base::{
     AgentBuilder, AgentEvent, AgentResult, RunOutcome,
-    OpenAiClient, Tool, ToolContext, ToolOutput, ToolControlFlow,
+    AnthropicClient, Tool, ToolContext, ToolOutput,
 };
 use serde_json::{json, Value};
 
-// 1. 定义工具
+// 1. Define a tool
 struct GreetTool;
-// impl Tool for GreetTool { ... }
 
-// 2. 创建 runtime
-let client = Arc::new(OpenAiClient::new("sk-xxx".into(), "gpt-4o".into(), None));
+#[async_trait::async_trait]
+impl Tool for GreetTool {
+    fn name(&self) -> &'static str { "greet" }
+
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "greet",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string" }
+                    },
+                    "required": ["name"]
+                }
+            }
+        })
+    }
+
+    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
+        let name = args["name"].as_str().unwrap_or("world");
+        Ok(ToolOutput {
+            summary: format!("Hello, {}!", name),
+            raw: None,
+            control_flow: ToolControlFlow::Break,
+            truncated: false,
+        })
+    }
+}
+
+// 2. Build the runtime
+let client = Arc::new(AnthropicClient::new(
+    "sk-ant-xxx".into(),
+    "claude-3-5-sonnet-20241022".into(),
+    None,
+));
 let mut runtime = AgentBuilder::new(client)
-    .system_prompt("你是一个助手")
+    .system_prompt("You are a friendly assistant.")
     .register_tool(GreetTool)
     .build();
 
-// 3. 执行一轮对话
+// 3. Run a turn
 let session_id = runtime.create_session();
-let (events, outcome) = runtime.run_turn_stream(session_id, "你好").await?;
+let (events, outcome) = runtime.run_turn_stream(session_id, "Greet Alice").await?;
 assert_eq!(outcome, RunOutcome::Completed);
 ```
 
-## 运行示例
+## Examples
 
 ```bash
-# 1. 配置 API Key
+# Configure API key
 cp .env.example .env
-# 编辑 .env 填入 OPENAI_API_KEY 或 ANTHROPIC_API_KEY
+# Edit .env with your OPENAI_API_KEY or ANTHROPIC_API_KEY
 
-# 2. 运行 REPL
+# Run the REPL example
 cargo run --example repl
+
+# Run the SubAgent demo
+cargo run --example subagent_demo
+
+# Run the MCP demo
+cargo run --example mcp_demo
+
+# Run the Skill demo
+cargo run --example skill_demo
 ```
 
-## 不做什么
+## What agent-base Does NOT Do
 
-- ❌ 不含 SSH / 文件 / 数据库等业务工具
-- ❌ 不含复杂 workflow DAG / multi-agent 调度
-- ❌ 不含 memory framework
-- ❌ 不含终端 UI、审批弹窗
-- ❌ 不含重型持久化一致性系统
+- ❌ No SSH, filesystem, or database tools
+- ❌ No workflow DAG / multi-agent orchestration engine
+- ❌ No memory / RAG framework
+- ❌ No terminal UI or approval dialogs
+- ❌ No heavy persistence or transaction system
 
-## 典型分层
+Business-specific tools and strategies belong in **upper layers** (`ops-agent`, `db-agent`, etc.).
+
+## Typical Layering
 
 ```
-ops-agent / db-agent / browser-agent    ← 业务 agent
-    └── agent-base                       ← 轻量运行时 Kernel
+ops-agent / db-agent / browser-agent    ← Business agents
+    └── agent-base                       ← Lightweight Runtime Kernel
 ```
 
-## v1 语义约定
+## v1 Semantics
 
-- `run_turn_*` 返回 `AgentResult<RunOutcome>` — `Ok(Completed)` 表示成功完成，`Ok(Failed)` 表示运行结束但未成功
-- `AgentEvent::RunFinished` 只表示过程结束 — 最终状态见 `RunOutcome`
-- 工具失败默认停止运行 — 需要自动恢复时注入 `RetryOnError`
-- 子 Agent 默认每次调用创建新 session — 需复用上下文时使用 `with_persistent`
-- Session live state 在 runtime 内存 — `SessionStore` 是可选持久化适配层
+| Convention | Meaning |
+|---|---|
+| `run_turn_*` → `AgentResult<RunOutcome>` | `Ok(Completed)` = success, `Ok(Failed)` = finished with error |
+| `AgentEvent::RunFinished` | Process ended — final status is in `RunOutcome` |
+| Tool failure → defaults to `StopOnError` | Inject `RetryOnError` for self-healing agents |
+| SubAgent → defaults to `Ephemeral` | Use `with_persistent()` for shared context |
+| Session → memory is source of truth | `SessionStore` is an optional persistence adapter |
+
+## Stability
+
+This project is in early development (v0.1.0). The core abstractions are settling but not yet frozen. Expect minor API changes as the ecosystem evolves.
+
+## License
+
+MIT

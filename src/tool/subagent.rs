@@ -6,12 +6,12 @@ use crate::engine::AgentRuntime;
 use crate::types::{AgentError, AgentEvent, AgentResult, SessionId};
 use super::{Tool, ToolContext, ToolControlFlow, ToolOutput};
 
-/// 子 Agent 的 session 策略
+/// Sub-Agent session policy
 #[derive(Clone, Debug)]
 pub enum SubAgentSessionPolicy {
-    /// 每次调用创建新 session（默认）
+    /// Create a new session per call (default)
     Ephemeral,
-    /// 复用同一个 session，子 Agent 会积累历史上下文
+    /// Reuse the same session; sub-agent accumulates history
     Persistent,
 }
 
@@ -72,7 +72,7 @@ impl Tool for SubAgentTool {
                     "properties": {
                         "task": {
                             "type": "string",
-                            "description": "需要委托给子 Agent 执行的任务描述"
+                            "description": "Task description to delegate to the sub-agent"
                         }
                     },
                     "required": ["task"]
@@ -92,7 +92,7 @@ impl Tool for SubAgentTool {
 
         if task.is_empty() {
             return Ok(ToolOutput {
-                summary: "任务描述为空，无法执行".to_string(),
+                summary: "Task description is empty, cannot execute".to_string(),
                 raw: None,
                 control_flow: ToolControlFlow::Break,
                 truncated: false,
@@ -146,7 +146,7 @@ impl Tool for SubAgentTool {
         }
 
         let summary = if final_text.is_empty() {
-            format!("子 Agent [{}] 已执行完成", self.name)
+            format!("Sub-agent [{}] finished", self.name)
         } else {
             final_text
         };

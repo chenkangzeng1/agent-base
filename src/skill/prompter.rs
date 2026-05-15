@@ -2,9 +2,9 @@ use std::sync::Arc;
 
 use super::{Skill, SkillPrompter};
 
-/// 按需加载策略（默认）
+/// Lazy-loading strategy (default)
 ///
-/// 只放 brief_description + 提示调用 get_skill_detail
+/// Only includes brief_description + instructions to call get_skill_detail
 pub struct LazySkillPrompter {
     title: String,
     instruction: String,
@@ -14,9 +14,9 @@ pub struct LazySkillPrompter {
 impl Default for LazySkillPrompter {
     fn default() -> Self {
         Self {
-            title: "## 可用 Skills".to_string(),
+            title: "## Available Skills".to_string(),
             instruction:
-                "> 需要某个 Skill 的详细操作指南时，调用 get_skill_detail 工具获取。"
+                "> Call get_skill_detail to get detailed instructions for a Skill."
                     .to_string(),
             item_prefix: "- **".to_string(),
         }
@@ -70,9 +70,9 @@ impl SkillPrompter for LazySkillPrompter {
     }
 }
 
-/// 全量注入策略
+/// Full-injection strategy
 ///
-/// 把 brief + detailed 都塞进去
+/// Injects both brief and detailed descriptions
 pub struct FullDetailPrompter;
 
 impl SkillPrompter for FullDetailPrompter {
@@ -81,7 +81,7 @@ impl SkillPrompter for FullDetailPrompter {
             return String::new();
         }
 
-        let mut prompt = String::from("## 可用 Skills\n\n");
+        let mut prompt = String::from("## Available Skills\n\n");
         for skill in skills {
             prompt.push_str(&format!("### {}\n\n", skill.name()));
             prompt.push_str(&skill.brief_description());
