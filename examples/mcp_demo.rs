@@ -104,13 +104,13 @@ async fn start_mock_mcp_server() -> (String, tokio::task::JoinHandle<()>) {
                         "tools": [
                             {
                                 "name": "get_weather",
-                                "description": "获取指定城市的天气信息",
+                                "description": "Get weather information for a specified city",
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
                                         "city": {
                                             "type": "string",
-                                            "description": "城市名称"
+                                            "description": "City name"
                                         }
                                     },
                                     "required": ["city"]
@@ -118,13 +118,13 @@ async fn start_mock_mcp_server() -> (String, tokio::task::JoinHandle<()>) {
                             },
                             {
                                 "name": "search_docs",
-                                "description": "搜索技术文档",
+                                "description": "Search technical documentation",
                                 "inputSchema": {
                                     "type": "object",
                                     "properties": {
                                         "query": {
                                             "type": "string",
-                                            "description": "搜索关键词"
+                                            "description": "Search keyword"
                                         }
                                     },
                                     "required": ["query"]
@@ -141,11 +141,11 @@ async fn start_mock_mcp_server() -> (String, tokio::task::JoinHandle<()>) {
                         let args = params.get("arguments").unwrap_or(&Value::Null);
 
                         if tool_name == "get_weather" {
-                            let city = args.get("city").and_then(Value::as_str).unwrap_or("北京");
+                            let city = args.get("city").and_then(Value::as_str).unwrap_or("Beijing");
                             json!({
                                 "content": [{
                                     "type": "text",
-                                    "text": format!("{city} 今日天气：晴，22°C ~ 30°C，微风")
+                                    "text": format!("{city} Today's weather：Sunny，22°C ~ 30°C，Light breeze")
                                 }]
                             })
                         } else {
@@ -153,7 +153,7 @@ async fn start_mock_mcp_server() -> (String, tokio::task::JoinHandle<()>) {
                             json!({
                                 "content": [{
                                     "type": "text",
-                                    "text": format!("搜索 \"{query}\" 结果：找到 3 篇相关文档")
+                                    "text": format!("Searching \"{query}\" Results：Found 3 relevant documents")
                                 }]
                             })
                         }
@@ -185,14 +185,14 @@ async fn start_mock_mcp_server() -> (String, tokio::task::JoinHandle<()>) {
 async fn main() -> AgentResult<()> {
     println!("=== agent-base MCP Demo ===\n");
 
-    println!("[1] 启动模拟 MCP Server ...");
+    println!("[1] Starting mock MCP server MCP Server ...");
     let (server_url, _server_handle) = start_mock_mcp_server().await;
-    println!("    MCP Server 运行在: {server_url}\n");
+    println!("    MCP Server Running on: {server_url}\n");
 
-    println!("[2] 连接 MCP Server 并发现工具 ...");
+    println!("[2] Connecting to MCP Server and discovering tools ...");
     let registry = McpToolRegistry::new(server_url.clone());
     let discovered_tools = registry.discover_tools().await?;
-    println!("    发现 {} 个工具:", discovered_tools.len());
+    println!("    Discovered {} tool:", discovered_tools.len());
     for tool in &discovered_tools {
         let def = tool.definition();
         let name = def
@@ -208,7 +208,7 @@ async fn main() -> AgentResult<()> {
         println!("    - {name}: {desc}");
     }
 
-    println!("\n[3] 将 MCP 工具注册到 Agent 并运行 ...\n");
+    println!("\n[3] Registering MCP tools into Agent and running ...\n");
 
     let llm = Arc::new(MockLlmClient::new(vec![
         vec![
@@ -218,7 +218,7 @@ async fn main() -> AgentResult<()> {
                         "id": "call_1",
                         "function": {
                             "name": "get_weather",
-                            "arguments": "{\"city\":\"深圳\"}"
+                            "arguments": "{\"city\":\"Shenzhen\"}"
                         }
                     }]
                 }
@@ -226,45 +226,45 @@ async fn main() -> AgentResult<()> {
             StreamChunk::Stop,
         ],
         vec![
-            StreamChunk::Text("根据查询结果，深圳今天天气晴朗，适合出行。".to_string()),
+            StreamChunk::Text("According to the query results, Shenzhen is sunny today, great for going out.".to_string()),
             StreamChunk::Stop,
         ],
     ]));
 
     // Register MCP-discovered tools into AgentBuilder
     let mut builder = AgentBuilder::new(llm)
-        .system_prompt("你是一个助手，可以使用 MCP 提供的工具来回答用户问题");
+        .system_prompt("You are an assistant. You can use MCP tools to answer user questions.");
     for tool in discovered_tools {
         let name = tool.name().to_string();
         builder = builder.register_tool_arc(tool);
-        println!("    已注册工具: {name}");
+        println!("    Registeredtool: {name}");
     }
     let mut runtime = builder.build();
 
     let session_id = runtime.create_session();
 
-    println!("\n--- Agent 运行 ---\n");
+    println!("\n--- Agent Running ---\n");
     let (events, _outcome) = runtime
-        .run_turn_stream(session_id, "深圳今天天气怎么样？")
+        .run_turn_stream(session_id, "What is the weather in Shenzhen today?")
         .await?;
 
     for event in &events {
         match event {
             AgentEvent::TextDelta { text, .. } => print!("{text}"),
             AgentEvent::ToolCallStarted { tool_name, args_json, .. } => {
-                println!("[工具调用] {tool_name}({args_json})");
+                println!("[Tool call] {tool_name}({args_json})");
             }
             AgentEvent::ToolCallFinished { summary, .. } => {
-                println!("[工具结果] {summary}");
+                println!("[toolResults] {summary}");
             }
-            AgentEvent::RunFinished { .. } => println!("\n[运行完成]"),
+            AgentEvent::RunFinished { .. } => println!("\n[Run finished]"),
             AgentEvent::Custom { payload, .. } => {
-                println!("[自定义事件] {payload}");
+                println!("[Custom event] {payload}");
             }
             _ => {}
         }
     }
 
-    println!("\n=== Demo 完成 ===");
+    println!("\n=== Demo done ===");
     Ok(())
 }

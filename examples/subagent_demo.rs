@@ -72,33 +72,33 @@ impl LlmClient for MockLlmClient {
 async fn main() -> AgentResult<()> {
     println!("=== agent-base SubAgent Demo ===\n");
 
-    println!("[1] 创建子 Agent (数据分析专家) ...");
+    println!("[1] Creating sub-agent:  Agent (Data Analysis Expert) ...");
 
     let sub_llm = Arc::new(MockLlmClient::new(vec![
             vec![
-                StreamChunk::Text("数据分析结果：".to_string()),
-                StreamChunk::Text("本月销售额 120 万，环比增长 15%，".to_string()),
-                StreamChunk::Text("其中线上渠道占比 60%，线下渠道占比 40%。".to_string()),
+                StreamChunk::Text("Data analysis results：".to_string()),
+                StreamChunk::Text("Monthly sales 120 10K，MoM growth 15%，".to_string()),
+                StreamChunk::Text("Online channel share 60%，Offline channel share 40%。".to_string()),
                 StreamChunk::Stop,
             ],
         ],
     ));
 
     let sub_runtime = AgentBuilder::new(sub_llm)
-        .system_prompt("你是一个数据分析专家，根据用户提供的任务描述进行分析，返回详细结果。")
+        .system_prompt("You are a Data Analysis Expert. Analyze based on the task description provided. Return detailed results.")
         .build();
 
-    println!("    子 Agent 已就绪\n");
+    println!("    sub-agent Agent is ready\n");
 
-    println!("[2] 创建 SubAgentTool 包装子 Agent ...");
+    println!("[2] Creating SubAgentTool to wrap the sub-agent ...");
     let sub_agent_tool = SubAgentTool::new(
         "analyze_data",
-        "将数据分析任务委托给专家子 Agent 执行，返回详细分析结果",
+        "Delegate data analysis tasks to an expert sub-agent. Execute and return detailed analysis results",
         sub_runtime,
     );
-    println!("    工具名称: analyze_data\n");
+    println!("    tool name: analyze_data\n");
 
-    println!("[3] 创建父 Agent 并注册子 Agent 工具 ...");
+    println!("[3] Creating parent agent and registering sub-agent tool ...");
 
     let parent_llm = Arc::new(MockLlmClient::new(vec![
             vec![
@@ -108,7 +108,7 @@ async fn main() -> AgentResult<()> {
                             "id": "call_1",
                             "function": {
                                 "name": "analyze_data",
-                                "arguments": "{\"task\": \"分析本月销售数据，重点关注线上线下渠道占比\"}"
+                                "arguments": "{\"task\": \"Analyze this month's sales data, focusing on online vs offline channel share\"}"
                             }
                         }]
                     }
@@ -117,26 +117,26 @@ async fn main() -> AgentResult<()> {
             ],
             vec![
                 StreamChunk::Text(
-                    "根据子 Agent 的分析结果，本月销售表现良好。".to_string(),
+                    "Based on sub-agent analysis results, this month's sales performance is good.".to_string(),
                 ),
-                StreamChunk::Text("结论：建议继续加大线上渠道投入，同时优化线下门店布局。".to_string()),
+                StreamChunk::Text("Conclusion：Recommend increasing online channel investment，while optimizing offline store layout。".to_string()),
                 StreamChunk::Stop,
             ],
         ],
     ));
 
     let mut parent_runtime = AgentBuilder::new(parent_llm)
-        .system_prompt("你是销售主管，负责汇总分析报告。你可以将具体分析任务委托给子 Agent。")
+        .system_prompt("You are a sales manager. Responsible for compiling analysis reports. You can delegate specific analysis tasks to the sub-agent.agent Agent。")
         .register_tool(sub_agent_tool)
         .build();
 
     let session_id = parent_runtime.create_session();
 
-    println!("    父 Agent 已就绪\n");
-    println!("--- 开始执行 ---\n");
+    println!("    Parent agent Agent is ready\n");
+    println!("--- Starting execution ---\n");
 
     let (events, _outcome) = parent_runtime
-        .run_turn_stream(session_id, "请分析一下本月的销售情况")
+        .run_turn_stream(session_id, "Please analyze this month's sales performance")
         .await?;
 
     println!();
@@ -145,12 +145,12 @@ async fn main() -> AgentResult<()> {
             AgentEvent::TextDelta { text, .. } => print!("{text}"),
             AgentEvent::ToolCallStarted { tool_name, args_json, .. } => {
                 println!();
-                println!(">>> 父 Agent 调用工具: {tool_name}");
-                println!("    参数: {args_json}");
+                println!(">>> Parent agent calling tool: {tool_name}");
+                println!("    with args: {args_json}");
             }
             AgentEvent::ToolCallFinished { tool_name, summary, .. } => {
                 println!();
-                println!("<<< 工具返回 ({tool_name}):");
+                println!("<<< Tool result ({tool_name}):");
                 println!("    {summary}");
             }
             AgentEvent::Custom { payload, .. } => {
@@ -166,12 +166,12 @@ async fn main() -> AgentResult<()> {
                                     "TextDelta" => {
                                         if let Some(t) = inner.get("text").and_then(Value::as_str)
                                         {
-                                            print!("  [子Agent] {t}");
+                                            print!("  [sub-agentAgent] {t}");
                                         }
                                     }
                                     "RunFinished" => {
                                         println!();
-                                        println!("  [子Agent] 分析完成");
+                                        println!("  [Sub-agent] analysis done");
                                     }
                                     _ => {}
                                 }
@@ -183,21 +183,21 @@ async fn main() -> AgentResult<()> {
             AgentEvent::RunFinished { .. } => {
                 println!();
                 println!();
-                println!("--- 执行完成 ---");
+                println!("--- Executedone ---");
             }
             _ => {}
         }
     }
 
     println!();
-    println!("=== Demo 完成 ===");
+    println!("=== Demo done ===");
 
     println!();
-    println!("说明:");
-    println!("  1. 父 Agent 收到用户请求后，决定将数据分析任务委托给子 Agent");
-    println!("  2. 子 Agent 独立运行，产生分析结果");
-    println!("  3. 子 Agent 的事件（TextDelta 等）通过 Custom 事件桥接到父 Agent");
-    println!("  4. 父 Agent 收到子 Agent 结果后，汇总并给出最终结论");
+    println!("Note:");
+    println!("  1. Parent agent receives user request and delegates analysis to the sub-agent");
+    println!("  2. sub-agent Agent runs independently，generates analysis results");
+    println!("  3. Sub-agent events (TextDelta, etc.) bridge to the parent agent via Custom events");
+    println!("  4. Parent agent receives sub-agent results, summarizes, and provides the final conclusion");
 
     Ok(())
 }
