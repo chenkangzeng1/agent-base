@@ -233,13 +233,13 @@ cargo run --example skill_demo
 
 ## What agent-base Does NOT Do
 
-- ❌ No SSH, filesystem, or database tools
-- ❌ No workflow DAG / multi-agent orchestration engine
-- ❌ No memory / RAG framework
-- ❌ No terminal UI or approval dialogs
-- ❌ No heavy persistence or transaction system
+- Built-in SSH, filesystem, or database tools
+- Workflow DAG or multi-agent orchestration engine
+- Memory or RAG (Retrieval-Augmented Generation) framework
+- Terminal UI or built-in approval dialog
+- Production-grade persistence or transaction system
 
-Business-specific tools and strategies belong in **upper layers** (`ops-agent`, `db-agent`, etc.).
+Business-specific tools and strategies belong in **upper layers** (e.g. `ops-agent`, `db-agent`, `browser-agent`).
 
 ## Typical Layering
 
