@@ -19,12 +19,17 @@ pub struct OpenAiClient {
 
 impl OpenAiClient {
     pub fn new(api_key: String, model: String, base_url: Option<String>) -> Self {
+        let client = Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(15))
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .unwrap_or_else(|_| Client::new());
         Self {
             api_key,
             model,
             base_url: base_url
                 .unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
-            client: Client::new(),
+            client,
         }
     }
 
