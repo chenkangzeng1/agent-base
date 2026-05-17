@@ -121,6 +121,10 @@ impl ToolRegistry {
         self.tools.insert(tool.name().to_string(), tool);
     }
 
+    pub fn update(&mut self, tool: impl Tool + 'static) {
+        self.tools.insert(tool.name().to_string(), Arc::new(tool));
+    }
+
     pub fn get(&self, name: &str) -> Option<ToolRef> {
         self.tools.get(name).cloned()
     }

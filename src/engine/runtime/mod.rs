@@ -83,6 +83,10 @@ impl AgentRuntime {
         &self.tools
     }
 
+    pub fn tools_mut(&mut self) -> &mut ToolRegistry {
+        &mut self.tools
+    }
+
     pub fn client(&self) -> &Arc<dyn LlmClient> {
         &self.client
     }
