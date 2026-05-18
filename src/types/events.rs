@@ -2,6 +2,7 @@ use serde_json::Value;
 
 use super::approval::ApprovalRequest;
 use super::checkpoint::CheckpointData;
+use super::plan::ExecutionPlan;
 use super::session::SessionId;
 
 #[derive(Clone, Debug)]
@@ -38,5 +39,25 @@ pub enum AgentEvent {
     Custom {
         session_id: SessionId,
         payload: Value,
+    },
+    PlanGenerated {
+        session_id: SessionId,
+        plan: ExecutionPlan,
+    },
+    PlanStepStarted {
+        session_id: SessionId,
+        step_id: String,
+        step_description: String,
+    },
+    PlanStepCompleted {
+        session_id: SessionId,
+        step_id: String,
+        success: bool,
+        result: Option<String>,
+    },
+    PlanCompleted {
+        session_id: SessionId,
+        plan_id: String,
+        success: bool,
     },
 }

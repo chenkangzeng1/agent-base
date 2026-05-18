@@ -39,6 +39,18 @@ pub enum AgentError {
     #[error("Operation cancelled")]
     Cancelled,
 
+    #[error("Plan error: {0}")]
+    Plan(String),
+
+    #[error("Plan step '{step_id}' failed: {message}")]
+    PlanStepFailed { step_id: String, message: String },
+
+    #[error("Plan generation failed: {0}")]
+    PlanGeneration(String),
+
+    #[error("Plan storage error: {0}")]
+    PlanStorage(String),
+
     #[error("Internal error: {0}")]
     Internal(String),
 }
@@ -62,6 +74,25 @@ impl AgentError {
 
     pub fn session_not_found(id: u64) -> Self {
         Self::SessionNotFound(id)
+    }
+
+    pub fn plan(message: impl Into<String>) -> Self {
+        Self::Plan(message.into())
+    }
+
+    pub fn plan_step_failed(step_id: impl Into<String>, message: impl Into<String>) -> Self {
+        Self::PlanStepFailed {
+            step_id: step_id.into(),
+            message: message.into(),
+        }
+    }
+
+    pub fn plan_generation(message: impl Into<String>) -> Self {
+        Self::PlanGeneration(message.into())
+    }
+
+    pub fn plan_storage(message: impl Into<String>) -> Self {
+        Self::PlanStorage(message.into())
     }
 
     pub fn is_cancelled(&self) -> bool {

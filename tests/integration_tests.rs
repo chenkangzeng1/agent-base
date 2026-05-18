@@ -4,8 +4,9 @@ use std::sync::Mutex;
 
 use agent_base::{
     AgentBuilder, AgentError, AgentEvent, AgentResult, ApprovalDecision, ApprovalHandler,
-    ApprovalRequest, ChatMessage, LlmCapabilities, LlmClient, ResponseFormat, RetryOnError,
-    RiskLevel, RunOutcome, StreamChunk, Tool,
+    ApprovalRequest, ChatMessage, ExecutionPlan, InMemoryPlanStore, LlmCapabilities, LlmClient,
+    PlanExecutor, PlanStatus, PlanStep, PlanStore, RecoveryAction, ResponseFormat, RetryOnError,
+    RiskLevel, RunOutcome, StepActionType, StepResult, StepStatus, StreamChunk, Tool,
     ToolContext, ToolControlFlow, ToolOutput, ToolPolicy,
 };
 use async_trait::async_trait;
@@ -1230,4 +1231,300 @@ async fn retry_then_empty_llm_response_continues() {
     assert_valid_message_history(messages);
 
     assert_eq!(llm.call_count(), 3, "Should make 3 LLM calls (tool fail + empty + recovery)");
+}
+
+// =========================================================================
+// 8. Plan-and-Execute tests
+// =========================================================================
+
+struct MockPlanExecutor {
+    steps: Vec<PlanStep>,
+    execution_results: Mutex<Vec<StepResult>>,
+}
+
+impl MockPlanExecutor {
+    fn new(steps: Vec<PlanStep>) -> Self {
+        Self {
+            steps,
+            execution_results: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn with_results(steps: Vec<PlanStep>, results: Vec<StepResult>) -> Self {
+        Self {
+            steps,
+            execution_results: Mutex::new(results),
+        }
+    }
+}
+
+#[async_trait]
+impl PlanExecutor for MockPlanExecutor {
+    async fn generate_plan(
+        &self,
+        objective: &str,
+        _context: &str,
+        _tools: &[Value],
+    ) -> AgentResult<ExecutionPlan> {
+        let mut plan = ExecutionPlan::new("test-plan-1", objective);
+        plan.steps = self.steps.clone();
+        Ok(plan)
+    }
+
+    async fn execute_step(
+        &self,
+        step: &PlanStep,
+        _plan_context: &Value,
+    ) -> AgentResult<StepResult> {
+        let mut results = self.execution_results.lock().unwrap();
+        if results.is_empty() {
+            Ok(StepResult::success(format!("Step {} completed", step.id), 100))
+        } else {
+            Ok(results.remove(0))
+        }
+    }
+
+    async fn should_continue(
+        &self,
+        _plan: &ExecutionPlan,
+        _current_step: &PlanStep,
+    ) -> AgentResult<bool> {
+        Ok(true)
+    }
+
+    async fn handle_step_failure(
+        &self,
+        _step: &PlanStep,
+        _error: &str,
+        _retry_count: usize,
+    ) -> AgentResult<RecoveryAction> {
+        Ok(RecoveryAction::Abort)
+    }
+}
+
+#[tokio::test]
+async fn test_plan_execution_success() {
+    let steps = vec![
+        PlanStep::new("step-1", "First step", StepActionType::ToolCall {
+            tool_name: "echo".to_string(),
+            args: json!({"message": "hello"}),
+        }),
+        PlanStep::new("step-2", "Second step", StepActionType::ToolCall {
+            tool_name: "echo".to_string(),
+            args: json!({"message": "world"}),
+        }),
+    ];
+
+    let plan_executor = Arc::new(MockPlanExecutor::new(steps));
+    let plan_store = Arc::new(InMemoryPlanStore::new());
+
+    let llm = Arc::new(MockLlmClient::new(vec![
+        vec![StreamChunk::Text("Step 1 done".to_string()), StreamChunk::Stop],
+        vec![StreamChunk::Text("Step 2 done".to_string()), StreamChunk::Stop],
+    ]));
+
+    let mut runtime = AgentBuilder::new(llm.clone())
+        .register_tool(EchoTool)
+        .build();
+
+    let session_id = runtime.create_session();
+    let result = runtime
+        .run_with_plan(
+            session_id,
+            "Test objective",
+            plan_executor,
+            Some(plan_store.clone()),
+            |_| Ok(()),
+        )
+        .await;
+
+    assert!(result.is_ok(), "Plan execution should succeed: {result:?}");
+    assert_eq!(result.unwrap(), RunOutcome::Completed);
+
+    let stored_plan = plan_store.load_plan("test-plan-1").await.unwrap();
+    assert!(stored_plan.is_some(), "Plan should be stored");
+    assert_eq!(stored_plan.unwrap().plan.status, PlanStatus::Completed);
+}
+
+#[tokio::test]
+async fn test_plan_execution_failure_aborts() {
+    let steps = vec![
+        PlanStep::new("step-1", "First step", StepActionType::ToolCall {
+            tool_name: "echo".to_string(),
+            args: json!({"message": "hello"}),
+        }),
+        PlanStep::new("step-2", "Second step", StepActionType::ToolCall {
+            tool_name: "echo".to_string(),
+            args: json!({"message": "world"}),
+        }),
+    ];
+
+    let results = vec![
+        StepResult::success("Step 1 done", 100),
+        StepResult::failure("Step 2 failed", 100),
+    ];
+
+    let plan_executor = Arc::new(MockPlanExecutor::with_results(steps, results));
+    let plan_store = Arc::new(InMemoryPlanStore::new());
+
+    let llm = Arc::new(MockLlmClient::new(vec![
+        vec![StreamChunk::Text("Step 1 done".to_string()), StreamChunk::Stop],
+    ]));
+
+    let mut runtime = AgentBuilder::new(llm.clone())
+        .register_tool(EchoTool)
+        .build();
+
+    let session_id = runtime.create_session();
+    let result = runtime
+        .run_with_plan(
+            session_id,
+            "Test objective",
+            plan_executor,
+            Some(plan_store.clone()),
+            |_| Ok(()),
+        )
+        .await;
+
+    assert!(result.is_ok(), "Plan execution should return ok: {result:?}");
+    assert!(matches!(result.unwrap(), RunOutcome::Failed { .. }));
+
+    let stored_plan = plan_store.load_plan("test-plan-1").await.unwrap();
+    assert!(stored_plan.is_some(), "Plan should be stored");
+    assert_eq!(stored_plan.unwrap().plan.status, PlanStatus::Failed);
+}
+
+#[tokio::test]
+async fn test_plan_events_emitted() {
+    let steps = vec![
+        PlanStep::new("step-1", "First step", StepActionType::ToolCall {
+            tool_name: "echo".to_string(),
+            args: json!({"message": "hello"}),
+        }),
+    ];
+
+    let plan_executor = Arc::new(MockPlanExecutor::new(steps));
+    let plan_store = Arc::new(InMemoryPlanStore::new());
+
+    let llm = Arc::new(MockLlmClient::new(vec![
+        vec![StreamChunk::Text("Done".to_string()), StreamChunk::Stop],
+    ]));
+
+    let mut runtime = AgentBuilder::new(llm.clone())
+        .register_tool(EchoTool)
+        .build();
+
+    let session_id = runtime.create_session();
+    let mut events = Vec::new();
+    let result = runtime
+        .run_with_plan(
+            session_id,
+            "Test objective",
+            plan_executor,
+            Some(plan_store),
+            |event| {
+                events.push(event);
+                Ok(())
+            },
+        )
+        .await;
+
+    assert!(result.is_ok());
+
+    let has_plan_generated = events.iter().any(|e| matches!(e, AgentEvent::PlanGenerated { .. }));
+    assert!(has_plan_generated, "Should emit PlanGenerated event");
+
+    let has_step_started = events.iter().any(|e| matches!(e, AgentEvent::PlanStepStarted { .. }));
+    assert!(has_step_started, "Should emit PlanStepStarted event");
+
+    let has_step_completed = events.iter().any(|e| matches!(e, AgentEvent::PlanStepCompleted { .. }));
+    assert!(has_step_completed, "Should emit PlanStepCompleted event");
+
+    let has_plan_completed = events.iter().any(|e| matches!(e, AgentEvent::PlanCompleted { .. }));
+    assert!(has_plan_completed, "Should emit PlanCompleted event");
+}
+
+#[tokio::test]
+async fn test_plan_store_operations() {
+    let store = InMemoryPlanStore::new();
+    let plan = ExecutionPlan::new("plan-1", "Test plan");
+
+    store.save_plan(&plan, json!({})).await.unwrap();
+
+    let loaded = store.load_plan("plan-1").await.unwrap();
+    assert!(loaded.is_some());
+    assert_eq!(loaded.unwrap().plan.objective, "Test plan");
+
+    let plans = store.list_plans().await.unwrap();
+    assert_eq!(plans.len(), 1);
+    assert_eq!(plans[0], "plan-1");
+
+    store.delete_plan("plan-1").await.unwrap();
+    let loaded = store.load_plan("plan-1").await.unwrap();
+    assert!(loaded.is_none());
+}
+
+#[test]
+fn test_plan_data_structures() {
+    let mut plan = ExecutionPlan::new("test", "objective");
+    assert_eq!(plan.status, PlanStatus::Created);
+    assert!(plan.steps.is_empty());
+
+    let step = PlanStep::new("step-1", "description", StepActionType::ToolCall {
+        tool_name: "tool".to_string(),
+        args: json!({}),
+    });
+    plan.steps.push(step);
+
+    assert_eq!(plan.progress(), (0, 1));
+    assert!(!plan.is_completed());
+    assert!(!plan.has_failed());
+
+    plan.steps[0].status = StepStatus::Completed;
+    assert_eq!(plan.progress(), (1, 1));
+    assert!(plan.is_completed());
+}
+
+#[test]
+fn test_step_action_type_tool_name() {
+    let ssh = StepActionType::SshCommand {
+        command: "ls".to_string(),
+        host_id: "host1".to_string(),
+    };
+    assert_eq!(ssh.tool_name(), "ssh_command");
+
+    let tool_call = StepActionType::ToolCall {
+        tool_name: "my_tool".to_string(),
+        args: json!({}),
+    };
+    assert_eq!(tool_call.tool_name(), "my_tool");
+
+    let wait = StepActionType::WaitForUser {
+        prompt: "Continue?".to_string(),
+    };
+    assert_eq!(wait.tool_name(), "wait_for_user");
+}
+
+#[test]
+fn test_step_result_convenience_methods() {
+    let success = StepResult::success("output", 100);
+    assert!(success.success);
+    assert_eq!(success.output, Some("output".to_string()));
+    assert!(success.error.is_none());
+    assert_eq!(success.duration_ms, 100);
+
+    let failure = StepResult::failure("error", 200);
+    assert!(!failure.success);
+    assert!(failure.output.is_none());
+    assert_eq!(failure.error, Some("error".to_string()));
+    assert_eq!(failure.duration_ms, 200);
+}
+
+#[test]
+fn test_plan_serialization() {
+    let plan = ExecutionPlan::new("test-id", "test objective");
+    let json = serde_json::to_string(&plan).unwrap();
+    let deserialized: ExecutionPlan = serde_json::from_str(&json).unwrap();
+    assert_eq!(deserialized.id, "test-id");
+    assert_eq!(deserialized.objective, "test objective");
 }

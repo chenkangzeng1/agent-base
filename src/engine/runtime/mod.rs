@@ -19,6 +19,7 @@ use super::AgentSession;
 
 mod approval_flow;
 mod llm;
+mod plan;
 mod tool_exec;
 mod react_loop;
 

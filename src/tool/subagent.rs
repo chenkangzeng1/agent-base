@@ -176,5 +176,15 @@ fn event_to_value(event: &AgentEvent) -> Value {
         AgentEvent::Checkpoint { .. } => json!({"type": "Checkpoint"}),
         AgentEvent::RunFinished { .. } => json!({"type": "RunFinished"}),
         AgentEvent::Custom { payload, .. } => json!({"type": "Custom", "payload": payload}),
+        AgentEvent::PlanGenerated { plan, .. } => json!({"type": "PlanGenerated", "plan_id": plan.id}),
+        AgentEvent::PlanStepStarted { step_id, step_description, .. } => {
+            json!({"type": "PlanStepStarted", "step_id": step_id, "step_description": step_description})
+        }
+        AgentEvent::PlanStepCompleted { step_id, success, result, .. } => {
+            json!({"type": "PlanStepCompleted", "step_id": step_id, "success": success, "result": result})
+        }
+        AgentEvent::PlanCompleted { plan_id, success, .. } => {
+            json!({"type": "PlanCompleted", "plan_id": plan_id, "success": success})
+        }
     }
 }

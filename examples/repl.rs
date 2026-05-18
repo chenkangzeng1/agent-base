@@ -255,6 +255,18 @@ impl EventPrinter {
                 println!("[Custom event] {}", payload);
             }
             AgentEvent::Checkpoint { .. } => {}
+            AgentEvent::PlanGenerated { plan, .. } => {
+                println!("[Plan generated] id={}, objective={}", plan.id, plan.objective);
+            }
+            AgentEvent::PlanStepStarted { step_id, step_description, .. } => {
+                println!("[Plan step started] {} - {}", step_id, step_description);
+            }
+            AgentEvent::PlanStepCompleted { step_id, success, .. } => {
+                println!("[Plan step completed] {} success={}", step_id, success);
+            }
+            AgentEvent::PlanCompleted { plan_id, success, .. } => {
+                println!("[Plan completed] {} success={}", plan_id, success);
+            }
         }
         Ok(())
     }
