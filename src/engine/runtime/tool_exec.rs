@@ -143,7 +143,23 @@ impl AgentRuntime {
             .collect();
 
         for future in futures {
-            match future.await {
+            tokio::pin!(future);
+            let mut drain_timer = tokio::time::interval(std::time::Duration::from_millis(200));
+            drain_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            drain_timer.tick().await;
+
+            let tool_result = loop {
+                tokio::select! {
+                    result = &mut future => {
+                        break result;
+                    }
+                    _ = drain_timer.tick() => {
+                        Self::drain_async_events(event_rx, on_event)?;
+                    }
+                }
+            };
+
+            match tool_result {
                 Ok((id, name, mut output)) => {
                     if let Some(max_chars) = max_output_chars {
                         if output.summary.len() > max_chars {
@@ -178,6 +194,15 @@ impl AgentRuntime {
                     results.push((id, name, output));
                 }
                 Err(e) => {
+                    for (_, tool_name, _) in tool_calls {
+                        let error_summary = format!("[Tool Error]: {}", e);
+                        self.emit_event(AgentEvent::ToolCallFinished {
+                            session_id: session_id.clone(),
+                            tool_name: tool_name.clone(),
+                            summary: error_summary.clone(),
+                        });
+                        Self::drain_async_events(event_rx, on_event)?;
+                    }
                     return Err(e);
                 }
             }

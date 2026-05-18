@@ -65,6 +65,9 @@ impl AgentRuntime {
         let _span = info_span!("llm_turn", session_id = session_id.id).entered();
         tracing::debug!(session_id = session_id.id, msg_count = messages.len(), tool_count = tool_definitions.len(), "calling LLM");
         drop(_span);
+
+        eprintln!("[agent] LLM turn start: session={}, messages={}, tools={}", session_id.id, messages.len(), tool_definitions.len());
+
         let stream = self
             .call_llm_with_retry(messages, tool_definitions, session_id, event_rx, on_event)
             .await?;
@@ -72,6 +75,9 @@ impl AgentRuntime {
         let mut aggregator = StreamAggregator::new();
 
         Self::consume_stream(stream, &mut aggregator, session_id, event_rx, on_event, self).await?;
+
+        eprintln!("[agent] LLM turn done: session={}, text_len={}, is_tool_call={}, tool_calls={}",
+            session_id.id, aggregator.full_text.len(), aggregator.is_tool_call, aggregator.tool_calls.len());
 
         Ok(aggregator)
     }
@@ -164,6 +170,9 @@ impl AgentRuntime {
     where
         F: FnMut(AgentEvent) -> AgentResult<()>,
     {
+        let start = std::time::Instant::now();
+        let mut first_token = true;
+
         loop {
             tokio::select! {
                 recv_result = event_rx.recv() => {
@@ -177,17 +186,26 @@ impl AgentRuntime {
                     let Some(chunk_result) = maybe_chunk else {
                         break;
                     };
+                    if first_token {
+                        let ttft = start.elapsed();
+                        eprintln!("[agent] LLM first token: session={}, ttft={:?}", session_id.id, ttft);
+                        first_token = false;
+                    }
                     let chunk = chunk_result?;
                     match chunk {
                         StreamChunk::Text(text) => {
                             if !text.is_empty() && !aggregator.is_tool_call {
+                                eprint!("{}", text);
                                 aggregator.full_text.push_str(&text);
                                 runtime.emit_event(AgentEvent::TextDelta { session_id: session_id.clone(), text });
                             }
                         }
                         StreamChunk::Thought(text) => {
-                            if !text.is_empty() && !aggregator.is_tool_call && runtime.config.enable_thought {
-                                runtime.emit_event(AgentEvent::ThoughtDelta { session_id: session_id.clone(), text });
+                            if !text.is_empty() && !aggregator.is_tool_call {
+                                eprint!("[thought] {}", text);
+                                if runtime.config.enable_thought {
+                                    runtime.emit_event(AgentEvent::ThoughtDelta { session_id: session_id.clone(), text });
+                                }
                             }
                         }
                         StreamChunk::ToolCall(choice) => {
@@ -226,6 +244,7 @@ impl AgentRuntime {
             }
         }
 
+        eprintln!();
         Ok(())
     }
 }
