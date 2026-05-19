@@ -60,4 +60,20 @@ pub enum AgentEvent {
         plan_id: String,
         success: bool,
     },
+    PlanGenerating {
+        session_id: SessionId,
+        plan_id: String,
+    },
+    PlanStepParsed {
+        session_id: SessionId,
+        plan_id: String,
+        step_index: usize,
+        step_id: String,
+        step_description: String,
+    },
+    PlanFailed {
+        session_id: SessionId,
+        plan_id: String,
+        error: String,
+    },
 }

@@ -186,5 +186,14 @@ fn event_to_value(event: &AgentEvent) -> Value {
         AgentEvent::PlanCompleted { plan_id, success, .. } => {
             json!({"type": "PlanCompleted", "plan_id": plan_id, "success": success})
         }
+        AgentEvent::PlanGenerating { plan_id, .. } => {
+            json!({"type": "PlanGenerating", "plan_id": plan_id})
+        }
+        AgentEvent::PlanStepParsed { plan_id, step_index, step_id, step_description, .. } => {
+            json!({"type": "PlanStepParsed", "plan_id": plan_id, "step_index": step_index, "step_id": step_id, "step_description": step_description})
+        }
+        AgentEvent::PlanFailed { plan_id, error, .. } => {
+            json!({"type": "PlanFailed", "plan_id": plan_id, "error": error})
+        }
     }
 }
