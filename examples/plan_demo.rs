@@ -2,10 +2,10 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use agent_base::{
-    AgentBuilder, AgentEvent, AgentResult, ExecutionPlan, InMemoryPlanStore,
-    LlmCapabilities, LlmClient, PlanExecutor, PlanStep, PlanStore, RecoveryAction, ResponseFormat,
-    StepActionType, StepResult, StreamChunk, Tool, ToolContext, ToolControlFlow,
-    ToolOutput, ChatMessage,
+    AbortOnFailure, AgentBuilder, AgentEvent, AgentResult, AlwaysContinue, ExecutionPlan,
+    InMemoryPlanStore, LlmCapabilities, LlmClient, PlanGenerator, PlanStep, PlanStore,
+    ResponseFormat, StepExecutor, StepResult, StreamChunk, Tool, ToolContext, ToolControlFlow,
+    ToolOutput, ChatMessage, RecoveryStrategy, StepContinuePolicy,
 };
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -103,10 +103,10 @@ impl LlmClient for MockLlmClient {
     }
 }
 
-struct SimplePlanExecutor;
+struct SimplePlanGenerator;
 
 #[async_trait]
-impl PlanExecutor for SimplePlanExecutor {
+impl PlanGenerator for SimplePlanGenerator {
     async fn generate_plan(
         &self,
         objective: &str,
@@ -119,24 +119,23 @@ impl PlanExecutor for SimplePlanExecutor {
             PlanStep::new(
                 "step-1",
                 "Greet the user",
-                StepActionType::ToolCall {
-                    tool_name: "greet".to_string(),
-                    args: json!({ "name": "User" }),
-                },
+                json!({"type": "tool_call", "tool_name": "greet", "args": {"name": "User"}}),
             ),
             PlanStep::new(
                 "step-2",
                 "Confirm completion",
-                StepActionType::ToolCall {
-                    tool_name: "greet".to_string(),
-                    args: json!({ "name": "Team" }),
-                },
+                json!({"type": "tool_call", "tool_name": "greet", "args": {"name": "Team"}}),
             ),
         ];
 
         Ok(plan)
     }
+}
 
+struct SimpleStepExecutor;
+
+#[async_trait]
+impl StepExecutor for SimpleStepExecutor {
     async fn execute_step(
         &self,
         step: &PlanStep,
@@ -144,23 +143,6 @@ impl PlanExecutor for SimplePlanExecutor {
     ) -> AgentResult<StepResult> {
         println!("  Executing step: {} - {}", step.id, step.description);
         Ok(StepResult::success(format!("Step {} done", step.id), 100))
-    }
-
-    async fn should_continue(
-        &self,
-        _plan: &ExecutionPlan,
-        _current_step: &PlanStep,
-    ) -> AgentResult<bool> {
-        Ok(true)
-    }
-
-    async fn handle_step_failure(
-        &self,
-        _step: &PlanStep,
-        _error: &str,
-        _retry_count: usize,
-    ) -> AgentResult<RecoveryAction> {
-        Ok(RecoveryAction::Abort)
     }
 }
 
@@ -179,18 +161,22 @@ async fn main() -> AgentResult<()> {
         .register_tool(GreetTool)
         .build();
 
-    let plan_executor = Arc::new(SimplePlanExecutor);
+    let generator = Arc::new(SimplePlanGenerator);
+    let executor = Arc::new(SimpleStepExecutor);
     let plan_store = Arc::new(InMemoryPlanStore::new());
 
     let session_id = runtime.create_session();
 
-    println!("Generating and executing plan...\n");
+    println!("Generating and executing plan (deterministic mode)...\n");
 
     let result = runtime
-        .run_with_plan(
+        .run_plan_deterministic(
             session_id,
             "Greet the user and team",
-            plan_executor,
+            generator,
+            executor,
+            Some(Arc::new(AlwaysContinue)),
+            Some(Arc::new(AbortOnFailure)),
             Some(plan_store.clone()),
             |event| match event {
                 AgentEvent::PlanGenerated { plan, .. } => {

@@ -267,6 +267,7 @@ impl EventPrinter {
             AgentEvent::PlanCompleted { plan_id, success, .. } => {
                 println!("[Plan completed] {} success={}", plan_id, success);
             }
+            AgentEvent::PlanGenerating { .. } | AgentEvent::PlanStepParsed { .. } | AgentEvent::PlanFailed { .. } => {}
         }
         Ok(())
     }

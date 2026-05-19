@@ -15,21 +15,15 @@ pub struct ExecutionPlan {
 pub struct PlanStep {
     pub id: String,
     pub description: String,
-    pub action_type: StepActionType,
+    /// Business-agnostic payload. Each domain defines its own schema.
+    /// For example, an ops step might be:
+    /// `{"type":"ssh_command","command":"df -h","host_id":"host1"}`
+    pub payload: Value,
     #[serde(default)]
     pub dependencies: Vec<String>,
     pub status: StepStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<StepResult>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "type", content = "params")]
-pub enum StepActionType {
-    SshCommand { command: String, host_id: String },
-    ToolCall { tool_name: String, args: Value },
-    WaitForUser { prompt: String },
-    SubPlan { plan: ExecutionPlan },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -121,12 +115,12 @@ impl PlanStep {
     pub fn new(
         id: impl Into<String>,
         description: impl Into<String>,
-        action_type: StepActionType,
+        payload: Value,
     ) -> Self {
         Self {
             id: id.into(),
             description: description.into(),
-            action_type,
+            payload,
             dependencies: Vec::new(),
             status: StepStatus::Pending,
             result: None,
@@ -155,17 +149,6 @@ impl StepResult {
             output: None,
             error: Some(error.into()),
             duration_ms,
-        }
-    }
-}
-
-impl StepActionType {
-    pub fn tool_name(&self) -> &str {
-        match self {
-            StepActionType::SshCommand { .. } => "ssh_command",
-            StepActionType::ToolCall { tool_name, .. } => tool_name,
-            StepActionType::WaitForUser { .. } => "wait_for_user",
-            StepActionType::SubPlan { .. } => "sub_plan",
         }
     }
 }

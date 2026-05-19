@@ -1,7 +1,11 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-use crate::types::{AgentResult, StepActionType, StepResult};
+use crate::types::AgentResult;
+
+#[cfg(test)]
+use serde_json::json;
 
 #[async_trait]
 pub trait ReflexionHandler: Send + Sync {
@@ -35,7 +39,7 @@ pub struct ReflectionResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlternativeAction {
     pub description: String,
-    pub action_type: StepActionType,
+    pub payload: Value,
     pub priority: u32,
 }
 
@@ -44,7 +48,7 @@ pub struct ReflexionContext {
     pub objective: String,
     pub failed_step_id: String,
     pub failed_step_description: String,
-    pub command: String,
+    pub step_payload: Value,
     pub error: String,
     pub previous_steps: Vec<StepHistoryEntry>,
 }
@@ -80,12 +84,12 @@ impl ReflectionResult {
 impl AlternativeAction {
     pub fn new(
         description: impl Into<String>,
-        action_type: StepActionType,
+        payload: Value,
         priority: u32,
     ) -> Self {
         Self {
             description: description.into(),
-            action_type,
+            payload,
             priority,
         }
     }
@@ -97,16 +101,11 @@ impl ReflexionContext {
         step: &crate::types::PlanStep,
         error: &str,
     ) -> Self {
-        let (command, _) = match &step.action_type {
-            StepActionType::SshCommand { command, host_id } => (command.clone(), host_id.clone()),
-            _ => (String::new(), String::new()),
-        };
-
         Self {
             objective: objective.to_string(),
             failed_step_id: step.id.clone(),
             failed_step_description: step.description.clone(),
-            command,
+            step_payload: step.payload.clone(),
             error: error.to_string(),
             previous_steps: Vec::new(),
         }
@@ -149,10 +148,7 @@ mod tests {
     fn test_alternative_action_new() {
         let action = AlternativeAction::new(
             "description",
-            StepActionType::SshCommand {
-                command: "ls".to_string(),
-                host_id: "host1".to_string(),
-            },
+            json!({"type":"ssh_command","command":"ls"}),
             1,
         );
 
@@ -165,17 +161,15 @@ mod tests {
         let step = PlanStep::new(
             "step-1",
             "检查磁盘",
-            StepActionType::SshCommand {
-                command: "df -h".to_string(),
-                host_id: "host1".to_string(),
-            },
+            json!({"type":"ssh_command","command":"df -h","host_id":"host1"}),
         );
 
         let context = ReflexionContext::from_step("目标", &step, "错误");
 
         assert_eq!(context.objective, "目标");
         assert_eq!(context.failed_step_id, "step-1");
-        assert_eq!(context.command, "df -h");
+        assert_eq!(context.failed_step_description, "检查磁盘");
+        assert_eq!(context.step_payload, json!({"type":"ssh_command","command":"df -h","host_id":"host1"}));
         assert_eq!(context.error, "错误");
         assert!(context.previous_steps.is_empty());
     }
@@ -186,7 +180,7 @@ mod tests {
             objective: "目标".to_string(),
             failed_step_id: "step-2".to_string(),
             failed_step_description: "描述".to_string(),
-            command: "cmd".to_string(),
+            step_payload: json!({"type":"test"}),
             error: "error".to_string(),
             previous_steps: Vec::new(),
         }

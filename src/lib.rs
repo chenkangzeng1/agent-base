@@ -8,20 +8,26 @@ pub mod types;
 // Agent Runtime
 // ---------------------------------------------------------------------------
 pub use engine::{
+    AbortOnFailure,
     AgentBuilder,
     AgentRuntime,
     AgentSession,
+    AlwaysContinue,
     AlternativeAction,
     InMemoryPlanStore,
     InMemorySessionStore,
-    PlanExecutor,
+    PlanGenerator,
     PlanStore,
+    RecoveryStrategy,
     ReflectionResult,
     ReflexionContext,
     ReflexionHandler,
     SessionId,
     SessionStore,
+    StepContinuePolicy,
+    StepExecutor,
     StepHistoryEntry,
+    StreamingJsonParser,
 };
 
 // ---------------------------------------------------------------------------
@@ -117,7 +123,6 @@ pub use types::{
     ResponseFormat,
     RetryConfig,
     RunOutcome,
-    StepActionType,
     StepResult,
     StepStatus,
     ToolCallMessage,

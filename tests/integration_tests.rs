@@ -3,11 +3,12 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use agent_base::{
-    AgentBuilder, AgentError, AgentEvent, AgentResult, ApprovalDecision, ApprovalHandler,
+    AbortOnFailure, AgentBuilder, AgentError, AgentEvent, AgentResult, ApprovalDecision, ApprovalHandler,
     ApprovalRequest, ChatMessage, ExecutionPlan, InMemoryPlanStore, LlmCapabilities, LlmClient,
-    PlanExecutor, PlanStatus, PlanStep, PlanStore, RecoveryAction, ResponseFormat, RetryOnError,
-    RiskLevel, RunOutcome, StepActionType, StepResult, StepStatus, StreamChunk, Tool,
-    ToolContext, ToolControlFlow, ToolOutput, ToolPolicy,
+    PlanGenerator, PlanStatus, PlanStep, PlanStore, RecoveryAction, ResponseFormat, RetryOnError,
+    RiskLevel, RunOutcome, StepExecutor, StepResult, StepStatus, StreamChunk, Tool,
+    ToolContext, ToolControlFlow, ToolOutput, ToolPolicy, AlwaysContinue, StepContinuePolicy,
+    RecoveryStrategy,
 };
 use async_trait::async_trait;
 use futures_core::Stream;
@@ -1237,29 +1238,36 @@ async fn retry_then_empty_llm_response_continues() {
 // 8. Plan-and-Execute tests
 // =========================================================================
 
-struct MockPlanExecutor {
+struct MockPlanGenerator {
     steps: Vec<PlanStep>,
+}
+
+impl MockPlanGenerator {
+    fn new(steps: Vec<PlanStep>) -> Self {
+        Self { steps }
+    }
+}
+
+struct MockStepExecutor {
     execution_results: Mutex<Vec<StepResult>>,
 }
 
-impl MockPlanExecutor {
-    fn new(steps: Vec<PlanStep>) -> Self {
+impl MockStepExecutor {
+    fn new() -> Self {
         Self {
-            steps,
             execution_results: Mutex::new(Vec::new()),
         }
     }
 
-    fn with_results(steps: Vec<PlanStep>, results: Vec<StepResult>) -> Self {
+    fn with_results(results: Vec<StepResult>) -> Self {
         Self {
-            steps,
             execution_results: Mutex::new(results),
         }
     }
 }
 
 #[async_trait]
-impl PlanExecutor for MockPlanExecutor {
+impl PlanGenerator for MockPlanGenerator {
     async fn generate_plan(
         &self,
         objective: &str,
@@ -1270,7 +1278,10 @@ impl PlanExecutor for MockPlanExecutor {
         plan.steps = self.steps.clone();
         Ok(plan)
     }
+}
 
+#[async_trait]
+impl StepExecutor for MockStepExecutor {
     async fn execute_step(
         &self,
         step: &PlanStep,
@@ -1283,15 +1294,12 @@ impl PlanExecutor for MockPlanExecutor {
             Ok(results.remove(0))
         }
     }
+}
 
-    async fn should_continue(
-        &self,
-        _plan: &ExecutionPlan,
-        _current_step: &PlanStep,
-    ) -> AgentResult<bool> {
-        Ok(true)
-    }
+struct MockRecoveryStrategy;
 
+#[async_trait]
+impl RecoveryStrategy for MockRecoveryStrategy {
     async fn handle_step_failure(
         &self,
         _step: &PlanStep,
@@ -1305,23 +1313,15 @@ impl PlanExecutor for MockPlanExecutor {
 #[tokio::test]
 async fn test_plan_execution_success() {
     let steps = vec![
-        PlanStep::new("step-1", "First step", StepActionType::ToolCall {
-            tool_name: "echo".to_string(),
-            args: json!({"message": "hello"}),
-        }),
-        PlanStep::new("step-2", "Second step", StepActionType::ToolCall {
-            tool_name: "echo".to_string(),
-            args: json!({"message": "world"}),
-        }),
+        PlanStep::new("step-1", "First step", json!({"type": "tool_call", "tool_name": "echo", "args": {"message": "hello"}})),
+        PlanStep::new("step-2", "Second step", json!({"type": "tool_call", "tool_name": "echo", "args": {"message": "world"}})),
     ];
 
-    let plan_executor = Arc::new(MockPlanExecutor::new(steps));
+    let generator = Arc::new(MockPlanGenerator::new(steps));
+    let executor = Arc::new(MockStepExecutor::new());
     let plan_store = Arc::new(InMemoryPlanStore::new());
 
-    let llm = Arc::new(MockLlmClient::new(vec![
-        vec![StreamChunk::Text("Step 1 done".to_string()), StreamChunk::Stop],
-        vec![StreamChunk::Text("Step 2 done".to_string()), StreamChunk::Stop],
-    ]));
+    let llm = Arc::new(MockLlmClient::new(vec![]));
 
     let mut runtime = AgentBuilder::new(llm.clone())
         .register_tool(EchoTool)
@@ -1329,10 +1329,13 @@ async fn test_plan_execution_success() {
 
     let session_id = runtime.create_session();
     let result = runtime
-        .run_with_plan(
+        .run_plan_deterministic(
             session_id,
             "Test objective",
-            plan_executor,
+            generator,
+            executor,
+            Some(Arc::new(AlwaysContinue)),
+            Some(Arc::new(MockRecoveryStrategy)),
             Some(plan_store.clone()),
             |_| Ok(()),
         )
@@ -1349,14 +1352,8 @@ async fn test_plan_execution_success() {
 #[tokio::test]
 async fn test_plan_execution_failure_aborts() {
     let steps = vec![
-        PlanStep::new("step-1", "First step", StepActionType::ToolCall {
-            tool_name: "echo".to_string(),
-            args: json!({"message": "hello"}),
-        }),
-        PlanStep::new("step-2", "Second step", StepActionType::ToolCall {
-            tool_name: "echo".to_string(),
-            args: json!({"message": "world"}),
-        }),
+        PlanStep::new("step-1", "First step", json!({"type": "tool_call", "tool_name": "echo", "args": {"message": "hello"}})),
+        PlanStep::new("step-2", "Second step", json!({"type": "tool_call", "tool_name": "echo", "args": {"message": "world"}})),
     ];
 
     let results = vec![
@@ -1364,12 +1361,11 @@ async fn test_plan_execution_failure_aborts() {
         StepResult::failure("Step 2 failed", 100),
     ];
 
-    let plan_executor = Arc::new(MockPlanExecutor::with_results(steps, results));
+    let generator = Arc::new(MockPlanGenerator::new(steps));
+    let executor = Arc::new(MockStepExecutor::with_results(results));
     let plan_store = Arc::new(InMemoryPlanStore::new());
 
-    let llm = Arc::new(MockLlmClient::new(vec![
-        vec![StreamChunk::Text("Step 1 done".to_string()), StreamChunk::Stop],
-    ]));
+    let llm = Arc::new(MockLlmClient::new(vec![]));
 
     let mut runtime = AgentBuilder::new(llm.clone())
         .register_tool(EchoTool)
@@ -1377,10 +1373,13 @@ async fn test_plan_execution_failure_aborts() {
 
     let session_id = runtime.create_session();
     let result = runtime
-        .run_with_plan(
+        .run_plan_deterministic(
             session_id,
             "Test objective",
-            plan_executor,
+            generator,
+            executor,
+            Some(Arc::new(AlwaysContinue)),
+            Some(Arc::new(MockRecoveryStrategy)),
             Some(plan_store.clone()),
             |_| Ok(()),
         )
@@ -1397,18 +1396,14 @@ async fn test_plan_execution_failure_aborts() {
 #[tokio::test]
 async fn test_plan_events_emitted() {
     let steps = vec![
-        PlanStep::new("step-1", "First step", StepActionType::ToolCall {
-            tool_name: "echo".to_string(),
-            args: json!({"message": "hello"}),
-        }),
+        PlanStep::new("step-1", "First step", json!({"type": "tool_call", "tool_name": "echo", "args": {"message": "hello"}})),
     ];
 
-    let plan_executor = Arc::new(MockPlanExecutor::new(steps));
+    let generator = Arc::new(MockPlanGenerator::new(steps));
+    let executor = Arc::new(MockStepExecutor::new());
     let plan_store = Arc::new(InMemoryPlanStore::new());
 
-    let llm = Arc::new(MockLlmClient::new(vec![
-        vec![StreamChunk::Text("Done".to_string()), StreamChunk::Stop],
-    ]));
+    let llm = Arc::new(MockLlmClient::new(vec![]));
 
     let mut runtime = AgentBuilder::new(llm.clone())
         .register_tool(EchoTool)
@@ -1417,10 +1412,13 @@ async fn test_plan_events_emitted() {
     let session_id = runtime.create_session();
     let mut events = Vec::new();
     let result = runtime
-        .run_with_plan(
+        .run_plan_deterministic(
             session_id,
             "Test objective",
-            plan_executor,
+            generator,
+            executor,
+            Some(Arc::new(AlwaysContinue)),
+            Some(Arc::new(MockRecoveryStrategy)),
             Some(plan_store),
             |event| {
                 events.push(event);
@@ -1470,10 +1468,7 @@ fn test_plan_data_structures() {
     assert_eq!(plan.status, PlanStatus::Created);
     assert!(plan.steps.is_empty());
 
-    let step = PlanStep::new("step-1", "description", StepActionType::ToolCall {
-        tool_name: "tool".to_string(),
-        args: json!({}),
-    });
+    let step = PlanStep::new("step-1", "description", json!({"type": "tool_call"}));
     plan.steps.push(step);
 
     assert_eq!(plan.progress(), (0, 1));
@@ -1483,26 +1478,6 @@ fn test_plan_data_structures() {
     plan.steps[0].status = StepStatus::Completed;
     assert_eq!(plan.progress(), (1, 1));
     assert!(plan.is_completed());
-}
-
-#[test]
-fn test_step_action_type_tool_name() {
-    let ssh = StepActionType::SshCommand {
-        command: "ls".to_string(),
-        host_id: "host1".to_string(),
-    };
-    assert_eq!(ssh.tool_name(), "ssh_command");
-
-    let tool_call = StepActionType::ToolCall {
-        tool_name: "my_tool".to_string(),
-        args: json!({}),
-    };
-    assert_eq!(tool_call.tool_name(), "my_tool");
-
-    let wait = StepActionType::WaitForUser {
-        prompt: "Continue?".to_string(),
-    };
-    assert_eq!(wait.tool_name(), "wait_for_user");
 }
 
 #[test]
