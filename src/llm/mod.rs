@@ -39,18 +39,18 @@ pub struct LlmCapabilities {
     pub max_output_tokens: Option<u32>,
 }
 
-/// 推理/思考配置，统一各厂商的 reasoning/thinking 参数
+/// Reasoning/thinking configuration, unifying reasoning/thinking parameters across vendors.
 #[derive(Debug, Clone, Default)]
 pub struct ReasoningConfig {
-    /// 是否启用推理/思考过程
+    /// Whether to enable reasoning/thinking process
     pub enabled: Option<bool>,
-    /// 思考预算（token 数量上限）
+    /// Thinking budget (token count limit)
     pub budget_tokens: Option<u64>,
-    /// 推理强度/深度（各厂商语义不同）
+    /// Reasoning intensity/depth (semantics vary by vendor)
     pub effort: Option<ReasoningEffort>,
 }
 
-/// 推理强度/深度枚举
+/// Reasoning intensity/depth enumeration.
 #[derive(Debug, Clone)]
 pub enum ReasoningEffort {
     None,

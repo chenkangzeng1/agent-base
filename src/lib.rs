@@ -16,7 +16,9 @@ pub use engine::{
     AlternativeAction,
     InMemoryPlanStore,
     InMemorySessionStore,
+    PlanExecTool,
     PlanGenerator,
+    PlanOrchestrator,
     PlanStore,
     RecoveryStrategy,
     ReflectionResult,
@@ -71,6 +73,7 @@ pub use engine::{
 // Tools
 // ---------------------------------------------------------------------------
 pub use tool::{
+    AutoContinueTool,
     McpClient,
     McpToolInfo,
     McpToolRegistry,

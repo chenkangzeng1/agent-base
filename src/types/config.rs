@@ -88,6 +88,9 @@ pub struct AgentConfig {
     pub response_format: Option<ResponseFormat>,
     pub llm_retry: Option<RetryConfig>,
     pub tool_error_retry_prompt: Option<String>,
+    /// Language preference for tool output, e.g. "en", "zh".
+    /// Defaults to "en" if not set.
+    pub language: String,
 }
 
 impl Default for AgentConfig {
@@ -102,6 +105,7 @@ impl Default for AgentConfig {
             response_format: None,
             llm_retry: None,
             tool_error_retry_prompt: None,
+            language: "en".to_string(),
         }
     }
 }

@@ -124,10 +124,10 @@ mod tests {
 
     #[test]
     fn test_reflection_result_new() {
-        let result = ReflectionResult::new("分析", "根因", 0.8, vec!["修复1".to_string()]);
+        let result = ReflectionResult::new("analysis", "root_cause", 0.8, vec!["fix1".to_string()]);
 
-        assert_eq!(result.analysis, "分析");
-        assert_eq!(result.root_cause, "根因");
+        assert_eq!(result.analysis, "analysis");
+        assert_eq!(result.root_cause, "root_cause");
         assert_eq!(result.confidence, 0.8);
         assert_eq!(result.suggested_fixes.len(), 1);
     }
@@ -160,33 +160,33 @@ mod tests {
     fn test_reflexion_context_from_step() {
         let step = PlanStep::new(
             "step-1",
-            "检查磁盘",
+            "check disk",
             json!({"type":"ssh_command","command":"df -h","host_id":"host1"}),
         );
 
-        let context = ReflexionContext::from_step("目标", &step, "错误");
+        let context = ReflexionContext::from_step("objective", &step, "error");
 
-        assert_eq!(context.objective, "目标");
+        assert_eq!(context.objective, "objective");
         assert_eq!(context.failed_step_id, "step-1");
-        assert_eq!(context.failed_step_description, "检查磁盘");
+        assert_eq!(context.failed_step_description, "check disk");
         assert_eq!(context.step_payload, json!({"type":"ssh_command","command":"df -h","host_id":"host1"}));
-        assert_eq!(context.error, "错误");
+        assert_eq!(context.error, "error");
         assert!(context.previous_steps.is_empty());
     }
 
     #[test]
     fn test_reflexion_context_with_previous_steps() {
         let context = ReflexionContext {
-            objective: "目标".to_string(),
+            objective: "objective".to_string(),
             failed_step_id: "step-2".to_string(),
-            failed_step_description: "描述".to_string(),
+            failed_step_description: "description".to_string(),
             step_payload: json!({"type":"test"}),
             error: "error".to_string(),
             previous_steps: Vec::new(),
         }
         .with_previous_steps(vec![StepHistoryEntry {
             step_id: "step-1".to_string(),
-            description: "前置步骤".to_string(),
+            description: "previous step".to_string(),
             success: true,
             output: Some("done".to_string()),
         }]);
@@ -197,13 +197,13 @@ mod tests {
 
     #[test]
     fn test_reflection_result_serialization() {
-        let result = ReflectionResult::new("分析", "根因", 0.8, vec!["修复1".to_string()]);
+        let result = ReflectionResult::new("analysis", "root_cause", 0.8, vec!["fix1".to_string()]);
 
         let json = serde_json::to_string(&result).unwrap();
         let deserialized: ReflectionResult = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(deserialized.analysis, "分析");
-        assert_eq!(deserialized.root_cause, "根因");
+        assert_eq!(deserialized.analysis, "analysis");
+        assert_eq!(deserialized.root_cause, "root_cause");
         assert_eq!(deserialized.confidence, 0.8);
     }
 
@@ -211,9 +211,9 @@ mod tests {
     fn test_step_history_entry_serialization() {
         let entry = StepHistoryEntry {
             step_id: "step-1".to_string(),
-            description: "描述".to_string(),
+            description: "description".to_string(),
             success: true,
-            output: Some("输出".to_string()),
+            output: Some("output".to_string()),
         };
 
         let json = serde_json::to_string(&entry).unwrap();
@@ -221,6 +221,6 @@ mod tests {
 
         assert_eq!(deserialized.step_id, "step-1");
         assert!(deserialized.success);
-        assert_eq!(deserialized.output, Some("输出".to_string()));
+        assert_eq!(deserialized.output, Some("output".to_string()));
     }
 }

@@ -3,6 +3,7 @@ mod builder;
 mod context;
 mod middleware;
 mod plan;
+mod plan_orchestrator;
 mod recovery;
 mod reflexion;
 mod runtime;
@@ -17,6 +18,7 @@ pub use plan::{
     AbortOnFailure, AlwaysContinue, InMemoryPlanStore, PlanGenerator, PlanStore,
     RecoveryStrategy, StepContinuePolicy, StepExecutor, StreamingJsonParser,
 };
+pub use plan_orchestrator::{PlanExecTool, PlanOrchestrator};
 pub use recovery::{RetryOnError, StopOnError, ToolErrorAction, ToolErrorRecovery};
 pub use reflexion::{AlternativeAction, ReflectionResult, ReflexionContext, ReflexionHandler, StepHistoryEntry};
 pub use runtime::AgentRuntime;

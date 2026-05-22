@@ -170,6 +170,11 @@ impl AgentBuilder {
         self
     }
 
+    pub fn language(mut self, language: impl Into<String>) -> Self {
+        self.config.language = language.into();
+        self
+    }
+
     pub fn build(mut self) -> AgentRuntime {
         let prompter: Arc<dyn SkillPrompter> = self
             .skill_prompter

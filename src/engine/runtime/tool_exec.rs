@@ -32,6 +32,7 @@ impl AgentRuntime {
             event_bus: self.event_bus.clone(),
             llm_client: Some(self.client.clone()),
             session_store: Some(self.session_store.clone()),
+            language: self.config.language.clone(),
         };
 
         let mut parsed_calls: Vec<(String, String, String, Value)> = Vec::new();

@@ -19,6 +19,25 @@ pub trait PlanGenerator: Send + Sync {
         context: &str,
         tools: &[Value],
     ) -> AgentResult<ExecutionPlan>;
+
+    async fn generate_plan_streaming(
+        &self,
+        objective: &str,
+        context: &str,
+        tools: &[Value],
+        on_generating: Box<dyn Fn() + Send>,
+        on_step_parsed: Box<dyn Fn(usize, String, String) + Send>,
+        on_raw_chunk: Box<dyn Fn(String) + Send>,
+    ) -> AgentResult<ExecutionPlan> {
+        let plan = self.generate_plan(objective, context, tools).await?;
+        on_generating();
+        for (i, step) in plan.steps.iter().enumerate() {
+            on_step_parsed(i, step.id.clone(), step.description.clone());
+        }
+        let plan_json = serde_json::to_string(&plan).unwrap_or_default();
+        on_raw_chunk(plan_json);
+        Ok(plan)
+    }
 }
 
 /// Executes a single `PlanStep` and returns its result.
