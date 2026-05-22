@@ -101,7 +101,7 @@ impl AgentRuntime {
                     .chat_stream(
                         messages,
                         tool_definitions,
-                        self.config.enable_thinking,
+                        self.config.reasoning.as_ref(),
                         self.config.response_format.as_ref(),
                     )
                     .await;
@@ -117,7 +117,7 @@ impl AgentRuntime {
                 .chat_stream(
                     messages,
                     tool_definitions,
-                    self.config.enable_thinking,
+                    self.config.reasoning.as_ref(),
                     self.config.response_format.as_ref(),
                 )
                 .await
@@ -186,6 +186,7 @@ impl AgentRuntime {
                     let Some(chunk_result) = maybe_chunk else {
                         break;
                     };
+
                     if first_token {
                         let ttft = start.elapsed();
                         eprintln!("[agent] LLM first token: session={}, ttft={:?}", session_id.id, ttft);
@@ -195,16 +196,17 @@ impl AgentRuntime {
                     match chunk {
                         StreamChunk::Text(text) => {
                             if !text.is_empty() && !aggregator.is_tool_call {
-                                eprint!("{}", text);
                                 aggregator.full_text.push_str(&text);
                                 runtime.emit_event(AgentEvent::TextDelta { session_id: session_id.clone(), text });
                             }
                         }
                         StreamChunk::Thought(text) => {
+                            eprintln!("[agent] LLM thought chunk: session={}, len={}", session_id.id, text.len());
                             if !text.is_empty() && !aggregator.is_tool_call {
-                                eprint!("[thought] {}", text);
                                 if runtime.config.enable_thought {
                                     runtime.emit_event(AgentEvent::ThoughtDelta { session_id: session_id.clone(), text });
+                                } else {
+                                    eprintln!("[agent] LLM thought IGNORED: enable_thought=false");
                                 }
                             }
                         }
@@ -244,7 +246,8 @@ impl AgentRuntime {
             }
         }
 
-        eprintln!();
+        let total_elapsed = start.elapsed();
+        eprintln!("[agent] LLM stream done: session={}, text_len={}, elapsed_ms={}", session_id.id, aggregator.full_text.len(), total_elapsed.as_millis());
         Ok(())
     }
 }

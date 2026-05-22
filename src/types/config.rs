@@ -75,11 +75,13 @@ impl ResponseFormat {
     }
 }
 
+use crate::llm::ReasoningConfig;
+
 #[derive(Clone, Debug)]
 pub struct AgentConfig {
     pub system_prompt: Option<String>,
     pub enable_thought: bool,
-    pub enable_thinking: Option<bool>,
+    pub reasoning: Option<ReasoningConfig>,
     pub max_turns: Option<u32>,
     pub tool_timeout_ms: Option<u64>,
     pub max_tool_output_chars: Option<usize>,
@@ -93,7 +95,7 @@ impl Default for AgentConfig {
         Self {
             system_prompt: None,
             enable_thought: false,
-            enable_thinking: None,
+            reasoning: None,
             max_turns: None,
             tool_timeout_ms: None,
             max_tool_output_chars: None,

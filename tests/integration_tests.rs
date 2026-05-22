@@ -40,7 +40,7 @@ impl LlmClient for MockLlmClient {
         &self,
         _messages: &[ChatMessage],
         _tools: &[Value],
-        _enable_thinking: Option<bool>,
+        _reasoning: Option<&agent_base::ReasoningConfig>,
         _response_format: Option<&ResponseFormat>,
     ) -> AgentResult<Value> {
         unimplemented!()
@@ -50,7 +50,7 @@ impl LlmClient for MockLlmClient {
         &self,
         _messages: &[ChatMessage],
         _tools: &[Value],
-        _enable_thinking: Option<bool>,
+        _reasoning: Option<&agent_base::ReasoningConfig>,
         _response_format: Option<&ResponseFormat>,
     ) -> AgentResult<ChunkStream> {
         *self.call_count.lock().unwrap() += 1;

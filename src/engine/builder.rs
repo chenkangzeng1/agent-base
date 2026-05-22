@@ -4,7 +4,7 @@ use std::sync::atomic::AtomicU64;
 
 use tokio::sync::broadcast;
 
-use crate::llm::LlmClient;
+use crate::llm::{LlmClient, ReasoningConfig};
 use crate::skill::{Skill, SkillDetailTool, SkillPrompter, LazySkillPrompter};
 use crate::tool::{Tool, ToolPolicy, ToolRegistry};
 use crate::types::{AgentConfig, ResponseFormat, RetryConfig};
@@ -61,8 +61,22 @@ impl AgentBuilder {
         self
     }
 
+    pub fn reasoning(mut self, config: ReasoningConfig) -> Self {
+        self.config.reasoning = Some(config);
+        self
+    }
+
     pub fn enable_thinking(mut self, enable: bool) -> Self {
-        self.config.enable_thinking = Some(enable);
+        let mut config = self.config.reasoning.take().unwrap_or_default();
+        config.enabled = Some(enable);
+        self.config.reasoning = Some(config);
+        self
+    }
+
+    pub fn thinking_budget(mut self, budget: u64) -> Self {
+        let mut config = self.config.reasoning.take().unwrap_or_default();
+        config.budget_tokens = Some(budget);
+        self.config.reasoning = Some(config);
         self
     }
 

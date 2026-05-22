@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use std::pin::Pin;
 
 use crate::types::{AgentResult, AgentError, ChatMessage, ImageAttachment, ResponseFormat};
-use super::{LlmCapabilities, LlmClient, StreamChunk, UsageInfo};
+use super::{LlmCapabilities, LlmClient, ReasoningConfig, StreamChunk, UsageInfo};
 
 pub struct AnthropicClient {
     api_key: String,
@@ -132,6 +132,7 @@ impl AnthropicClient {
         messages: &[ChatMessage],
         tools: &[Value],
         model: &str,
+        reasoning: Option<&ReasoningConfig>,
     ) -> Value {
         let (system_prompt, anthropic_messages) = Self::convert_messages(messages);
         let anthropic_tools = Self::convert_tools(tools);
@@ -151,6 +152,25 @@ impl AnthropicClient {
         if let Some(system) = system_prompt {
             if let Some(obj) = body.as_object_mut() {
                 obj.insert("system".to_string(), json!(system));
+            }
+        }
+
+        if let Some(config) = reasoning {
+            if config.enabled == Some(true) || config.budget_tokens.is_some() {
+                let mut thinking = serde_json::Map::new();
+                thinking.insert("type".to_string(), json!("enabled"));
+                if let Some(budget) = config.budget_tokens {
+                    thinking.insert("budget_tokens".to_string(), json!(budget));
+                }
+                if let Some(obj) = body.as_object_mut() {
+                    obj.insert("thinking".to_string(), Value::Object(thinking));
+                }
+            } else if config.enabled == Some(false) {
+                let mut thinking = serde_json::Map::new();
+                thinking.insert("type".to_string(), json!("disabled"));
+                if let Some(obj) = body.as_object_mut() {
+                    obj.insert("thinking".to_string(), Value::Object(thinking));
+                }
             }
         }
 
@@ -266,11 +286,11 @@ impl LlmClient for AnthropicClient {
         &self,
         messages: &[ChatMessage],
         tools: &[Value],
-        _enable_thinking: Option<bool>,
+        reasoning: Option<&ReasoningConfig>,
         _response_format: Option<&ResponseFormat>,
     ) -> AgentResult<Value> {
         let url = format!("{}/v1/messages", self.base_url);
-        let body = Self::build_body(messages, tools, &self.model);
+        let body = Self::build_body(messages, tools, &self.model, reasoning);
 
         let response = self
             .client
@@ -305,11 +325,11 @@ impl LlmClient for AnthropicClient {
         &self,
         messages: &[ChatMessage],
         tools: &[Value],
-        _enable_thinking: Option<bool>,
+        reasoning: Option<&ReasoningConfig>,
         _response_format: Option<&ResponseFormat>,
     ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
         let url = format!("{}/v1/messages", self.base_url);
-        let mut body = Self::build_body(messages, tools, &self.model);
+        let mut body = Self::build_body(messages, tools, &self.model, reasoning);
 
         if let Some(obj) = body.as_object_mut() {
             obj.insert("stream".to_string(), json!(true));

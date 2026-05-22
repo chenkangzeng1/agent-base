@@ -39,13 +39,34 @@ pub struct LlmCapabilities {
     pub max_output_tokens: Option<u32>,
 }
 
+/// 推理/思考配置，统一各厂商的 reasoning/thinking 参数
+#[derive(Debug, Clone, Default)]
+pub struct ReasoningConfig {
+    /// 是否启用推理/思考过程
+    pub enabled: Option<bool>,
+    /// 思考预算（token 数量上限）
+    pub budget_tokens: Option<u64>,
+    /// 推理强度/深度（各厂商语义不同）
+    pub effort: Option<ReasoningEffort>,
+}
+
+/// 推理强度/深度枚举
+#[derive(Debug, Clone)]
+pub enum ReasoningEffort {
+    None,
+    Low,
+    Medium,
+    High,
+    XHigh,
+}
+
 #[async_trait]
 pub trait LlmClient: Send + Sync {
     async fn chat(
         &self,
         messages: &[ChatMessage],
         tools: &[Value],
-        enable_thinking: Option<bool>,
+        reasoning: Option<&ReasoningConfig>,
         response_format: Option<&ResponseFormat>,
     ) -> AgentResult<Value>;
 
@@ -53,7 +74,7 @@ pub trait LlmClient: Send + Sync {
         &self,
         messages: &[ChatMessage],
         tools: &[Value],
-        enable_thinking: Option<bool>,
+        reasoning: Option<&ReasoningConfig>,
         response_format: Option<&ResponseFormat>,
     ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>>;
 

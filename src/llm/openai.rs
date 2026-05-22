@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use std::pin::Pin;
 
 use crate::types::{AgentResult, AgentError, ChatMessage, ImageAttachment, ImageDetail, ResponseFormat, ToolCallMessage};
-use super::{LlmCapabilities, LlmClient, StreamChunk, UsageInfo};
+use super::{LlmCapabilities, LlmClient, ReasoningConfig, ReasoningEffort, StreamChunk, UsageInfo};
 
 
 pub struct OpenAiClient {
@@ -30,6 +30,71 @@ impl OpenAiClient {
             base_url: base_url
                 .unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
             client,
+        }
+    }
+
+    fn is_qwen_model(&self) -> bool {
+        self.model.starts_with("qwen")
+    }
+
+    fn is_deepseek_model(&self) -> bool {
+        self.model.starts_with("deepseek")
+    }
+
+    fn apply_reasoning_config(&self, request_body: &mut Value, reasoning: Option<&ReasoningConfig>) {
+        let Some(config) = reasoning else { return };
+
+        if self.is_qwen_model() {
+            if let Some(enabled) = config.enabled {
+                if let Some(obj) = request_body.as_object_mut() {
+                    obj.insert("enable_thinking".to_string(), json!(enabled));
+                }
+            }
+            if let Some(budget) = config.budget_tokens {
+                if let Some(obj) = request_body.as_object_mut() {
+                    obj.insert("thinking_budget".to_string(), json!(budget));
+                }
+            }
+        } else if self.is_deepseek_model() {
+            if let Some(effort) = &config.effort {
+                let effort_str = match effort {
+                    ReasoningEffort::None => "none",
+                    ReasoningEffort::Low => "low",
+                    ReasoningEffort::Medium => "medium",
+                    ReasoningEffort::High => "high",
+                    ReasoningEffort::XHigh => "high",
+                };
+                if let Some(obj) = request_body.as_object_mut() {
+                    obj.insert("reasoning_effort".to_string(), json!(effort_str));
+                }
+            }
+            if config.enabled == Some(true) || config.budget_tokens.is_some() {
+                let mut extra_body = serde_json::Map::new();
+                if let Some(enabled) = config.enabled {
+                    extra_body.insert("thinking".to_string(), json!({"type": if enabled { "enabled" } else { "disabled" }}));
+                }
+                if let Some(budget) = config.budget_tokens {
+                    extra_body.insert("thinking_budget".to_string(), json!(budget));
+                }
+                if !extra_body.is_empty() {
+                    if let Some(obj) = request_body.as_object_mut() {
+                        obj.insert("extra_body".to_string(), Value::Object(extra_body));
+                    }
+                }
+            }
+        } else {
+            if let Some(effort) = &config.effort {
+                let effort_str = match effort {
+                    ReasoningEffort::None => "none",
+                    ReasoningEffort::Low => "low",
+                    ReasoningEffort::Medium => "medium",
+                    ReasoningEffort::High => "high",
+                    ReasoningEffort::XHigh => "high",
+                };
+                if let Some(obj) = request_body.as_object_mut() {
+                    obj.insert("reasoning_effort".to_string(), json!(effort_str));
+                }
+            }
         }
     }
 
@@ -142,7 +207,7 @@ impl LlmClient for OpenAiClient {
         &self,
         messages: &[ChatMessage],
         tools: &[Value],
-        enable_thinking: Option<bool>,
+        reasoning: Option<&ReasoningConfig>,
         response_format: Option<&ResponseFormat>,
     ) -> AgentResult<Value> {
         let url = format!("{}/chat/completions", self.base_url);
@@ -151,19 +216,18 @@ impl LlmClient for OpenAiClient {
             "model": self.model,
             "messages": raw_messages,
             "tools": tools,
+            "max_tokens": 8192,
         });
 
-        if let Some(thinking) = enable_thinking {
-            if let Some(obj) = request_body.as_object_mut() {
-                obj.insert("enable_thinking".to_string(), json!(thinking));
-            }
-        }
+        self.apply_reasoning_config(&mut request_body, reasoning);
 
         if let Some(rf) = response_format {
             if let Some(obj) = request_body.as_object_mut() {
                 obj.insert("response_format".to_string(), rf.to_api_value());
             }
         }
+
+        eprintln!("[llm] request body: {}", serde_json::to_string_pretty(&request_body).unwrap_or_default());
 
         let response = self
             .client
@@ -191,7 +255,7 @@ impl LlmClient for OpenAiClient {
         &self,
         messages: &[ChatMessage],
         tools: &[Value],
-        enable_thinking: Option<bool>,
+        reasoning: Option<&ReasoningConfig>,
         response_format: Option<&ResponseFormat>,
     ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
         let url = format!("{}/chat/completions", self.base_url);
@@ -202,19 +266,18 @@ impl LlmClient for OpenAiClient {
             "tools": tools,
             "stream": true,
             "stream_options": { "include_usage": true },
+            "max_tokens": 8192,
         });
 
-        if let Some(thinking) = enable_thinking {
-            if let Some(obj) = request_body.as_object_mut() {
-                obj.insert("enable_thinking".to_string(), json!(thinking));
-            }
-        }
+        self.apply_reasoning_config(&mut request_body, reasoning);
 
         if let Some(rf) = response_format {
             if let Some(obj) = request_body.as_object_mut() {
                 obj.insert("response_format".to_string(), rf.to_api_value());
             }
         }
+
+        eprintln!("[llm] stream request body: {}", serde_json::to_string_pretty(&request_body).unwrap_or_default());
 
         let response = self
             .client
@@ -291,7 +354,7 @@ impl LlmClient for OpenAiClient {
             supports_streaming: true,
             supports_tools: true,
             supports_vision: true,
-            supports_thinking: false,
+            supports_thinking: true,
             max_context_tokens: Some(128_000),
             max_output_tokens: Some(16_384),
         }

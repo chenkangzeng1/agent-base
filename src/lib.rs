@@ -40,6 +40,8 @@ pub use llm::{
     LlmClientBuilder,
     LlmProvider,
     OpenAiClient,
+    ReasoningConfig,
+    ReasoningEffort,
     StreamChunk,
     UsageInfo,
 };
