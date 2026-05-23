@@ -93,7 +93,7 @@ impl Tool for SubAgentTool {
                 summary: "Task description is empty, cannot execute".to_string(),
                 raw: None,
                 control_flow: ToolControlFlow::Break,
-                truncated: false,
+                truncation: None,
             });
         }
 
@@ -121,10 +121,23 @@ impl Tool for SubAgentTool {
             }
         };
 
-        let (events, _outcome) = {
+        // Add the user task as a message to the sub-agent session
+        {
+            let runtime = self.sub_runtime.lock().await;
+            runtime.add_user_message(&sub_session_id, task).await.map_err(|e| AgentError::ToolExecution {
+                name: self.name.to_string(),
+                source: Box::new(e),
+            })?;
+        }
+
+        let mut events = Vec::new();
+        let _outcome = {
             let runtime = self.sub_runtime.lock().await;
             runtime
-                .run_turn_stream(sub_session_id, task)
+                .run(sub_session_id, |event| {
+                    events.push(event.clone());
+                    Ok(())
+                })
                 .await
                 .map_err(|e| AgentError::ToolExecution {
                     name: self.name.to_string(),
@@ -136,7 +149,7 @@ impl Tool for SubAgentTool {
         for event in &events {
             match event {
                 AgentEvent::TextDelta { text, .. } => {
-                    final_text.push_str(text);
+                    final_text.push_str(&text);
                 }
                 _ => {}
             }
@@ -145,7 +158,7 @@ impl Tool for SubAgentTool {
                 payload: json!({
                     "type": "subagent_event",
                     "subagent": self.name,
-                    "event": event_to_value(event),
+                    "event": event_to_value(&event),
                 }),
             });
         }
@@ -160,7 +173,7 @@ impl Tool for SubAgentTool {
             summary,
             raw: None,
             control_flow: ToolControlFlow::Continue,
-            truncated: false,
+            truncation: None,
         })
     }
 }

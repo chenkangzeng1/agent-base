@@ -18,12 +18,26 @@ pub struct AnthropicClient {
 
 impl AnthropicClient {
     pub fn new(api_key: String, model: String, base_url: Option<String>) -> Self {
+        Self::new_with_config(api_key, model, base_url, crate::llm::LlmClientConfig::default())
+    }
+
+    pub fn new_with_config(api_key: String, model: String, base_url: Option<String>, config: crate::llm::LlmClientConfig) -> Self {
+        let client = Client::builder()
+            .connect_timeout(config.connect_timeout)
+            .timeout(config.request_timeout)
+            .pool_max_idle_per_host(config.pool_max_idle_per_host)
+            .pool_idle_timeout(config.pool_idle_timeout)
+            .build()
+            .unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "Failed to build reqwest client with custom config, falling back to default");
+                Client::new()
+            });
         Self {
             api_key,
             model,
             base_url: base_url
                 .unwrap_or_else(|| "https://api.anthropic.com".to_string()),
-            client: Client::new(),
+            client,
         }
     }
 

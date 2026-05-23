@@ -152,7 +152,7 @@ impl Tool for McpToolAdapter {
             summary: content,
             raw: Some(result),
             control_flow: ToolControlFlow::Break,
-            truncated: false,
+            truncation: None,
         })
     }
 }

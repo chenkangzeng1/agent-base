@@ -239,7 +239,7 @@ async fn main() -> AgentResult<()> {
         builder = builder.register_tool_arc(tool);
         println!("    Registeredtool: {name}");
     }
-    let runtime = builder.build();
+    let runtime = builder.build().unwrap();
 
     let session_id = runtime.create_session().await;
 

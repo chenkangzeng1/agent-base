@@ -42,7 +42,7 @@ impl Tool for AddTool {
             summary: format!("{} + {} = {}", a, b, a + b),
             raw: Some(json!({ "result": a + b })),
             control_flow: ToolControlFlow::Break,
-            truncated: false,
+            truncation: None,
         })
     }
 }
@@ -80,7 +80,7 @@ impl Tool for SubtractTool {
             summary: format!("{} - {} = {}", a, b, a - b),
             raw: Some(json!({ "result": a - b })),
             control_flow: ToolControlFlow::Break,
-            truncated: false,
+            truncation: None,
         })
     }
 }
@@ -148,7 +148,7 @@ impl Tool for UppercaseTool {
             summary: text.to_uppercase(),
             raw: Some(json!({ "result": text.to_uppercase() })),
             control_flow: ToolControlFlow::Break,
-            truncated: false,
+            truncation: None,
         })
     }
 }
@@ -204,7 +204,7 @@ async fn main() {
         .system_prompt("You are a general-purpose assistant. Please use the tools provided in the Skill.")
         .register_skill(MathSkill)
         .register_skill(TextSkill)
-        .build();
+        .build().unwrap();
 
     println!("=== Skills Demo ===");
     println!("Registered {}  Skill:", runtime.skills().len());

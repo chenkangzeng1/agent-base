@@ -90,7 +90,7 @@ async fn test_thinking_budget_parameter_passed() {
         .system_prompt("test")
         .enable_thinking(true)
         .thinking_budget(128)
-        .build();
+        .build().unwrap();
 
     let session_id = runtime.create_session().await;
     let _ = runtime.run_turn_stream(session_id, "test").await;
@@ -119,7 +119,7 @@ async fn test_extra_body_format_for_thinking() {
         .system_prompt("test")
         .enable_thinking(true)
         .thinking_budget(128)
-        .build();
+        .build().unwrap();
 
     let session_id = runtime.create_session().await;
     let _ = runtime.run_turn_stream(session_id, "test").await;

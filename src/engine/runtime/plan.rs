@@ -9,6 +9,7 @@ use crate::engine::plan::{
     AlwaysContinue, AbortOnFailure, PlanGenerator, PlanStore, RecoveryStrategy,
     StepContinuePolicy, StepExecutor,
 };
+use crate::engine::runtime::event_bus::EventBus;
 use super::AgentRuntime;
 use std::sync::Arc;
 
@@ -26,9 +27,9 @@ impl AgentRuntime {
         mut on_event: F,
     ) -> AgentResult<RunOutcome>
     where
-        F: FnMut(AgentEvent) -> AgentResult<()>,
+        F: FnMut(AgentEvent) -> AgentResult<()> + Send,
     {
-        let tool_definitions = self.tools.definitions();
+        let tool_definitions = self.tool_engine.definitions();
         let mut event_rx = self.subscribe_events();
 
         let mut plan = generator
@@ -91,9 +92,9 @@ impl AgentRuntime {
         mut on_event: F,
     ) -> AgentResult<RunOutcome>
     where
-        F: FnMut(AgentEvent) -> AgentResult<()>,
+        F: FnMut(AgentEvent) -> AgentResult<()> + Send,
     {
-        let tool_definitions = self.tools.definitions();
+        let tool_definitions = self.tool_engine.definitions();
         let mut event_rx = self.subscribe_events();
 
         let mut plan = generator
@@ -153,7 +154,7 @@ impl AgentRuntime {
         on_event: &mut F,
     ) -> AgentResult<RunOutcome>
     where
-        F: FnMut(AgentEvent) -> AgentResult<()>,
+        F: FnMut(AgentEvent) -> AgentResult<()> + Send,
     {
         let mut i = 0usize;
         while i < plan.steps.len() {
@@ -197,18 +198,15 @@ impl AgentRuntime {
                 }
             } else {
                 // Agentic mode: run as a full agent turn
-                let step_input = format!(
-                    "Execute plan step: {}\nDescription: {}",
-                    step.id, step.description
-                );
-
+                let mut step_events = Vec::new();
                 let outcome = self
-                    .run_turn_with_handler(session_id.clone(), &step_input, |event| {
+                    .run(session_id.clone(), |event| {
+                        step_events.push(event.clone());
                         on_event(event)
                     })
                     .await;
 
-                let _ = Self::drain_async_events(event_rx, on_event);
+                let _ = EventBus::drain_async_events(event_rx, on_event);
 
                 match outcome {
                     Ok(RunOutcome::Completed) => Ok(crate::types::StepResult::success("Step completed", 0)),
@@ -372,6 +370,6 @@ impl AgentRuntime {
         F: FnMut(AgentEvent) -> AgentResult<()>,
     {
         self.emit_event(event);
-        let _ = Self::drain_async_events(event_rx, on_event);
+        let _ = EventBus::drain_async_events(event_rx, on_event);
     }
 }

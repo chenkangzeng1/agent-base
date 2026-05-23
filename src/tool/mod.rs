@@ -25,7 +25,14 @@ pub struct ToolOutput {
     pub summary: String,
     pub raw: Option<Value>,
     pub control_flow: ToolControlFlow,
-    pub truncated: bool,
+    pub truncation: Option<TruncationInfo>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TruncationInfo {
+    pub original_summary_len: usize,
+    pub original_raw_len: Option<usize>,
+    pub max_allowed_chars: usize,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -105,7 +112,7 @@ impl<T: TypedTool + Send + Sync + 'static> Tool for T {
             summary,
             raw: output_json,
             control_flow: T::control_flow(),
-            truncated: false,
+            truncation: None,
         })
     }
 }

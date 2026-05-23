@@ -1,10 +1,17 @@
 use tokio::sync::broadcast;
 
-use crate::types::{AgentError, AgentEvent, AgentResult, CheckpointData, CheckpointStep, MessageRole, RunOutcome, SessionId};
 use crate::engine::middleware::{PostLlmCtx, PreLlmCtx, UserMessageCtx};
 use crate::engine::recovery::ToolErrorAction;
-use crate::engine::AgentRuntime;
-use super::tool_exec::ToolCallResult;
+use crate::engine::runtime::event_bus::EventBus;
+use crate::engine::runtime::llm_engine::LlmTurnResult;
+use crate::types::{AgentError, AgentEvent, AgentResult, CheckpointData, CheckpointStep, MessageRole, RunOutcome, SessionId};
+
+use super::AgentRuntime;
+
+pub(super) enum ToolCallResult {
+    Continue,
+    Break,
+}
 
 impl AgentRuntime {
     pub(super) async fn apply_user_message_mw(
@@ -15,7 +22,7 @@ impl AgentRuntime {
         let mut ctx = UserMessageCtx {
             session_id: session_id.clone(),
             user_input,
-            event_bus: self.event_bus.clone(),
+            event_bus: self.event_bus.sender(),
         };
         for mw in &self.middlewares {
             mw.on_user_message(&mut ctx).await?;
@@ -33,7 +40,7 @@ impl AgentRuntime {
             session_id: session_id.clone(),
             messages,
             tools,
-            event_bus: self.event_bus.clone(),
+            event_bus: self.event_bus.sender(),
         };
         for mw in &self.middlewares {
             mw.on_pre_llm(&mut ctx).await?;
@@ -53,7 +60,7 @@ impl AgentRuntime {
             full_text,
             is_tool_call,
             tool_calls,
-            event_bus: self.event_bus.clone(),
+            event_bus: self.event_bus.sender(),
         };
         for mw in &self.middlewares {
             mw.on_post_llm(&mut ctx).await?;
@@ -70,26 +77,36 @@ impl AgentRuntime {
         on_event: &mut F,
     ) -> AgentResult<Option<RunOutcome>>
     where
-        F: FnMut(AgentEvent) -> AgentResult<()>,
+        F: FnMut(AgentEvent) -> AgentResult<()> + Send,
     {
         if e.is_cancelled() {
             self.emit_event(AgentEvent::RunFinished { session_id: session_id.clone() });
-            Self::drain_async_events(event_rx, on_event)?;
+            EventBus::drain_async_events(event_rx, on_event)?;
             let session = self.session_or_err(session_id).await?;
-            let _ = self.session_store.save(&session).await;
+            if let Err(e) = self.session_manager.session_store().save(&session).await {
+                tracing::warn!(session_id = session_id.id, error = %e, "Failed to persist session");
+                if self.config.execution.fail_on_persist_error {
+                    return Err(AgentError::internal(format!("Session persistence failed: {e}")));
+                }
+            }
             return Err(e);
         }
 
         let names: Vec<String> = tool_calls.iter().map(|(_, n, _)| n.clone()).collect();
         let error_text = e.to_string();
-        let retry_prompt_template: Option<String> = self.config.tool_error_retry_prompt.clone();
-        let action = self.error_recovery.on_error(session_id, &names, &e)?;
+        let retry_prompt_template: Option<String> = self.config.tool.tool_error_retry_prompt.clone();
+        let action = self.tool_engine.error_recovery().on_error(session_id, &names, &e)?;
         match action {
             ToolErrorAction::Stop => {
                 self.emit_event(AgentEvent::RunFinished { session_id: session_id.clone() });
-                Self::drain_async_events(event_rx, on_event)?;
+                EventBus::drain_async_events(event_rx, on_event)?;
                 let session = self.session_or_err(session_id).await?;
-                let _ = self.session_store.save(&session).await;
+                if let Err(e) = self.session_manager.session_store().save(&session).await {
+                    tracing::warn!(session_id = session_id.id, error = %e, "Failed to persist session");
+                    if self.config.execution.fail_on_persist_error {
+                        return Err(AgentError::internal(format!("Session persistence failed: {e}")));
+                    }
+                }
                 Ok(Some(RunOutcome::Failed {
                     error: format!("Tool execution failed: {}", e),
                 }))
@@ -125,9 +142,9 @@ impl AgentRuntime {
         on_event: &mut F,
     ) -> AgentResult<(RunOutcome, u32)>
     where
-        F: FnMut(AgentEvent) -> AgentResult<()>,
+        F: FnMut(AgentEvent) -> AgentResult<()> + Send,
     {
-        let max_turns = self.config.max_turns.unwrap_or(super::DEFAULT_MAX_TURNS);
+        let max_turns = self.config.execution.max_turns.unwrap_or(super::DEFAULT_MAX_TURNS);
 
         loop {
             turn_count += 1;
@@ -136,11 +153,11 @@ impl AgentRuntime {
                 self.emit_event(AgentEvent::RunFinished {
                     session_id: session_id.clone(),
                 });
-                Self::drain_async_events(event_rx, on_event)?;
+                EventBus::drain_async_events(event_rx, on_event)?;
                 return Ok((RunOutcome::MaxTurnsExceeded { turns: turn_count }, turn_count));
             }
 
-            Self::drain_async_events(event_rx, on_event)?;
+            EventBus::drain_async_events(event_rx, on_event)?;
 
             let turn_span = tracing::info_span!("turn", session_id = session_id.id, turn = turn_count);
             let _turn_guard = turn_span.enter();
@@ -168,80 +185,185 @@ impl AgentRuntime {
                 },
             });
 
-            let aggregator = self
-                .execute_llm_turn(session_id, &messages, &tools_for_turn, event_rx, on_event)
-                .await?;
+            let stream = match self.config.llm.llm_retry.as_ref() {
+                Some(retry) => {
+                    self.llm_engine.run_llm_turn_with_retry(
+                        session_id,
+                        &messages,
+                        &tools_for_turn,
+                        self.config.reasoning.as_ref(),
+                        self.config.llm.response_format.as_ref(),
+                        retry.clone(),
+                    ).await?
+                }
+                None => {
+                    self.llm_engine.chat_stream(
+                        &messages,
+                        &tools_for_turn,
+                        self.config.reasoning.as_ref(),
+                        self.config.llm.response_format.as_ref(),
+                    ).await?
+                }
+            };
 
-            let (full_text, is_tool_call, tool_calls) = aggregator.into_parts();
+            let span = tracing::info_span!("llm_turn", session_id = session_id.id, turn = turn_count);
+            let result = self.llm_engine.process_stream(session_id, stream, span, event_rx, on_event).await;
 
-            let (full_text, is_tool_call, tool_calls) = self
-                .apply_post_llm_mw(session_id, full_text, is_tool_call, tool_calls)
-                .await?;
+            match result {
+                Ok(LlmTurnResult { full_text, is_tool_call, tool_calls, usage: _ }) => {
+                    let tool_calls_parsed: Vec<(String, String, String)> = tool_calls.iter().map(|tc| {
+                        let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                        let name = tc.get("function").and_then(|f| f.get("name")).and_then(|n| n.as_str()).unwrap_or("").to_string();
+                        let args = tc.get("function").and_then(|f| f.get("arguments")).and_then(|a| a.as_str()).unwrap_or("").to_string();
+                        (id, name, args)
+                    }).collect();
 
-            if full_text.is_empty() && !is_tool_call {
-                continue;
-            }
+                    let (full_text, is_tool_call, tool_calls_parsed) = self
+                        .apply_post_llm_mw(session_id, full_text, is_tool_call, tool_calls_parsed)
+                        .await?;
 
-            if !full_text.is_empty() {
-                self.with_session_mut(session_id, |session| {
-                    session.push_message(MessageRole::Assistant, full_text);
-                }).await?;
-            }
+                    if full_text.is_empty() && !is_tool_call {
+                        continue;
+                    }
 
-            if is_tool_call && !tool_calls.is_empty() {
-                self.emit_event(AgentEvent::Checkpoint {
-                    session_id: session_id.clone(),
-                    checkpoint: CheckpointData {
-                        session_id: session_id.clone(),
-                        user_input: user_input_owned.to_string(),
-                        step: CheckpointStep::BeforeToolCalls {
-                            tool_calls: tool_calls.clone(),
-                        },
-                        turn_count,
-                    },
-                });
+                    if !full_text.is_empty() {
+                        self.with_session_mut(session_id, |session| {
+                            session.push_message(MessageRole::Assistant, full_text);
+                        }).await?;
+                    }
 
-                match self.handle_tool_calls(session_id, &tool_calls, event_rx, on_event).await {
-                    Ok(ToolCallResult::Continue) => {
+                    if is_tool_call && !tool_calls_parsed.is_empty() {
                         self.emit_event(AgentEvent::Checkpoint {
                             session_id: session_id.clone(),
                             checkpoint: CheckpointData {
                                 session_id: session_id.clone(),
                                 user_input: user_input_owned.to_string(),
-                                step: CheckpointStep::AfterToolCalls {
-                                    tool_calls: tool_calls.clone(),
-                                    results: Vec::new(),
+                                step: CheckpointStep::BeforeToolCalls {
+                                    tool_calls: tool_calls_parsed.clone(),
                                 },
                                 turn_count,
                             },
                         });
-                        continue;
-                    }
-                    Ok(ToolCallResult::Break) => {
-                        self.emit_event(AgentEvent::RunFinished { session_id: session_id.clone() });
-                        Self::drain_async_events(event_rx, on_event)?;
-                        break;
-                    }
-                    Err(e) => {
-                        if let Some(outcome) = self
-                            .handle_tool_error(session_id, &tool_calls, e, event_rx, on_event)
-                            .await?
-                        {
-                            return Ok((outcome, turn_count));
+
+                        match self.handle_tool_calls(session_id, &tool_calls_parsed, event_rx, on_event).await {
+                            Ok(ToolCallResult::Continue) => {
+                                self.emit_event(AgentEvent::Checkpoint {
+                                    session_id: session_id.clone(),
+                                    checkpoint: CheckpointData {
+                                        session_id: session_id.clone(),
+                                        user_input: user_input_owned.to_string(),
+                                        step: CheckpointStep::AfterToolCalls {
+                                            tool_calls: tool_calls_parsed.clone(),
+                                            results: Vec::new(),
+                                        },
+                                        turn_count,
+                                    },
+                                });
+                                continue;
+                            }
+                            Ok(ToolCallResult::Break) => {
+                                self.emit_event(AgentEvent::RunFinished { session_id: session_id.clone() });
+                                EventBus::drain_async_events(event_rx, on_event)?;
+                                return Ok((RunOutcome::Completed, turn_count));
+                            }
+                            Err(e) => {
+                                if let Some(outcome) = self
+                                    .handle_tool_error(session_id, &tool_calls_parsed, e, event_rx, on_event)
+                                    .await?
+                                {
+                                    return Ok((outcome, turn_count));
+                                }
+                                continue;
+                            }
                         }
-                        continue;
                     }
+
+                    self.emit_event(AgentEvent::RunFinished { session_id: session_id.clone() });
+                    EventBus::drain_async_events(event_rx, on_event)?;
+                    return Ok((RunOutcome::Completed, turn_count));
+                }
+                Err(e) => {
+                    return Err(e);
                 }
             }
+        }
+    }
 
-            self.emit_event(AgentEvent::RunFinished { session_id: session_id.clone() });
-            Self::drain_async_events(event_rx, on_event)?;
-            break;
+    pub(super) async fn handle_tool_calls<F>(
+        &self,
+        session_id: &SessionId,
+        tool_calls: &[(String, String, String)],
+        event_rx: &mut broadcast::Receiver<AgentEvent>,
+        on_event: &mut F,
+    ) -> AgentResult<ToolCallResult>
+    where
+        F: FnMut(AgentEvent) -> AgentResult<()> + Send,
+    {
+        let mut parsed_calls: Vec<(String, String, String, serde_json::Value)> = Vec::new();
+        for (id, name, args_str) in tool_calls {
+            let args: serde_json::Value = serde_json::from_str(args_str).map_err(|_| AgentError::ToolArgsInvalid {
+                name: name.clone(),
+                raw: args_str.clone(),
+            })?;
+
+            self.tool_engine.process_approval(
+                session_id, name, &args, args_str, event_rx, on_event, &self.session_manager,
+            ).await?;
+
+            parsed_calls.push((id.clone(), name.clone(), args_str.clone(), args));
         }
 
-        let session = self.session_or_err(session_id).await?;
-        let _ = self.session_store.save(&session).await;
+        for (_, tool_name, tool_args_json, _) in &parsed_calls {
+            self.emit_event(AgentEvent::ToolCallStarted {
+                session_id: session_id.clone(),
+                tool_name: tool_name.clone(),
+                args_json: tool_args_json.clone(),
+            });
+        }
+        EventBus::drain_async_events(event_rx, on_event)?;
 
-        Ok((RunOutcome::Completed, turn_count))
+        {
+            let tc: Vec<(String, String, String)> = parsed_calls
+                .iter()
+                .map(|(id, name, args_json, _)| (id.clone(), name.clone(), args_json.clone()))
+                .collect();
+            self.with_session_mut(session_id, |session| {
+                session.push_assistant_tool_calls(&tc);
+            }).await?;
+        }
+
+        for (id, name, args_str, args) in parsed_calls {
+            let tool_result = self.tool_engine.execute_tool(
+                session_id,
+                &id,
+                &name,
+                &args,
+                &args_str,
+                event_rx,
+                on_event,
+                &self.session_manager,
+                Some(self.llm_engine.client.clone()),
+                self.config.language.clone(),
+                self.config.tool.tool_timeout_ms,
+                self.config.tool.max_tool_output_chars,
+            ).await;
+
+            match tool_result {
+                Ok(result) => {
+                    self.with_session_mut(session_id, |session| {
+                        session.push_tool_result(&result.id, result.output.summary.clone());
+                    }).await?;
+
+                    if matches!(result.output.control_flow, crate::tool::ToolControlFlow::Break) {
+                        return Ok(ToolCallResult::Break);
+                    }
+                }
+                Err(e) => {
+                    return Err(e);
+                }
+            }
+        }
+
+        Ok(ToolCallResult::Continue)
     }
 }

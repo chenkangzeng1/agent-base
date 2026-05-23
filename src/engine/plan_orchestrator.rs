@@ -183,7 +183,7 @@ impl Tool for PlanOrchestrator {
                         "status": "awaiting_confirmation",
                     })),
                     control_flow: ToolControlFlow::Continue,
-                    truncated: false,
+                    truncation: None,
                 })
             }
             Err(e) => {
@@ -208,7 +208,7 @@ impl Tool for PlanOrchestrator {
                         "error": e.to_string(),
                     })),
                     control_flow: ToolControlFlow::Continue,
-                    truncated: false,
+                    truncation: None,
                 })
             }
         }
@@ -285,7 +285,7 @@ impl Tool for PlanExecTool {
                     "error": "plan_id is required",
                 })),
                 control_flow: ToolControlFlow::Continue,
-                truncated: false,
+                truncation: None,
             });
         }
 
@@ -490,7 +490,7 @@ impl Tool for PlanExecTool {
                 "failed_step": failed_step_name,
             })),
             control_flow: ToolControlFlow::Continue,
-            truncated: false,
+            truncation: None,
         })
     }
 }

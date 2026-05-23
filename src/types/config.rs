@@ -104,15 +104,10 @@ pub struct AgentConfig {
     pub system_prompt: Option<String>,
     pub enable_thought: bool,
     pub reasoning: Option<ReasoningConfig>,
-    pub max_turns: Option<u32>,
-    pub tool_timeout_ms: Option<u64>,
-    pub max_tool_output_chars: Option<usize>,
-    pub response_format: Option<ResponseFormat>,
-    pub llm_retry: Option<RetryConfig>,
-    pub tool_error_retry_prompt: Option<String>,
-    /// Language preference for tool output.
-    /// Defaults to `Language::En` if not set.
     pub language: Language,
+    pub execution: ExecutionConfig,
+    pub llm: LlmConfig,
+    pub tool: ToolConfig,
 }
 
 impl Default for AgentConfig {
@@ -121,13 +116,59 @@ impl Default for AgentConfig {
             system_prompt: None,
             enable_thought: false,
             reasoning: None,
+            language: Language::default(),
+            execution: ExecutionConfig::default(),
+            llm: LlmConfig::default(),
+            tool: ToolConfig::default(),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ExecutionConfig {
+    pub max_turns: Option<u32>,
+    pub approval_timeout_ms: Option<u64>,
+    pub fail_on_persist_error: bool,
+}
+
+impl Default for ExecutionConfig {
+    fn default() -> Self {
+        Self {
             max_turns: None,
-            tool_timeout_ms: None,
-            max_tool_output_chars: None,
+            approval_timeout_ms: None,
+            fail_on_persist_error: false,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct LlmConfig {
+    pub response_format: Option<ResponseFormat>,
+    pub llm_retry: Option<RetryConfig>,
+}
+
+impl Default for LlmConfig {
+    fn default() -> Self {
+        Self {
             response_format: None,
             llm_retry: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct ToolConfig {
+    pub tool_timeout_ms: Option<u64>,
+    pub max_tool_output_chars: Option<usize>,
+    pub tool_error_retry_prompt: Option<String>,
+}
+
+impl Default for ToolConfig {
+    fn default() -> Self {
+        Self {
+            tool_timeout_ms: None,
+            max_tool_output_chars: None,
             tool_error_retry_prompt: None,
-            language: Language::default(),
         }
     }
 }

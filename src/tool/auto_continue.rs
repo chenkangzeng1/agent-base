@@ -58,7 +58,7 @@ impl Tool for AutoContinueTool {
                 "reason": reason,
             })),
             control_flow: ToolControlFlow::Continue,
-            truncated: false,
+            truncation: None,
         })
     }
 }

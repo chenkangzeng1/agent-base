@@ -64,7 +64,7 @@ impl Tool for SkillDetailTool {
                 ),
                 raw: None,
                 control_flow: ToolControlFlow::Break,
-                truncated: false,
+                truncation: None,
             });
         }
 
@@ -87,7 +87,7 @@ impl Tool for SkillDetailTool {
                 summary: desc.to_string(),
                 raw: None,
                 control_flow: ToolControlFlow::Break,
-                truncated: false,
+                truncation: None,
             }),
             None => {
                 let available: Vec<&str> = self.skills.iter().map(|s| s.name()).collect();
@@ -99,7 +99,7 @@ impl Tool for SkillDetailTool {
                     ),
                     raw: None,
                     control_flow: ToolControlFlow::Break,
-                    truncated: false,
+                    truncation: None,
                 })
             }
         }

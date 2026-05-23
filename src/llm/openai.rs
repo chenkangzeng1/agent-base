@@ -5,10 +5,29 @@ use futures_util::StreamExt;
 use reqwest::Client;
 use serde_json::{json, Value};
 use std::pin::Pin;
+use std::time::Duration;
 
 use crate::types::{AgentResult, AgentError, ChatMessage, ImageAttachment, ImageDetail, ResponseFormat, ToolCallMessage};
 use super::{LlmCapabilities, LlmClient, ReasoningConfig, ReasoningEffort, StreamChunk, UsageInfo};
 
+#[derive(Clone, Debug)]
+pub struct LlmClientConfig {
+    pub connect_timeout: Duration,
+    pub request_timeout: Duration,
+    pub pool_max_idle_per_host: usize,
+    pub pool_idle_timeout: Duration,
+}
+
+impl Default for LlmClientConfig {
+    fn default() -> Self {
+        Self {
+            connect_timeout: Duration::from_secs(15),
+            request_timeout: Duration::from_secs(120),
+            pool_max_idle_per_host: 10,
+            pool_idle_timeout: Duration::from_secs(90),
+        }
+    }
+}
 
 pub struct OpenAiClient {
     api_key: String,
@@ -19,11 +38,20 @@ pub struct OpenAiClient {
 
 impl OpenAiClient {
     pub fn new(api_key: String, model: String, base_url: Option<String>) -> Self {
+        Self::new_with_config(api_key, model, base_url, LlmClientConfig::default())
+    }
+
+    pub fn new_with_config(api_key: String, model: String, base_url: Option<String>, config: LlmClientConfig) -> Self {
         let client = Client::builder()
-            .connect_timeout(std::time::Duration::from_secs(15))
-            .timeout(std::time::Duration::from_secs(120))
+            .connect_timeout(config.connect_timeout)
+            .timeout(config.request_timeout)
+            .pool_max_idle_per_host(config.pool_max_idle_per_host)
+            .pool_idle_timeout(config.pool_idle_timeout)
             .build()
-            .unwrap_or_else(|_| Client::new());
+            .unwrap_or_else(|e| {
+                tracing::warn!(error = %e, "Failed to build reqwest client with custom config, falling back to default");
+                Client::new()
+            });
         Self {
             api_key,
             model,
@@ -227,7 +255,7 @@ impl LlmClient for OpenAiClient {
             }
         }
 
-        eprintln!("[llm] request body: {}", serde_json::to_string_pretty(&request_body).unwrap_or_default());
+        tracing::debug!(request_body = %serde_json::to_string_pretty(&request_body).unwrap_or_default(), "llm request body");
 
         let response = self
             .client
@@ -277,7 +305,7 @@ impl LlmClient for OpenAiClient {
             }
         }
 
-        eprintln!("[llm] stream request body: {}", serde_json::to_string_pretty(&request_body).unwrap_or_default());
+        tracing::debug!(request_body = %serde_json::to_string_pretty(&request_body).unwrap_or_default(), "llm stream request body");
 
         let response = self
             .client

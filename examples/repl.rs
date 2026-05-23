@@ -48,7 +48,7 @@ impl Tool for AddTool {
             summary: format!("{} + {} = {}", a, b, result),
             raw: Some(json!({ "result": result })),
             control_flow: ToolControlFlow::Break,
-            truncated: false,
+            truncation: None,
         })
     }
 }
@@ -87,7 +87,7 @@ impl Tool for SubtractTool {
             summary: format!("{} - {} = {}", a, b, result),
             raw: Some(json!({ "result": result })),
             control_flow: ToolControlFlow::Break,
-            truncated: false,
+            truncation: None,
         })
     }
 }
@@ -126,7 +126,7 @@ impl Tool for MultiplyTool {
             summary: format!("{} × {} = {}", a, b, result),
             raw: Some(json!({ "result": result })),
             control_flow: ToolControlFlow::Break,
-            truncated: false,
+            truncation: None,
         })
     }
 }
@@ -165,7 +165,7 @@ impl Tool for DivideTool {
                 summary: "Error：Divisor cannot be zero".to_string(),
                 raw: Some(json!({ "error": "division by zero" })),
                 control_flow: ToolControlFlow::Break,
-                truncated: false,
+                truncation: None,
             });
         }
         let quotient = a / b;
@@ -174,7 +174,7 @@ impl Tool for DivideTool {
             summary: format!("{} ÷ {} = {}（remainder {}）", a, b, quotient, remainder),
             raw: Some(json!({ "quotient": quotient, "remainder": remainder })),
             control_flow: ToolControlFlow::Break,
-            truncated: false,
+            truncation: None,
         })
     }
 }
@@ -355,7 +355,7 @@ async fn main() -> AgentResult<()> {
         .register_tool(DivideTool)
         .tool_policy(Arc::new(ArithmeticToolPolicy))
         .approval_handler(Arc::new(CliApprovalHandler))
-        .build();
+        .build().unwrap();
 
     let mut session_id = runtime.create_session().await;
 

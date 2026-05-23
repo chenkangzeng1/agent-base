@@ -41,7 +41,7 @@ impl Tool for GreetTool {
             summary: format!("Hello, {}!", name),
             raw: Some(json!({ "greeting": format!("Hello, {}!", name) })),
             control_flow: ToolControlFlow::Break,
-            truncated: false,
+            truncation: None,
         })
     }
 }
@@ -159,7 +159,7 @@ async fn main() -> AgentResult<()> {
 
     let runtime = AgentBuilder::new(llm.clone())
         .register_tool(GreetTool)
-        .build();
+        .build().unwrap();
 
     let generator = Arc::new(SimplePlanGenerator);
     let executor = Arc::new(SimpleStepExecutor);

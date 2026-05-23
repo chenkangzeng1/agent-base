@@ -24,6 +24,7 @@ tokio = { version = "=1.52.2", features = ["full"] }
 tracing = "0.1"
 opentelemetry = { version = "0.30", optional = true }
 tracing-opentelemetry = { version = "0.30", optional = true }
+uuid = { version = "1.10", features = ["v4"] }
 
 [features]
 default = []

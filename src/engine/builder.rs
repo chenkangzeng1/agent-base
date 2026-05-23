@@ -1,13 +1,10 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
-use std::sync::atomic::AtomicU64;
-
-use tokio::sync::{broadcast, RwLock};
 
 use crate::llm::{LlmClient, ReasoningConfig};
 use crate::skill::{Skill, SkillDetailTool, SkillPrompter, LazySkillPrompter};
 use crate::tool::{Tool, ToolPolicy, ToolRegistry};
-use crate::types::{AgentConfig, ResponseFormat, RetryConfig};
+use crate::types::{AgentConfig, ResponseFormat, RetryConfig, SessionIdGenerator, AtomicU64SessionIdGenerator};
 
 use super::approval::ApprovalHandler;
 use super::context::ContextWindowManager;
@@ -30,6 +27,8 @@ pub struct AgentBuilder {
     skill_detail_tool_name: String,
     disable_skill_prompt_injection: bool,
     error_recovery: Option<Arc<dyn ToolErrorRecovery>>,
+    event_bus_capacity: usize,
+    session_id_generator: Option<Arc<dyn SessionIdGenerator>>,
 }
 
 impl AgentBuilder {
@@ -48,7 +47,19 @@ impl AgentBuilder {
             skill_detail_tool_name: "get_skill_detail".to_string(),
             disable_skill_prompt_injection: false,
             error_recovery: None,
+            event_bus_capacity: 2048,
+            session_id_generator: None,
         }
+    }
+
+    pub fn event_bus_capacity(mut self, capacity: usize) -> Self {
+        self.event_bus_capacity = capacity;
+        self
+    }
+
+    pub fn session_id_generator(mut self, generator: Arc<dyn SessionIdGenerator>) -> Self {
+        self.session_id_generator = Some(generator);
+        self
     }
 
     pub fn system_prompt(mut self, system_prompt: impl Into<String>) -> Self {
@@ -81,12 +92,12 @@ impl AgentBuilder {
     }
 
     pub fn tool_timeout(mut self, timeout_ms: u64) -> Self {
-        self.config.tool_timeout_ms = Some(timeout_ms);
+        self.config.tool.tool_timeout_ms = Some(timeout_ms);
         self
     }
 
     pub fn max_tool_output_chars(mut self, max_chars: usize) -> Self {
-        self.config.max_tool_output_chars = Some(max_chars);
+        self.config.tool.max_tool_output_chars = Some(max_chars);
         self
     }
 
@@ -126,12 +137,12 @@ impl AgentBuilder {
     }
 
     pub fn response_format(mut self, format: ResponseFormat) -> Self {
-        self.config.response_format = Some(format);
+        self.config.llm.response_format = Some(format);
         self
     }
 
     pub fn llm_retry(mut self, retry: RetryConfig) -> Self {
-        self.config.llm_retry = Some(retry);
+        self.config.llm.llm_retry = Some(retry);
         self
     }
 
@@ -166,7 +177,7 @@ impl AgentBuilder {
     }
 
     pub fn tool_error_retry_prompt(mut self, prompt: impl Into<String>) -> Self {
-        self.config.tool_error_retry_prompt = Some(prompt.into());
+        self.config.tool.tool_error_retry_prompt = Some(prompt.into());
         self
     }
 
@@ -175,7 +186,7 @@ impl AgentBuilder {
         self
     }
 
-    pub fn build(mut self) -> AgentRuntime {
+    pub fn build(mut self) -> crate::types::AgentResult<AgentRuntime> {
         let prompter: Arc<dyn SkillPrompter> = self
             .skill_prompter
             .unwrap_or_else(|| Arc::new(LazySkillPrompter::new()));
@@ -197,11 +208,11 @@ impl AgentBuilder {
             for tool in skill.tools() {
                 let tool_name = tool.name().to_string();
                 if known_tool_names.contains(&tool_name) {
-                    panic!(
+                    return Err(crate::types::AgentError::internal(format!(
                         "Tool name conflict: `{}` (Skill `{}`)",
                         tool_name,
                         skill.name()
-                    );
+                    )));
                 }
                 known_tool_names.insert(tool_name.clone());
                 self.tools.register_arc(tool);
@@ -228,29 +239,46 @@ impl AgentBuilder {
             self.tools.register(detail_tool);
         }
 
-        let (event_bus, _) = broadcast::channel(2048);
+        let event_bus = super::runtime::EventBus::new(self.event_bus_capacity);
         let session_store = self
             .session_store
             .unwrap_or_else(|| Arc::new(InMemorySessionStore::new()));
         let error_recovery = self
             .error_recovery
             .unwrap_or_else(|| Arc::new(StopOnError));
+        let session_id_generator = self
+            .session_id_generator
+            .unwrap_or_else(|| Arc::new(AtomicU64SessionIdGenerator::default()));
 
-        AgentRuntime {
-            client: self.client,
-            config: self.config,
-            tools: self.tools,
-            approval_handler: self.approval_handler,
-            tool_policy: self.tool_policy,
-            middlewares: self.middlewares,
-            event_bus,
-            next_session_id: AtomicU64::new(1),
-            sessions: Arc::new(RwLock::new(HashMap::new())),
-            context_manager: self.context_manager,
+        let session_manager = super::runtime::SessionManager::new(
+            session_id_generator,
             session_store,
+        );
+
+        let llm_engine = super::runtime::LlmEngine::new(
+            self.client.clone(),
+            event_bus.clone(),
+        );
+
+        let tool_engine = super::runtime::ToolEngine::new(
+            self.tools,
+            self.approval_handler,
+            self.tool_policy,
+            self.middlewares.clone(),
+            error_recovery,
+            event_bus.clone(),
+        );
+
+        Ok(AgentRuntime {
+            config: self.config,
+            llm_engine,
+            tool_engine,
+            session_manager,
+            event_bus,
+            context_manager: self.context_manager,
             skills: skill_refs,
             skill_prompter: prompter,
-            error_recovery,
-        }
+            middlewares: self.middlewares,
+        })
     }
 }

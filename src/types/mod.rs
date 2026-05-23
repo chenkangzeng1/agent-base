@@ -19,4 +19,4 @@ pub use plan::{
     ExecutionPlan, PlanStatus, PlanStep, PlanStoreData, RecoveryAction, StepResult,
     StepStatus,
 };
-pub use session::SessionId;
+pub use session::{SessionId, SessionIdGenerator, AtomicU64SessionIdGenerator, UuidSessionIdGenerator};

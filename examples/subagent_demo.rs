@@ -86,7 +86,7 @@ async fn main() -> AgentResult<()> {
 
     let sub_runtime = AgentBuilder::new(sub_llm)
         .system_prompt("You are a Data Analysis Expert. Analyze based on the task description provided. Return detailed results.")
-        .build();
+        .build().unwrap();
 
     println!("    sub-agent Agent is ready\n");
 
@@ -128,7 +128,7 @@ async fn main() -> AgentResult<()> {
     let parent_runtime = AgentBuilder::new(parent_llm)
         .system_prompt("You are a sales manager. Responsible for compiling analysis reports. You can delegate specific analysis tasks to the sub-agent.agent Agent。")
         .register_tool(sub_agent_tool)
-        .build();
+        .build().unwrap();
 
     let session_id = parent_runtime.create_session().await;
 

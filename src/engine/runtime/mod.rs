@@ -1,176 +1,223 @@
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::llm::LlmClient;
+use crate::engine::context::ContextWindowManager;
+use crate::engine::middleware::MiddlewareRef;
+use crate::engine::session_store::SessionStore;
+use crate::engine::AgentSession;
 use crate::skill::{Skill, SkillPrompter};
-use crate::tool::{ToolPolicy, ToolRegistry};
-use crate::types::{AgentConfig, MessageRole, AgentError, CheckpointData, CheckpointStep};
-use tokio::sync::{broadcast, RwLock};
-use tracing::Span;
+use crate::types::{AgentConfig, AgentError, AgentEvent, AgentResult, CheckpointData, CheckpointStep, MessageRole, RunOutcome, SessionId};
 
-use crate::types::{AgentResult, AgentEvent, SessionId, RunOutcome};
 use super::approval::ApprovalHandler;
-use super::context::ContextWindowManager;
-use super::middleware::MiddlewareRef;
-use super::recovery::ToolErrorRecovery;
-use super::session_store::SessionStore;
-use super::AgentSession;
 
-mod approval_flow;
-mod llm;
+mod event_bus;
+mod llm_engine;
 mod plan;
-mod tool_exec;
 mod react_loop;
-
-use tool_exec::ToolCallResult;
+mod session_manager;
+mod tool_engine;
 
 pub(super) const DEFAULT_MAX_TURNS: u32 = 50;
 
+pub use event_bus::EventBus;
+pub use llm_engine::LlmEngine;
+pub use session_manager::SessionManager;
+pub use tool_engine::ToolEngine;
+
 pub struct AgentRuntime {
-    pub(crate) client: Arc<dyn LlmClient>,
     pub(crate) config: AgentConfig,
-    pub(crate) tools: ToolRegistry,
-    pub(crate) approval_handler: Option<Arc<dyn ApprovalHandler>>,
-    pub(crate) tool_policy: Option<Arc<dyn ToolPolicy>>,
-    pub(crate) middlewares: Vec<MiddlewareRef>,
-    pub(crate) event_bus: broadcast::Sender<AgentEvent>,
-    pub(crate) next_session_id: AtomicU64,
-    pub(crate) sessions: Arc<RwLock<HashMap<SessionId, AgentSession>>>,
+    pub(crate) llm_engine: LlmEngine,
+    pub(crate) tool_engine: ToolEngine,
+    pub(crate) session_manager: SessionManager,
+    pub(crate) event_bus: EventBus,
     pub(crate) context_manager: Option<ContextWindowManager>,
-    pub(crate) session_store: Arc<dyn SessionStore>,
     pub(crate) skills: Vec<Arc<dyn Skill>>,
     #[allow(dead_code)]
     pub(crate) skill_prompter: Arc<dyn SkillPrompter>,
-    pub(crate) error_recovery: Arc<dyn ToolErrorRecovery>,
+    pub(crate) middlewares: Vec<MiddlewareRef>,
 }
 
 impl AgentRuntime {
     pub async fn create_session(&self) -> SessionId {
-        let id = SessionId {
-            id: self.next_session_id.fetch_add(1, Ordering::Relaxed),
-            external_id: None,
-        };
-        let mut session = AgentSession::new(id.clone());
-        if let Some(system_prompt) = self.config.system_prompt.as_deref() {
-            session.push_message(MessageRole::System, system_prompt);
-        }
-        let mut sessions = self.sessions.write().await;
-        sessions.insert(id.clone(), session);
-        id
+        self.session_manager.create_session(self.config.system_prompt.as_deref()).await
     }
 
-    /// Restore an existing session from persistence into runtime memory
-    ///
-    /// On success, the session can be used for continued execution.
-    /// Returns None if not found in persistence layer.
     pub async fn restore_session(&self, session_id: &SessionId) -> Option<AgentSession> {
-        {
-            let sessions = self.sessions.read().await;
-            if sessions.contains_key(session_id) {
-                return sessions.get(session_id).cloned();
-            }
-        }
-        match self.session_store.load(session_id).await {
-            Ok(Some(session)) => {
-                let mut sessions = self.sessions.write().await;
-                sessions.insert(session_id.clone(), session.clone());
-                Some(session)
-            }
-            _ => None,
-        }
+        self.session_manager.restore_session(session_id).await
     }
 
     pub async fn session(&self, session_id: &SessionId) -> Option<AgentSession> {
-        let sessions = self.sessions.read().await;
-        sessions.get(session_id).cloned()
+        self.session_manager.session(session_id).await
     }
 
-    pub fn tools(&self) -> &ToolRegistry {
-        &self.tools
+    pub async fn session_or_err(&self, session_id: &SessionId) -> AgentResult<AgentSession> {
+        self.session_manager.session_or_err(session_id).await
     }
 
-    pub fn tools_mut(&mut self) -> &mut ToolRegistry {
-        &mut self.tools
-    }
-
-    pub fn client(&self) -> &Arc<dyn LlmClient> {
-        &self.client
-    }
-
-    pub fn approval_handler(&self) -> Option<&Arc<dyn ApprovalHandler>> {
-        self.approval_handler.as_ref()
-    }
-
-    pub fn tool_policy(&self) -> Option<&Arc<dyn ToolPolicy>> {
-        self.tool_policy.as_ref()
-    }
-
-    pub fn subscribe_events(&self) -> broadcast::Receiver<AgentEvent> {
-        self.event_bus.subscribe()
-    }
-
-    pub fn session_store(&self) -> &Arc<dyn SessionStore> {
-        &self.session_store
-    }
-
-    pub fn skills(&self) -> &[Arc<dyn Skill>] {
-        &self.skills
-    }
-
-    async fn cached_approval(&self, session_id: &SessionId, action_key: &str) -> bool {
-        let sessions = self.sessions.read().await;
-        sessions
-            .get(session_id)
-            .is_some_and(|session| session.is_action_allowed(action_key))
-    }
-
-    async fn cache_approval(&self, session_id: &SessionId, action_key: String) {
-        let mut sessions = self.sessions.write().await;
-        if let Some(session) = sessions.get_mut(session_id) {
-            session.allow_action(action_key);
-        }
-    }
-
-    fn emit_event(&self, event: AgentEvent) {
-        let _ = self.event_bus.send(event);
-    }
-
-    async fn session_or_err(&self, session_id: &SessionId) -> AgentResult<AgentSession> {
-        let sessions = self.sessions.read().await;
-        sessions
-            .get(session_id)
-            .cloned()
-            .ok_or_else(|| AgentError::session_not_found(session_id.id))
-    }
-
-    async fn with_session_mut<F, R>(&self, session_id: &SessionId, f: F) -> AgentResult<R>
+    pub async fn with_session_mut<F, R>(&self, session_id: &SessionId, f: F) -> AgentResult<R>
     where
         F: FnOnce(&mut AgentSession) -> R,
     {
-        let mut sessions = self.sessions.write().await;
-        let session = sessions
-            .get_mut(session_id)
-            .ok_or_else(|| AgentError::session_not_found(session_id.id))?;
-        Ok(f(session))
+        self.session_manager.with_session_mut(session_id, f).await
     }
 
-    fn drain_async_events<F>(
-        event_rx: &mut broadcast::Receiver<AgentEvent>,
-        on_event: &mut F,
-    ) -> AgentResult<()>
+    pub fn emit_event(&self, event: AgentEvent) {
+        self.event_bus.emit(event);
+    }
+
+    pub fn subscribe_events(&self) -> tokio::sync::broadcast::Receiver<AgentEvent> {
+        self.event_bus.subscribe()
+    }
+
+    pub fn event_bus(&self) -> &EventBus {
+        &self.event_bus
+    }
+
+    pub fn session_manager(&self) -> &SessionManager {
+        &self.session_manager
+    }
+
+    pub fn llm_engine(&self) -> &LlmEngine {
+        &self.llm_engine
+    }
+
+    pub fn tool_engine(&self) -> &ToolEngine {
+        &self.tool_engine
+    }
+
+    pub fn tool_engine_mut(&mut self) -> &mut ToolEngine {
+        &mut self.tool_engine
+    }
+
+    pub fn client(&self) -> Arc<dyn crate::llm::LlmClient> {
+        self.llm_engine.client.clone()
+    }
+
+    pub fn tools_mut(&mut self) -> &mut crate::tool::ToolRegistry {
+        self.tool_engine.tools_mut()
+    }
+
+    pub fn config(&self) -> &AgentConfig {
+        &self.config
+    }
+
+    pub fn approval_handler(&self) -> Option<&Arc<dyn ApprovalHandler>> {
+        self.tool_engine.approval_handler()
+    }
+
+    pub async fn cached_approval(&self, session_id: &SessionId, action_key: &str) -> bool {
+        self.session_manager.cached_approval(session_id, action_key).await
+    }
+
+    pub async fn cache_approval(&self, session_id: &SessionId, action_key: String) {
+        self.session_manager.cache_approval(session_id, action_key).await
+    }
+
+    pub async fn save_checkpoint(&self, session_id: &SessionId, checkpoint: CheckpointData) -> AgentResult<()> {
+        self.emit_event(AgentEvent::Checkpoint {
+            session_id: session_id.clone(),
+            checkpoint,
+        });
+        Ok(())
+    }
+
+    pub async fn load_checkpoint(&self, _session_id: &SessionId, _checkpoint: &CheckpointData) -> AgentResult<Option<CheckpointData>> {
+        Ok(None)
+    }
+
+    pub async fn resume_from_checkpoint<F>(
+        &self,
+        checkpoint: CheckpointData,
+        mut on_event: F,
+    ) -> AgentResult<RunOutcome>
     where
-        F: FnMut(AgentEvent) -> AgentResult<()>,
+        F: FnMut(AgentEvent) -> AgentResult<()> + Send,
     {
-        loop {
-            match event_rx.try_recv() {
-                Ok(event) => on_event(event)?,
-                Err(broadcast::error::TryRecvError::Empty) => break,
-                Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
-                Err(broadcast::error::TryRecvError::Closed) => break,
+        let session_id = checkpoint.session_id.clone();
+        let user_input = checkpoint.user_input.clone();
+        let turn_count = checkpoint.turn_count;
+
+        tracing::info!(session_id = session_id.id, turn_count, step = ?checkpoint.step, "resuming from checkpoint");
+
+        let mut event_rx = self.subscribe_events();
+        let tool_definitions = self.tool_engine.definitions();
+
+        if let CheckpointStep::BeforeToolCalls { tool_calls } = checkpoint.step {
+            match self.handle_tool_calls(&session_id, &tool_calls, &mut event_rx, &mut on_event).await {
+                Ok(react_loop::ToolCallResult::Continue) => {}
+                Ok(react_loop::ToolCallResult::Break) => {
+                    self.emit_event(AgentEvent::RunFinished { session_id: session_id.clone() });
+                    EventBus::drain_async_events(&mut event_rx, &mut on_event)?;
+                    return Ok(RunOutcome::Completed);
+                }
+                Err(e) => {
+                    if let Some(outcome) = self
+                        .handle_tool_error(&session_id, &tool_calls, e, &mut event_rx, &mut on_event)
+                        .await?
+                    {
+                        return Ok(outcome);
+                    }
+                }
             }
         }
-        Ok(())
+
+        let (outcome, _final_turn_count) = self
+            .run_turn_loop(
+                &session_id,
+                &user_input,
+                &tool_definitions,
+                turn_count,
+                &mut event_rx,
+                &mut on_event,
+            )
+            .await?;
+
+        Ok(outcome)
+    }
+
+    pub async fn run<F>(
+        &self,
+        session_id: SessionId,
+        mut on_event: F,
+    ) -> AgentResult<RunOutcome>
+    where
+        F: FnMut(AgentEvent) -> AgentResult<()> + Send,
+    {
+        let span = tracing::info_span!("agent_run", session_id = session_id.id);
+        let _enter = span.enter();
+
+        let mut event_rx = self.subscribe_events();
+
+        if let Err(e) = self.validate_session(&session_id).await {
+            self.emit_event(AgentEvent::RunFinished { session_id: session_id.clone() });
+            EventBus::drain_async_events(&mut event_rx, &mut on_event)?;
+            return Err(e);
+        }
+
+        let tool_definitions = self.tool_engine.definitions();
+        let user_input_owned = self.with_session_mut(&session_id, |session| {
+            session.chat_messages().last()
+                .and_then(|m| match m {
+                    crate::types::ChatMessage::User { content, .. } => Some(content.clone()),
+                    _ => None,
+                })
+                .unwrap_or_default()
+        }).await?;
+
+        let (outcome, _turn_count) = self
+            .run_turn_loop(
+                &session_id,
+                &user_input_owned,
+                &tool_definitions,
+                0,
+                &mut event_rx,
+                &mut on_event,
+            )
+            .await?;
+
+        self.emit_event(AgentEvent::RunFinished { session_id: session_id.clone() });
+        EventBus::drain_async_events(&mut event_rx, &mut on_event)?;
+
+        Ok(outcome)
     }
 
     pub async fn run_turn_with_handler<F>(
@@ -180,15 +227,15 @@ impl AgentRuntime {
         mut on_event: F,
     ) -> AgentResult<RunOutcome>
     where
-        F: FnMut(AgentEvent) -> AgentResult<()>,
+        F: FnMut(AgentEvent) -> AgentResult<()> + Send,
     {
-        let span = Span::current();
+        let span = tracing::Span::current();
         let _guard = span.enter();
         tracing::info!(session_id = session_id.id, user_input = %user_input, "agent turn start");
         drop(_guard);
 
         let mut event_rx = self.subscribe_events();
-        let tool_definitions = self.tools.definitions();
+        let tool_definitions = self.tool_engine.definitions();
 
         let user_input_owned = self.apply_user_message_mw(&session_id, user_input.to_string()).await?;
 
@@ -235,58 +282,44 @@ impl AgentRuntime {
         Ok((events, outcome))
     }
 
-    pub async fn resume_from_checkpoint<F>(
-        &self,
-        checkpoint: CheckpointData,
-        mut on_event: F,
-    ) -> AgentResult<RunOutcome>
-    where
-        F: FnMut(AgentEvent) -> AgentResult<()>,
-    {
-        let session_id = checkpoint.session_id;
-        let user_input = checkpoint.user_input;
-        let turn_count = checkpoint.turn_count;
-
-        tracing::info!(session_id = session_id.id, turn_count, step = ?checkpoint.step, "resuming from checkpoint");
-
-        let mut event_rx = self.subscribe_events();
-        let tool_definitions = self.tools.definitions();
-
-        if let CheckpointStep::BeforeToolCalls { tool_calls } = checkpoint.step {
-            match self
-                .handle_tool_calls(&session_id, &tool_calls, &mut event_rx, &mut on_event)
-                .await
-            {
-                Ok(ToolCallResult::Continue) => {}
-                Ok(ToolCallResult::Break) => {
-                    self.emit_event(AgentEvent::RunFinished { session_id: session_id.clone() });
-                    Self::drain_async_events(&mut event_rx, &mut on_event)?;
-                    return Ok(RunOutcome::Completed);
-                }
-                Err(e) => {
-                    if let Some(outcome) = self
-                        .handle_tool_error(&session_id, &tool_calls, e, &mut event_rx, &mut on_event)
-                        .await?
-                    {
-                        return Ok(outcome);
-                    }
-                }
-            }
-        }
-
-        let (outcome, final_turn_count) = self
-            .run_turn_loop(
-                &session_id,
-                &user_input,
-                &tool_definitions,
-                turn_count,
-                &mut event_rx,
-                &mut on_event,
-            )
-            .await?;
-
-        tracing::info!(session_id = session_id.id, turn_count = final_turn_count, "agent resume completed");
-        Ok(outcome)
+    pub async fn add_user_message(&self, session_id: &SessionId, text: impl Into<String>) -> AgentResult<()> {
+        let text = text.into();
+        self.with_session_mut(session_id, |session| {
+            session.push_message(MessageRole::User, &text);
+        }).await
     }
 
+    pub async fn add_system_message(&self, session_id: &SessionId, text: impl Into<String>) -> AgentResult<()> {
+        let text = text.into();
+        self.with_session_mut(session_id, |session| {
+            session.push_message(MessageRole::System, &text);
+        }).await
+    }
+
+    pub async fn add_tool_result(&self, session_id: &SessionId, tool_call_id: &str, summary: impl Into<String>) -> AgentResult<()> {
+        let summary = summary.into();
+        self.with_session_mut(session_id, |session| {
+            session.push_tool_result(tool_call_id, summary.clone());
+        }).await
+    }
+
+    pub async fn get_messages(&self, session_id: &SessionId) -> AgentResult<Vec<crate::types::ChatMessage>> {
+        let session = self.session_or_err(session_id).await?;
+        Ok(session.chat_messages().to_vec())
+    }
+
+    pub async fn validate_session(&self, session_id: &SessionId) -> AgentResult<()> {
+        if self.session_manager.session(session_id).await.is_none() {
+            return Err(AgentError::session_not_found(session_id.id));
+        }
+        Ok(())
+    }
+
+    pub fn skills(&self) -> &[Arc<dyn Skill>] {
+        &self.skills
+    }
+
+    pub fn session_store(&self) -> Arc<dyn SessionStore> {
+        self.session_manager.session_store().clone()
+    }
 }
