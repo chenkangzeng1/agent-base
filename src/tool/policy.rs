@@ -1,19 +1,22 @@
-use async_trait::async_trait;
 use serde_json::Value;
 
-use crate::types::ApprovalRequest;
+use crate::types::{AgentResult, ApprovalRequest};
 use super::{ToolContext, ToolOutput};
 
-#[async_trait]
 pub trait ToolPolicy: Send + Sync {
     fn evaluate_approval(
         &self,
         tool_name: &str,
         args: &Value,
-        args_json: &str,
     ) -> Option<ApprovalRequest>;
 
-    fn on_pre_call(&self, tool_name: &str, args: &Value, ctx: &ToolContext);
+    fn before_call(&self, tool_name: &str, args: &Value, ctx: &ToolContext) -> AgentResult<()> {
+        let _ = (tool_name, args, ctx);
+        Ok(())
+    }
 
-    fn on_post_call(&self, tool_name: &str, args: &Value, result: &ToolOutput, ctx: &ToolContext);
+    fn after_call(&self, tool_name: &str, args: &Value, result: &ToolOutput, ctx: &ToolContext) -> AgentResult<()> {
+        let _ = (tool_name, args, result, ctx);
+        Ok(())
+    }
 }

@@ -122,16 +122,13 @@ impl ContextWindowManager {
 
         let mut current_tokens: usize = total_tokens;
         let remove_idx = trim_start;
+        let mut trim_end = trim_end;
 
         while current_tokens > self.max_tokens && remove_idx < trim_end {
             let removed = Self::message_tokens(&messages[remove_idx]);
             messages.remove(remove_idx);
             current_tokens = current_tokens.saturating_sub(removed);
-            // Do not increment remove_idx because remove shifts elements down
-            let new_trim_end = messages.len().saturating_sub(keep_last);
-            if remove_idx >= new_trim_end {
-                break;
-            }
+            trim_end = messages.len().saturating_sub(keep_last);
         }
     }
 }

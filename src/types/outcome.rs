@@ -7,4 +7,6 @@
 pub enum RunOutcome {
     Completed,
     Failed { error: String },
+    MaxTurnsExceeded { turns: u32 },
+    Cancelled,
 }

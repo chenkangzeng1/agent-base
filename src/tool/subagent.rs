@@ -27,14 +27,13 @@ impl SubAgentTool {
     pub fn new(
         name: &'static str,
         description: &'static str,
-        mut sub_runtime: AgentRuntime,
+        sub_runtime: AgentRuntime,
     ) -> Self {
-        let sub_session_id = sub_runtime.create_session();
         Self {
             name,
             description,
             sub_runtime: Mutex::new(sub_runtime),
-            sub_session_id: Mutex::new(Some(sub_session_id)),
+            sub_session_id: Mutex::new(None),
             session_policy: SubAgentSessionPolicy::Ephemeral,
         }
     }
@@ -42,14 +41,13 @@ impl SubAgentTool {
     pub fn with_persistent(
         name: &'static str,
         description: &'static str,
-        mut sub_runtime: AgentRuntime,
+        sub_runtime: AgentRuntime,
     ) -> Self {
-        let sub_session_id = sub_runtime.create_session();
         Self {
             name,
             description,
             sub_runtime: Mutex::new(sub_runtime),
-            sub_session_id: Mutex::new(Some(sub_session_id)),
+            sub_session_id: Mutex::new(None),
             session_policy: SubAgentSessionPolicy::Persistent,
         }
     }
@@ -104,20 +102,27 @@ impl Tool for SubAgentTool {
 
         let sub_session_id = match self.session_policy {
             SubAgentSessionPolicy::Ephemeral => {
-                let mut runtime = self.sub_runtime.lock().await;
-                let new_id = runtime.create_session();
+                let runtime = self.sub_runtime.lock().await;
+                let new_id = runtime.create_session().await;
                 let mut sid_guard = self.sub_session_id.lock().await;
                 *sid_guard = Some(new_id.clone());
                 new_id
             }
             SubAgentSessionPolicy::Persistent => {
-                let sid_guard = self.sub_session_id.lock().await;
-                sid_guard.clone().expect("sub session not initialized")
+                let mut sid_guard = self.sub_session_id.lock().await;
+                if let Some(id) = sid_guard.clone() {
+                    id
+                } else {
+                    let runtime = self.sub_runtime.lock().await;
+                    let new_id = runtime.create_session().await;
+                    *sid_guard = Some(new_id.clone());
+                    new_id
+                }
             }
         };
 
         let (events, _outcome) = {
-            let mut runtime = self.sub_runtime.lock().await;
+            let runtime = self.sub_runtime.lock().await;
             runtime
                 .run_turn_stream(sub_session_id, task)
                 .await

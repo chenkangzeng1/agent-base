@@ -1,4 +1,26 @@
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Language {
+    En,
+    Zh,
+}
+
+impl Default for Language {
+    fn default() -> Self {
+        Language::En
+    }
+}
+
+impl std::fmt::Display for Language {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Language::En => write!(f, "en"),
+            Language::Zh => write!(f, "zh"),
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct RetryConfig {
@@ -88,9 +110,9 @@ pub struct AgentConfig {
     pub response_format: Option<ResponseFormat>,
     pub llm_retry: Option<RetryConfig>,
     pub tool_error_retry_prompt: Option<String>,
-    /// Language preference for tool output, e.g. "en", "zh".
-    /// Defaults to "en" if not set.
-    pub language: String,
+    /// Language preference for tool output.
+    /// Defaults to `Language::En` if not set.
+    pub language: Language,
 }
 
 impl Default for AgentConfig {
@@ -105,7 +127,7 @@ impl Default for AgentConfig {
             response_format: None,
             llm_retry: None,
             tool_error_retry_prompt: None,
-            language: "en".to_string(),
+            language: Language::default(),
         }
     }
 }

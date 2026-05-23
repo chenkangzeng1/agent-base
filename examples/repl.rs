@@ -284,7 +284,6 @@ impl ToolPolicy for ArithmeticToolPolicy {
         &self,
         tool_name: &str,
         _args: &Value,
-        _args_json: &str,
     ) -> Option<ApprovalRequest> {
         if tool_name == "divide" {
             return Some(ApprovalRequest {
@@ -298,15 +297,18 @@ impl ToolPolicy for ArithmeticToolPolicy {
         None
     }
 
-    fn on_pre_call(&self, _tool_name: &str, _args: &Value, _ctx: &ToolContext) {}
+    fn before_call(&self, _tool_name: &str, _args: &Value, _ctx: &ToolContext) -> AgentResult<()> {
+        Ok(())
+    }
 
-    fn on_post_call(
+    fn after_call(
         &self,
         _tool_name: &str,
         _args: &Value,
         _result: &ToolOutput,
         _ctx: &ToolContext,
-    ) {
+    ) -> AgentResult<()> {
+        Ok(())
     }
 }
 
@@ -343,7 +345,7 @@ async fn main() -> AgentResult<()> {
 
     let llm_client = Arc::new(OpenAiClient::new(api_key, model.clone(), Some(base_url)));
 
-    let mut runtime = AgentBuilder::new(llm_client)
+    let runtime = AgentBuilder::new(llm_client)
         .system_prompt(SYSTEM_PROMPT)
         .enable_thought(false)
         .enable_thinking(false)
@@ -355,7 +357,7 @@ async fn main() -> AgentResult<()> {
         .approval_handler(Arc::new(CliApprovalHandler))
         .build();
 
-    let mut session_id = runtime.create_session();
+    let mut session_id = runtime.create_session().await;
 
     println!("=== agent-base REPL (arithmetic Demo) ===");
     println!("model: {}", model);
@@ -379,7 +381,7 @@ async fn main() -> AgentResult<()> {
             break;
         }
         if input == "reset" {
-            session_id = runtime.create_session();
+            session_id = runtime.create_session().await;
             println!("Created new session");
             continue;
         }

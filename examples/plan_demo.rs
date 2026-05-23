@@ -157,7 +157,7 @@ async fn main() -> AgentResult<()> {
         vec![StreamChunk::Text("Greeting Team...".to_string()), StreamChunk::Stop],
     ]));
 
-    let mut runtime = AgentBuilder::new(llm.clone())
+    let runtime = AgentBuilder::new(llm.clone())
         .register_tool(GreetTool)
         .build();
 
@@ -165,7 +165,7 @@ async fn main() -> AgentResult<()> {
     let executor = Arc::new(SimpleStepExecutor);
     let plan_store = Arc::new(InMemoryPlanStore::new());
 
-    let session_id = runtime.create_session();
+    let session_id = runtime.create_session().await;
 
     println!("Generating and executing plan (deterministic mode)...\n");
 

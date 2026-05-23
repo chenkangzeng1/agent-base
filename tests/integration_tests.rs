@@ -129,17 +129,17 @@ async fn test_simple_text_reply() {
         StreamChunk::Stop,
     ]]));
 
-    let mut runtime = AgentBuilder::new(llm.clone())
+    let runtime = AgentBuilder::new(llm.clone())
         .system_prompt("You are a helpful assistant")
         .build();
 
-    let session_id = runtime.create_session();
+    let session_id = runtime.create_session().await;
     let result = runtime.run_turn_stream(session_id.clone(), "Hi").await;
     assert!(result.is_ok(), "Expected ok, got: {result:?}");
     let (_events, outcome) = result.unwrap();
     assert_eq!(outcome, RunOutcome::Completed);
 
-    let session = runtime.session(&session_id).unwrap();
+    let session = runtime.session(&session_id).await.unwrap();
     let messages = session.chat_messages();
     assert_eq!(messages.len(), 3);
     assert!(matches!(messages[0], ChatMessage::System { .. }));
@@ -172,11 +172,11 @@ async fn test_multiple_turns_with_tool() {
         ],
     ]));
 
-    let mut runtime = AgentBuilder::new(llm.clone())
+    let runtime = AgentBuilder::new(llm.clone())
         .register_tool(EchoTool)
         .build();
 
-    let session_id = runtime.create_session();
+    let session_id = runtime.create_session().await;
     let result = runtime.run_turn_stream(session_id, "Echo hello").await;
     assert!(result.is_ok(), "Expected ok, got: {result:?}");
 
@@ -200,11 +200,11 @@ async fn test_tool_not_found() {
         StreamChunk::Stop,
     ]]));
 
-    let mut runtime = AgentBuilder::new(llm.clone())
+    let runtime = AgentBuilder::new(llm.clone())
         .system_prompt("system prompt")
         .build();
 
-    let session_id = runtime.create_session();
+    let session_id = runtime.create_session().await;
     let result = runtime.run_turn_stream(session_id, "test").await;
     assert!(result.is_ok(), "Tool not found should not crash: {result:?}");
 
@@ -254,7 +254,6 @@ async fn test_approval_deny_stops_execution() {
             &self,
             _tool_name: &str,
             _args: &Value,
-            _args_json: &str,
         ) -> Option<ApprovalRequest> {
             Some(ApprovalRequest {
                 title: "Test".to_string(),
@@ -265,18 +264,22 @@ async fn test_approval_deny_stops_execution() {
             })
         }
 
-        fn on_pre_call(&self, _: &str, _: &Value, _: &ToolContext) {}
-        fn on_post_call(&self, _: &str, _: &Value, _: &ToolOutput, _: &ToolContext) {}
+        fn before_call(&self, _: &str, _: &Value, _: &ToolContext) -> AgentResult<()> {
+            Ok(())
+        }
+        fn after_call(&self, _: &str, _: &Value, _: &ToolOutput, _: &ToolContext) -> AgentResult<()> {
+            Ok(())
+        }
     }
 
-    let mut runtime = AgentBuilder::new(llm.clone())
+    let runtime = AgentBuilder::new(llm.clone())
         .register_tool(EchoTool)
         .approval_handler(Arc::new(DenyHandler))
         .tool_policy(Arc::new(RequireApprovalPolicy))
         .error_recovery(Arc::new(agent_base::RetryOnError))
         .build();
 
-    let session_id = runtime.create_session();
+    let session_id = runtime.create_session().await;
     let result = runtime.run_turn_stream(session_id, "test").await;
     let (events, _outcome) = result.expect("Approval denial should be handled gracefully");
 
@@ -332,7 +335,6 @@ async fn test_approval_allow_once_executes_tool() {
             &self,
             _tool_name: &str,
             _args: &Value,
-            _args_json: &str,
         ) -> Option<ApprovalRequest> {
             Some(ApprovalRequest {
                 title: "Test".to_string(),
@@ -343,17 +345,21 @@ async fn test_approval_allow_once_executes_tool() {
             })
         }
 
-        fn on_pre_call(&self, _: &str, _: &Value, _: &ToolContext) {}
-        fn on_post_call(&self, _: &str, _: &Value, _: &ToolOutput, _: &ToolContext) {}
+        fn before_call(&self, _: &str, _: &Value, _: &ToolContext) -> AgentResult<()> {
+            Ok(())
+        }
+        fn after_call(&self, _: &str, _: &Value, _: &ToolOutput, _: &ToolContext) -> AgentResult<()> {
+            Ok(())
+        }
     }
 
-    let mut runtime = AgentBuilder::new(llm.clone())
+    let runtime = AgentBuilder::new(llm.clone())
         .register_tool(EchoTool)
         .approval_handler(Arc::new(AllowOnceHandler))
         .tool_policy(Arc::new(RequireApprovalPolicy))
         .build();
 
-    let session_id = runtime.create_session();
+    let session_id = runtime.create_session().await;
     let result = runtime.run_turn_stream(session_id, "test").await;
     assert!(result.is_ok(), "Expected ok, got: {result:?}");
     assert_eq!(llm.call_count(), 2);
@@ -369,11 +375,11 @@ async fn test_empty_text_and_no_tool_call_continues() {
         ],
     ]));
 
-    let mut runtime = AgentBuilder::new(llm.clone())
+    let runtime = AgentBuilder::new(llm.clone())
         .system_prompt("sys")
         .build();
 
-    let session_id = runtime.create_session();
+    let session_id = runtime.create_session().await;
     let result = runtime.run_turn_stream(session_id, "test").await;
     assert!(result.is_ok(), "Expected ok, got: {result:?}");
     assert_eq!(llm.call_count(), 2);
@@ -396,12 +402,12 @@ async fn test_tool_parse_error_recovers() {
         StreamChunk::Stop,
     ]]));
 
-    let mut runtime = AgentBuilder::new(llm.clone())
+    let runtime = AgentBuilder::new(llm.clone())
         .register_tool(EchoTool)
         .system_prompt("sys")
         .build();
 
-    let session_id = runtime.create_session();
+    let session_id = runtime.create_session().await;
     let result = runtime.run_turn_stream(session_id, "test").await;
     assert!(result.is_ok(), "Should recover from tool parse error: {result:?}");
 }
@@ -413,9 +419,9 @@ async fn test_event_collection() {
         StreamChunk::Stop,
     ]]));
 
-    let mut runtime = AgentBuilder::new(llm.clone()).build();
+    let runtime = AgentBuilder::new(llm.clone()).build();
 
-    let session_id = runtime.create_session();
+    let session_id = runtime.create_session().await;
     let (events, _outcome) = runtime.run_turn_stream(session_id, "test").await.unwrap();
 
     let has_text_delta = events.iter().any(|e| matches!(e, AgentEvent::TextDelta { .. }));
@@ -558,12 +564,12 @@ async fn test_checkpoint_events_emitted() {
         ],
     ]));
 
-    let mut runtime = AgentBuilder::new(llm.clone())
+    let runtime = AgentBuilder::new(llm.clone())
         .register_tool(EchoTool)
         .system_prompt("sys")
         .build();
 
-    let session_id = runtime.create_session();
+    let session_id = runtime.create_session().await;
     let (events, _outcome) = runtime.run_turn_stream(session_id, "test checkpoint").await.unwrap();
 
     let checkpoint_count = events
@@ -600,11 +606,11 @@ async fn test_resume_from_after_user_input_checkpoint() {
         ],
     ]));
 
-    let mut runtime = AgentBuilder::new(llm.clone())
+    let runtime = AgentBuilder::new(llm.clone())
         .system_prompt("sys")
         .build();
 
-    let session_id = runtime.create_session();
+    let session_id = runtime.create_session().await;
 
     let mut checkpoint_opt: Option<agent_base::CheckpointData> = None;
     let _ = runtime
@@ -624,7 +630,7 @@ async fn test_resume_from_after_user_input_checkpoint() {
     let result = runtime.resume_from_checkpoint(checkpoint, |_| Ok(())).await;
     assert!(result.is_ok(), "Resume should succeed: {result:?}");
 
-    let session = runtime.session(&session_id).unwrap();
+    let session = runtime.session(&session_id).await.unwrap();
     let chat_msgs = session.chat_messages();
     let has_assistant_reply = chat_msgs
         .iter()
@@ -655,12 +661,12 @@ async fn test_resume_from_before_tool_calls_checkpoint() {
         ],
     ]));
 
-    let mut runtime = AgentBuilder::new(llm.clone())
+    let runtime = AgentBuilder::new(llm.clone())
         .register_tool(EchoTool)
         .system_prompt("sys")
         .build();
 
-    let session_id = runtime.create_session();
+    let session_id = runtime.create_session().await;
 
     let mut checkpoint_opt: Option<agent_base::CheckpointData> = None;
     let _ = runtime
@@ -681,7 +687,7 @@ async fn test_resume_from_before_tool_calls_checkpoint() {
     let result = runtime.resume_from_checkpoint(checkpoint, |_| Ok(())).await;
     assert!(result.is_ok(), "Resume from BeforeToolCalls should succeed: {result:?}");
 
-    let session = runtime.session(&session_id).unwrap();
+    let session = runtime.session(&session_id).await.unwrap();
     let chat_msgs = session.chat_messages();
     let has_tool_result = chat_msgs.iter().any(|m| {
         matches!(m, ChatMessage::Tool { content, .. } if content.contains("echo: hello"))
@@ -736,19 +742,19 @@ async fn test_sub_agent_tool() {
         ],
     ]));
 
-    let mut parent_runtime = AgentBuilder::new(parent_llm.clone())
+    let parent_runtime = AgentBuilder::new(parent_llm.clone())
         .register_tool(sub_agent_tool)
         .system_prompt("you are the main agent")
         .build();
 
-    let session_id = parent_runtime.create_session();
+    let session_id = parent_runtime.create_session().await;
     let result = parent_runtime
         .run_turn_stream(session_id.clone(), "delegate this task")
         .await;
     assert!(result.is_ok(), "Sub-agent delegation should succeed: {result:?}");
     assert_eq!(parent_llm.call_count(), 2, "Parent should make 2 LLM calls");
 
-    let session = parent_runtime.session(&session_id).unwrap();
+    let session = parent_runtime.session(&session_id).await.unwrap();
     let chat_msgs = session.chat_messages();
     let has_parent_final = chat_msgs.iter().any(|m| {
         matches!(m, ChatMessage::Assistant { content, .. } if content.as_deref() == Some("parent final reply"))
@@ -854,20 +860,20 @@ async fn tool_execution_error_retry_llm_receives_error_and_recovers() {
 
     let failing_tool = FailingTool::new("failing", "connection refused: ssh timeout");
 
-    let mut runtime = AgentBuilder::new(llm.clone())
+    let runtime = AgentBuilder::new(llm.clone())
         .register_tool(failing_tool)
         .system_prompt("sys")
         .error_recovery(Arc::new(RetryOnError))
         .build();
 
-    let session_id = runtime.create_session();
+    let session_id = runtime.create_session().await;
     let result = runtime.run_turn_stream(session_id.clone(), "do something").await;
     assert!(result.is_ok(), "Expected ok: {result:?}");
 
     let (events, outcome) = result.unwrap();
     assert_eq!(outcome, RunOutcome::Completed);
 
-    let session = runtime.session(&session_id).unwrap();
+    let session = runtime.session(&session_id).await.unwrap();
     let messages = session.chat_messages();
     assert_valid_message_history(messages);
 
@@ -898,12 +904,12 @@ async fn tool_execution_error_stop_on_error_default() {
 
     let failing_tool = FailingTool::new("failing", "ssh connection lost");
 
-    let mut runtime = AgentBuilder::new(llm.clone())
+    let runtime = AgentBuilder::new(llm.clone())
         .register_tool(failing_tool)
         .system_prompt("sys")
         .build();
 
-    let session_id = runtime.create_session();
+    let session_id = runtime.create_session().await;
     let result = runtime.run_turn_stream(session_id, "do something").await;
     assert!(result.is_ok(), "Expected ok: {result:?}");
 
@@ -939,20 +945,20 @@ async fn tool_args_parse_error_fed_back_to_llm_on_retry() {
         ],
     ]));
 
-    let mut runtime = AgentBuilder::new(llm.clone())
+    let runtime = AgentBuilder::new(llm.clone())
         .register_tool(EchoTool)
         .system_prompt("sys")
         .error_recovery(Arc::new(RetryOnError))
         .build();
 
-    let session_id = runtime.create_session();
+    let session_id = runtime.create_session().await;
     let result = runtime.run_turn_stream(session_id.clone(), "test").await;
     assert!(result.is_ok(), "Expected ok: {result:?}");
 
     let (_events, outcome) = result.unwrap();
     assert_eq!(outcome, RunOutcome::Completed);
 
-    let session = runtime.session(&session_id).unwrap();
+    let session = runtime.session(&session_id).await.unwrap();
     let messages = session.chat_messages();
     assert_valid_message_history(messages);
 
@@ -984,17 +990,17 @@ async fn consecutive_tool_failures_message_integrity() {
 
     let failing_tool = FailingTool::new("failing", "persistent failure");
 
-    let mut runtime = AgentBuilder::new(llm.clone())
+    let runtime = AgentBuilder::new(llm.clone())
         .register_tool(failing_tool)
         .system_prompt("sys")
         .error_recovery(Arc::new(RetryOnError))
         .build();
 
-    let session_id = runtime.create_session();
+    let session_id = runtime.create_session().await;
     let result = runtime.run_turn_stream(session_id.clone(), "test").await;
     assert!(result.is_ok(), "Expected ok: {result:?}");
 
-    let session = runtime.session(&session_id).unwrap();
+    let session = runtime.session(&session_id).await.unwrap();
     let messages = session.chat_messages();
     assert_valid_message_history(messages);
 
@@ -1021,7 +1027,7 @@ async fn approval_deny_with_stop_messages_remain_valid() {
 
     struct RequireApprovalPolicy;
     impl ToolPolicy for RequireApprovalPolicy {
-        fn evaluate_approval(&self, _: &str, _: &Value, _: &str) -> Option<ApprovalRequest> {
+        fn evaluate_approval(&self, _: &str, _: &Value) -> Option<ApprovalRequest> {
             Some(ApprovalRequest {
                 title: "Test".to_string(),
                 message: "Require approval".to_string(),
@@ -1030,24 +1036,28 @@ async fn approval_deny_with_stop_messages_remain_valid() {
                 raw: None,
             })
         }
-        fn on_pre_call(&self, _: &str, _: &Value, _: &ToolContext) {}
-        fn on_post_call(&self, _: &str, _: &Value, _: &ToolOutput, _: &ToolContext) {}
+        fn before_call(&self, _: &str, _: &Value, _: &ToolContext) -> AgentResult<()> {
+            Ok(())
+        }
+        fn after_call(&self, _: &str, _: &Value, _: &ToolOutput, _: &ToolContext) -> AgentResult<()> {
+            Ok(())
+        }
     }
 
-    let mut runtime = AgentBuilder::new(llm.clone())
+    let runtime = AgentBuilder::new(llm.clone())
         .register_tool(EchoTool)
         .approval_handler(Arc::new(DenyHandler))
         .tool_policy(Arc::new(RequireApprovalPolicy))
         .build();
 
-    let session_id = runtime.create_session();
+    let session_id = runtime.create_session().await;
     let result = runtime.run_turn_stream(session_id.clone(), "test").await;
     assert!(result.is_ok(), "Expected ok: {result:?}");
 
     let (_events, outcome) = result.unwrap();
     assert!(matches!(outcome, RunOutcome::Failed { .. }), "StopOnError should produce Failed, got: {outcome:?}");
 
-    let session = runtime.session(&session_id).unwrap();
+    let session = runtime.session(&session_id).await.unwrap();
     let messages = session.chat_messages();
     assert_valid_message_history(messages);
 }
@@ -1075,7 +1085,7 @@ async fn approval_deny_with_retry_tool_result_still_present() {
 
     struct RequireApprovalPolicy;
     impl ToolPolicy for RequireApprovalPolicy {
-        fn evaluate_approval(&self, _: &str, _: &Value, _: &str) -> Option<ApprovalRequest> {
+        fn evaluate_approval(&self, _: &str, _: &Value) -> Option<ApprovalRequest> {
             Some(ApprovalRequest {
                 title: "Test".to_string(),
                 message: "Require approval".to_string(),
@@ -1084,25 +1094,29 @@ async fn approval_deny_with_retry_tool_result_still_present() {
                 raw: None,
             })
         }
-        fn on_pre_call(&self, _: &str, _: &Value, _: &ToolContext) {}
-        fn on_post_call(&self, _: &str, _: &Value, _: &ToolOutput, _: &ToolContext) {}
+        fn before_call(&self, _: &str, _: &Value, _: &ToolContext) -> AgentResult<()> {
+            Ok(())
+        }
+        fn after_call(&self, _: &str, _: &Value, _: &ToolOutput, _: &ToolContext) -> AgentResult<()> {
+            Ok(())
+        }
     }
 
-    let mut runtime = AgentBuilder::new(llm.clone())
+    let runtime = AgentBuilder::new(llm.clone())
         .register_tool(EchoTool)
         .approval_handler(Arc::new(DenyHandler))
         .tool_policy(Arc::new(RequireApprovalPolicy))
         .error_recovery(Arc::new(RetryOnError))
         .build();
 
-    let session_id = runtime.create_session();
+    let session_id = runtime.create_session().await;
     let result = runtime.run_turn_stream(session_id.clone(), "test").await;
     assert!(result.is_ok(), "Expected ok: {result:?}");
 
     let (_events, outcome) = result.unwrap();
     assert_eq!(outcome, RunOutcome::Completed);
 
-    let session = runtime.session(&session_id).unwrap();
+    let session = runtime.session(&session_id).await.unwrap();
     let messages = session.chat_messages();
     assert_valid_message_history(messages);
 
@@ -1132,18 +1146,18 @@ async fn custom_retry_prompt_template_replacements() {
 
     let failing_tool = FailingTool::new("failing", "disk full");
 
-    let mut runtime = AgentBuilder::new(llm.clone())
+    let runtime = AgentBuilder::new(llm.clone())
         .register_tool(failing_tool)
         .system_prompt("sys")
         .error_recovery(Arc::new(RetryOnError))
         .tool_error_retry_prompt("[自定义] 工具 {tool_names} 失败：{error}，请重试")
         .build();
 
-    let session_id = runtime.create_session();
+    let session_id = runtime.create_session().await;
     let result = runtime.run_turn_stream(session_id.clone(), "test").await;
     assert!(result.is_ok(), "Expected ok: {result:?}");
 
-    let session = runtime.session(&session_id).unwrap();
+    let session = runtime.session(&session_id).await.unwrap();
     let messages = session.chat_messages();
 
     let custom_msg = messages.iter().find(|m| {
@@ -1174,12 +1188,12 @@ async fn run_with_handler_cancelled_emits_run_finished_and_saves() {
         ],
     ]));
 
-    let mut runtime = AgentBuilder::new(llm.clone())
+    let runtime = AgentBuilder::new(llm.clone())
         .register_tool(EchoTool)
         .system_prompt("sys")
         .build();
 
-    let session_id = runtime.create_session();
+    let session_id = runtime.create_session().await;
 
     let result = runtime
         .run_turn_with_handler(session_id.clone(), "test", |event| {
@@ -1214,20 +1228,20 @@ async fn retry_then_empty_llm_response_continues() {
 
     let failing_tool = FailingTool::new("failing", "transient error");
 
-    let mut runtime = AgentBuilder::new(llm.clone())
+    let runtime = AgentBuilder::new(llm.clone())
         .register_tool(failing_tool)
         .system_prompt("sys")
         .error_recovery(Arc::new(RetryOnError))
         .build();
 
-    let session_id = runtime.create_session();
+    let session_id = runtime.create_session().await;
     let result = runtime.run_turn_stream(session_id.clone(), "test").await;
     assert!(result.is_ok(), "Expected ok: {result:?}");
 
     let (_events, outcome) = result.unwrap();
     assert_eq!(outcome, RunOutcome::Completed);
 
-    let session = runtime.session(&session_id).unwrap();
+    let session = runtime.session(&session_id).await.unwrap();
     let messages = session.chat_messages();
     assert_valid_message_history(messages);
 
@@ -1323,11 +1337,11 @@ async fn test_plan_execution_success() {
 
     let llm = Arc::new(MockLlmClient::new(vec![]));
 
-    let mut runtime = AgentBuilder::new(llm.clone())
+    let runtime = AgentBuilder::new(llm.clone())
         .register_tool(EchoTool)
         .build();
 
-    let session_id = runtime.create_session();
+    let session_id = runtime.create_session().await;
     let result = runtime
         .run_plan_deterministic(
             session_id,
@@ -1367,11 +1381,11 @@ async fn test_plan_execution_failure_aborts() {
 
     let llm = Arc::new(MockLlmClient::new(vec![]));
 
-    let mut runtime = AgentBuilder::new(llm.clone())
+    let runtime = AgentBuilder::new(llm.clone())
         .register_tool(EchoTool)
         .build();
 
-    let session_id = runtime.create_session();
+    let session_id = runtime.create_session().await;
     let result = runtime
         .run_plan_deterministic(
             session_id,
@@ -1405,11 +1419,11 @@ async fn test_plan_events_emitted() {
 
     let llm = Arc::new(MockLlmClient::new(vec![]));
 
-    let mut runtime = AgentBuilder::new(llm.clone())
+    let runtime = AgentBuilder::new(llm.clone())
         .register_tool(EchoTool)
         .build();
 
-    let session_id = runtime.create_session();
+    let session_id = runtime.create_session().await;
     let mut events = Vec::new();
     let result = runtime
         .run_plan_deterministic(

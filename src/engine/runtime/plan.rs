@@ -18,7 +18,7 @@ impl AgentRuntime {
     /// The agent receives step instructions as user input and decides autonomously
     /// which tools to call. No `StepExecutor` is needed.
     pub async fn run_plan_agentic<F>(
-        &mut self,
+        &self,
         session_id: SessionId,
         objective: &str,
         generator: Arc<dyn PlanGenerator>,
@@ -80,7 +80,7 @@ impl AgentRuntime {
     /// overhead (e.g. predetermined SSH commands).
     #[allow(clippy::too_many_arguments)]
     pub async fn run_plan_deterministic<F>(
-        &mut self,
+        &self,
         session_id: SessionId,
         objective: &str,
         generator: Arc<dyn PlanGenerator>,
@@ -143,7 +143,7 @@ impl AgentRuntime {
     /// - If `executor` is `None` → agentic mode (step becomes agent turn).
     /// - If `executor` is `Some` → deterministic mode (step goes to executor).
     async fn run_plan_steps<F>(
-        &mut self,
+        &self,
         session_id: &SessionId,
         plan: &mut ExecutionPlan,
         executor: Option<Arc<dyn StepExecutor>>,
@@ -213,6 +213,8 @@ impl AgentRuntime {
                 match outcome {
                     Ok(RunOutcome::Completed) => Ok(crate::types::StepResult::success("Step completed", 0)),
                     Ok(RunOutcome::Failed { error }) => Ok(crate::types::StepResult::failure(error, 0)),
+                    Ok(RunOutcome::MaxTurnsExceeded { .. }) => Ok(crate::types::StepResult::failure("Max turns exceeded".to_string(), 0)),
+                    Ok(RunOutcome::Cancelled) => Ok(crate::types::StepResult::failure("Cancelled".to_string(), 0)),
                     Err(e) => Err(e),
                 }
             };

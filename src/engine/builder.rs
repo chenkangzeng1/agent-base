@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, RwLock};
 
 use crate::llm::{LlmClient, ReasoningConfig};
 use crate::skill::{Skill, SkillDetailTool, SkillPrompter, LazySkillPrompter};
@@ -170,8 +170,8 @@ impl AgentBuilder {
         self
     }
 
-    pub fn language(mut self, language: impl Into<String>) -> Self {
-        self.config.language = language.into();
+    pub fn language(mut self, language: crate::types::Language) -> Self {
+        self.config.language = language;
         self
     }
 
@@ -245,7 +245,7 @@ impl AgentBuilder {
             middlewares: self.middlewares,
             event_bus,
             next_session_id: AtomicU64::new(1),
-            sessions: HashMap::new(),
+            sessions: Arc::new(RwLock::new(HashMap::new())),
             context_manager: self.context_manager,
             session_store,
             skills: skill_refs,

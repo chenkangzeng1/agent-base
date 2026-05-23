@@ -239,9 +239,9 @@ async fn main() -> AgentResult<()> {
         builder = builder.register_tool_arc(tool);
         println!("    Registeredtool: {name}");
     }
-    let mut runtime = builder.build();
+    let runtime = builder.build();
 
-    let session_id = runtime.create_session();
+    let session_id = runtime.create_session().await;
 
     println!("\n--- Agent Running ---\n");
     let (events, _outcome) = runtime

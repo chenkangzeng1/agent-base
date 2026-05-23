@@ -3,7 +3,7 @@ use tokio::sync::broadcast;
 use crate::types::{AgentError, AgentEvent, AgentResult, CheckpointData, CheckpointStep, MessageRole, RunOutcome, SessionId};
 use crate::engine::middleware::{PostLlmCtx, PreLlmCtx, UserMessageCtx};
 use crate::engine::recovery::ToolErrorAction;
-use crate::engine::{AgentSession, AgentRuntime};
+use crate::engine::AgentRuntime;
 use super::tool_exec::ToolCallResult;
 
 impl AgentRuntime {
@@ -62,7 +62,7 @@ impl AgentRuntime {
     }
 
     pub(super) async fn handle_tool_error<F>(
-        &mut self,
+        &self,
         session_id: &SessionId,
         tool_calls: &[(String, String, String)],
         e: AgentError,
@@ -75,21 +75,21 @@ impl AgentRuntime {
         if e.is_cancelled() {
             self.emit_event(AgentEvent::RunFinished { session_id: session_id.clone() });
             Self::drain_async_events(event_rx, on_event)?;
-            let session: &AgentSession = self.session_or_err(session_id)?;
-            let _ = self.session_store.save(session).await;
+            let session = self.session_or_err(session_id).await?;
+            let _ = self.session_store.save(&session).await;
             return Err(e);
         }
 
         let names: Vec<String> = tool_calls.iter().map(|(_, n, _)| n.clone()).collect();
         let error_text = e.to_string();
         let retry_prompt_template: Option<String> = self.config.tool_error_retry_prompt.clone();
-        let action = self.error_recovery.on_error(session_id, &names, &e).await?;
+        let action = self.error_recovery.on_error(session_id, &names, &e)?;
         match action {
             ToolErrorAction::Stop => {
                 self.emit_event(AgentEvent::RunFinished { session_id: session_id.clone() });
                 Self::drain_async_events(event_rx, on_event)?;
-                let session = self.session_or_err(session_id)?;
-                let _ = self.session_store.save(session).await;
+                let session = self.session_or_err(session_id).await?;
+                let _ = self.session_store.save(&session).await;
                 Ok(Some(RunOutcome::Failed {
                     error: format!("Tool execution failed: {}", e),
                 }))
@@ -106,16 +106,17 @@ impl AgentRuntime {
                     ),
                 };
 
-                let session = self.session_mut_or_err(session_id)?;
-                session.close_dangling_tool_calls(&format!("[Tool Execution Failed] {}", error_text));
-                session.push_message(MessageRole::User, retry_prompt);
+                self.with_session_mut(session_id, |session| {
+                    session.close_dangling_tool_calls(&format!("[Tool Execution Failed] {}", error_text));
+                    session.push_message(MessageRole::User, retry_prompt);
+                }).await?;
                 Ok(None)
             }
         }
     }
 
     pub(super) async fn run_turn_loop<F>(
-        &mut self,
+        &self,
         session_id: &SessionId,
         user_input_owned: &str,
         tool_definitions: &[serde_json::Value],
@@ -136,7 +137,7 @@ impl AgentRuntime {
                     session_id: session_id.clone(),
                 });
                 Self::drain_async_events(event_rx, on_event)?;
-                break;
+                return Ok((RunOutcome::MaxTurnsExceeded { turns: turn_count }, turn_count));
             }
 
             Self::drain_async_events(event_rx, on_event)?;
@@ -144,7 +145,8 @@ impl AgentRuntime {
             let turn_span = tracing::info_span!("turn", session_id = session_id.id, turn = turn_count);
             let _turn_guard = turn_span.enter();
 
-            let mut messages: Vec<_> = self.session_or_err(session_id)?.chat_messages().to_vec();
+            let session = self.session_or_err(session_id).await?;
+            let mut messages: Vec<_> = session.chat_messages().to_vec();
             let tools_for_turn = tool_definitions.to_vec();
 
             if let Some(ref ctx_mgr) = self.context_manager {
@@ -181,8 +183,9 @@ impl AgentRuntime {
             }
 
             if !full_text.is_empty() {
-                let session = self.session_mut_or_err(session_id)?;
-                session.push_message(MessageRole::Assistant, full_text);
+                self.with_session_mut(session_id, |session| {
+                    session.push_message(MessageRole::Assistant, full_text);
+                }).await?;
             }
 
             if is_tool_call && !tool_calls.is_empty() {
@@ -236,15 +239,9 @@ impl AgentRuntime {
             break;
         }
 
-        let outcome = if turn_count > max_turns {
-            RunOutcome::Failed { error: format!("Max turns ({max_turns}) reached, stopping forcibly") }
-        } else {
-            RunOutcome::Completed
-        };
+        let session = self.session_or_err(session_id).await?;
+        let _ = self.session_store.save(&session).await;
 
-        let session = self.session_or_err(session_id)?;
-        let _ = self.session_store.save(session).await;
-
-        Ok((outcome, turn_count))
+        Ok((RunOutcome::Completed, turn_count))
     }
 }

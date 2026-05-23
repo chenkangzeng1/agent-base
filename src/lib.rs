@@ -119,6 +119,7 @@ pub use types::{
     ExecutionPlan,
     ImageAttachment,
     ImageDetail,
+    Language,
     Message,
     MessageRole,
     PlanStatus,

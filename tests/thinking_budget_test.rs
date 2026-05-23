@@ -86,13 +86,13 @@ impl LlmClient for CaptureLlmClient {
 async fn test_thinking_budget_parameter_passed() {
     let llm = Arc::new(CaptureLlmClient::new());
 
-    let mut runtime = AgentBuilder::new(llm.clone())
+    let runtime = AgentBuilder::new(llm.clone())
         .system_prompt("test")
         .enable_thinking(true)
         .thinking_budget(128)
         .build();
 
-    let session_id = runtime.create_session();
+    let session_id = runtime.create_session().await;
     let _ = runtime.run_turn_stream(session_id, "test").await;
 
     let bodies = llm.captured_bodies();
@@ -115,13 +115,13 @@ async fn test_extra_body_format_for_thinking() {
 
     let llm = Arc::new(CaptureLlmClient::new());
 
-    let mut runtime = AgentBuilder::new(llm.clone())
+    let runtime = AgentBuilder::new(llm.clone())
         .system_prompt("test")
         .enable_thinking(true)
         .thinking_budget(128)
         .build();
 
-    let session_id = runtime.create_session();
+    let session_id = runtime.create_session().await;
     let _ = runtime.run_turn_stream(session_id, "test").await;
 
     let bodies = llm.captured_bodies();

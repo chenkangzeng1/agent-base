@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::approval::ApprovalRequest;
@@ -5,7 +6,8 @@ use super::checkpoint::CheckpointData;
 use super::plan::ExecutionPlan;
 use super::session::SessionId;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
 pub enum AgentEvent {
     TextDelta {
         session_id: SessionId,

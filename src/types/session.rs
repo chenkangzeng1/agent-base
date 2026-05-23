@@ -8,6 +8,10 @@ pub struct SessionId {
 
 impl std::fmt::Display for SessionId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.id)
+        if let Some(ref ext) = self.external_id {
+            write!(f, "{}({})", self.id, ext)
+        } else {
+            write!(f, "{}", self.id)
+        }
     }
 }

@@ -6,7 +6,7 @@ use crate::llm::LlmClient;
 use crate::skill::{Skill, SkillPrompter};
 use crate::tool::{ToolPolicy, ToolRegistry};
 use crate::types::{AgentConfig, MessageRole, AgentError, CheckpointData, CheckpointStep};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, RwLock};
 use tracing::Span;
 
 use crate::types::{AgentResult, AgentEvent, SessionId, RunOutcome};
@@ -36,7 +36,7 @@ pub struct AgentRuntime {
     pub(crate) middlewares: Vec<MiddlewareRef>,
     pub(crate) event_bus: broadcast::Sender<AgentEvent>,
     pub(crate) next_session_id: AtomicU64,
-    pub(crate) sessions: HashMap<SessionId, AgentSession>,
+    pub(crate) sessions: Arc<RwLock<HashMap<SessionId, AgentSession>>>,
     pub(crate) context_manager: Option<ContextWindowManager>,
     pub(crate) session_store: Arc<dyn SessionStore>,
     pub(crate) skills: Vec<Arc<dyn Skill>>,
@@ -46,7 +46,7 @@ pub struct AgentRuntime {
 }
 
 impl AgentRuntime {
-    pub fn create_session(&mut self) -> SessionId {
+    pub async fn create_session(&self) -> SessionId {
         let id = SessionId {
             id: self.next_session_id.fetch_add(1, Ordering::Relaxed),
             external_id: None,
@@ -55,7 +55,8 @@ impl AgentRuntime {
         if let Some(system_prompt) = self.config.system_prompt.as_deref() {
             session.push_message(MessageRole::System, system_prompt);
         }
-        self.sessions.insert(id.clone(), session);
+        let mut sessions = self.sessions.write().await;
+        sessions.insert(id.clone(), session);
         id
     }
 
@@ -63,21 +64,26 @@ impl AgentRuntime {
     ///
     /// On success, the session can be used for continued execution.
     /// Returns None if not found in persistence layer.
-    pub async fn restore_session(&mut self, session_id: &SessionId) -> Option<&AgentSession> {
-        if self.sessions.contains_key(session_id) {
-            return self.sessions.get(session_id);
+    pub async fn restore_session(&self, session_id: &SessionId) -> Option<AgentSession> {
+        {
+            let sessions = self.sessions.read().await;
+            if sessions.contains_key(session_id) {
+                return sessions.get(session_id).cloned();
+            }
         }
         match self.session_store.load(session_id).await {
             Ok(Some(session)) => {
-                self.sessions.insert(session_id.clone(), session);
-                self.sessions.get(session_id)
+                let mut sessions = self.sessions.write().await;
+                sessions.insert(session_id.clone(), session.clone());
+                Some(session)
             }
             _ => None,
         }
     }
 
-    pub fn session(&self, session_id: &SessionId) -> Option<&AgentSession> {
-        self.sessions.get(session_id)
+    pub async fn session(&self, session_id: &SessionId) -> Option<AgentSession> {
+        let sessions = self.sessions.read().await;
+        sessions.get(session_id).cloned()
     }
 
     pub fn tools(&self) -> &ToolRegistry {
@@ -112,14 +118,16 @@ impl AgentRuntime {
         &self.skills
     }
 
-    fn cached_approval(&self, session_id: &SessionId, action_key: &str) -> bool {
-        self.sessions
+    async fn cached_approval(&self, session_id: &SessionId, action_key: &str) -> bool {
+        let sessions = self.sessions.read().await;
+        sessions
             .get(session_id)
             .is_some_and(|session| session.is_action_allowed(action_key))
     }
 
-    fn cache_approval(&mut self, session_id: &SessionId, action_key: String) {
-        if let Some(session) = self.sessions.get_mut(session_id) {
+    async fn cache_approval(&self, session_id: &SessionId, action_key: String) {
+        let mut sessions = self.sessions.write().await;
+        if let Some(session) = sessions.get_mut(session_id) {
             session.allow_action(action_key);
         }
     }
@@ -128,16 +136,23 @@ impl AgentRuntime {
         let _ = self.event_bus.send(event);
     }
 
-    fn session_or_err(&self, session_id: &SessionId) -> AgentResult<&AgentSession> {
-        self.sessions
+    async fn session_or_err(&self, session_id: &SessionId) -> AgentResult<AgentSession> {
+        let sessions = self.sessions.read().await;
+        sessions
             .get(session_id)
+            .cloned()
             .ok_or_else(|| AgentError::session_not_found(session_id.id))
     }
 
-    fn session_mut_or_err(&mut self, session_id: &SessionId) -> AgentResult<&mut AgentSession> {
-        self.sessions
+    async fn with_session_mut<F, R>(&self, session_id: &SessionId, f: F) -> AgentResult<R>
+    where
+        F: FnOnce(&mut AgentSession) -> R,
+    {
+        let mut sessions = self.sessions.write().await;
+        let session = sessions
             .get_mut(session_id)
-            .ok_or_else(|| AgentError::session_not_found(session_id.id))
+            .ok_or_else(|| AgentError::session_not_found(session_id.id))?;
+        Ok(f(session))
     }
 
     fn drain_async_events<F>(
@@ -159,7 +174,7 @@ impl AgentRuntime {
     }
 
     pub async fn run_turn_with_handler<F>(
-        &mut self,
+        &self,
         session_id: SessionId,
         user_input: &str,
         mut on_event: F,
@@ -177,10 +192,9 @@ impl AgentRuntime {
 
         let user_input_owned = self.apply_user_message_mw(&session_id, user_input.to_string()).await?;
 
-        {
-            let session = self.session_mut_or_err(&session_id)?;
+        self.with_session_mut(&session_id, |session| {
             session.push_message(MessageRole::User, &user_input_owned);
-        }
+        }).await?;
 
         self.emit_event(AgentEvent::Checkpoint {
             session_id: session_id.clone(),
@@ -208,7 +222,7 @@ impl AgentRuntime {
     }
 
     pub async fn run_turn_stream(
-        &mut self,
+        &self,
         session_id: SessionId,
         user_input: &str,
     ) -> AgentResult<(Vec<AgentEvent>, RunOutcome)> {
@@ -222,7 +236,7 @@ impl AgentRuntime {
     }
 
     pub async fn resume_from_checkpoint<F>(
-        &mut self,
+        &self,
         checkpoint: CheckpointData,
         mut on_event: F,
     ) -> AgentResult<RunOutcome>

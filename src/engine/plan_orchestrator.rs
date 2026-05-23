@@ -120,11 +120,7 @@ impl Tool for PlanOrchestrator {
             });
         });
 
-        let tools = ctx
-            .llm_client
-            .as_ref()
-            .map(|_| vec![])
-            .unwrap_or_default();
+        let tools = vec![];
 
         match self
             .plan_generator
@@ -162,7 +158,7 @@ impl Tool for PlanOrchestrator {
                     })
                     .collect();
 
-                let summary = if ctx.language == "zh" {
+                let summary = if ctx.language == crate::types::Language::Zh {
                     format!(
                         "计划已生成，包含 {} 个步骤，等待用户确认。计划ID: {}",
                         plan.steps.len(),
@@ -197,7 +193,7 @@ impl Tool for PlanOrchestrator {
                     error: e.to_string(),
                 });
 
-                let summary = if ctx.language == "zh" {
+                let summary = if ctx.language == crate::types::Language::Zh {
                     format!("计划生成失败: {e}")
                 } else {
                     format!("Plan generation failed: {e}")
@@ -274,7 +270,7 @@ impl Tool for PlanExecTool {
             .unwrap_or("")
             .to_string();
 
-        let is_zh = ctx.language == "zh";
+        let is_zh = ctx.language == crate::types::Language::Zh;
 
         if plan_id.is_empty() {
             let summary = if is_zh {

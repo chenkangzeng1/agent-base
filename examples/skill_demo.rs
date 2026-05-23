@@ -200,7 +200,7 @@ async fn main() {
 
     let client = Arc::new(OpenAiClient::new(api_key, model, base_url));
 
-    let mut runtime = AgentBuilder::new(client)
+    let runtime = AgentBuilder::new(client)
         .system_prompt("You are a general-purpose assistant. Please use the tools provided in the Skill.")
         .register_skill(MathSkill)
         .register_skill(TextSkill)
@@ -213,7 +213,7 @@ async fn main() {
     }
     println!();
 
-    let session_id = runtime.create_session();
+    let session_id = runtime.create_session().await;
 
     let user_input = "help me calculate 123 + 456，then convert the result to uppercase";
     println!("User: {}", user_input);

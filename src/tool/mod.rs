@@ -41,9 +41,9 @@ pub struct ToolContext {
     pub event_bus: broadcast::Sender<AgentEvent>,
     pub llm_client: Option<Arc<dyn LlmClient>>,
     pub session_store: Option<Arc<dyn SessionStore>>,
-    /// Language preference for tool output, e.g. "en", "zh".
-    /// Defaults to "en" if not set.
-    pub language: String,
+    /// Language preference for tool output.
+    /// Defaults to `Language::En` if not set.
+    pub language: crate::types::Language,
 }
 
 #[async_trait]

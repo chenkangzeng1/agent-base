@@ -1,5 +1,3 @@
-use async_trait::async_trait;
-
 use crate::types::{AgentError, AgentResult, SessionId};
 
 /// Action taken by the runtime after a tool execution failure
@@ -16,9 +14,8 @@ pub enum ToolErrorAction {
 /// Defaults to [`StopOnError`], following the lightweight kernel design of
 /// conservative defaults and strategy injection.
 /// Upper-layer agents can inject custom strategies such as [`RetryOnError`].
-#[async_trait]
 pub trait ToolErrorRecovery: Send + Sync {
-    async fn on_error(
+    fn on_error(
         &self,
         _session_id: &SessionId,
         _tool_names: &[String],
@@ -32,9 +29,8 @@ pub trait ToolErrorRecovery: Send + Sync {
 /// without making business recovery decisions for the upper layer.
 pub struct StopOnError;
 
-#[async_trait]
 impl ToolErrorRecovery for StopOnError {
-    async fn on_error(
+    fn on_error(
         &self,
         _session_id: &SessionId,
         _tool_names: &[String],
@@ -49,9 +45,8 @@ impl ToolErrorRecovery for StopOnError {
 /// Suitable for scenarios where model self-healing is desired (e.g. code-agent, browser-agent).
 pub struct RetryOnError;
 
-#[async_trait]
 impl ToolErrorRecovery for RetryOnError {
-    async fn on_error(
+    fn on_error(
         &self,
         _session_id: &SessionId,
         _tool_names: &[String],

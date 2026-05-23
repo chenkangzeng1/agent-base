@@ -125,12 +125,12 @@ async fn main() -> AgentResult<()> {
         ],
     ));
 
-    let mut parent_runtime = AgentBuilder::new(parent_llm)
+    let parent_runtime = AgentBuilder::new(parent_llm)
         .system_prompt("You are a sales manager. Responsible for compiling analysis reports. You can delegate specific analysis tasks to the sub-agent.agent Agent。")
         .register_tool(sub_agent_tool)
         .build();
 
-    let session_id = parent_runtime.create_session();
+    let session_id = parent_runtime.create_session().await;
 
     println!("    Parent agent Agent is ready\n");
     println!("--- Starting execution ---\n");

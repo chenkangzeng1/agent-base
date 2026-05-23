@@ -14,7 +14,7 @@ pub(super) enum ToolCallResult {
 
 impl AgentRuntime {
     pub(super) async fn handle_tool_calls<F>(
-        &mut self,
+        &self,
         session_id: &SessionId,
         tool_calls: &[(String, String, String)],
         event_rx: &mut broadcast::Receiver<AgentEvent>,
@@ -54,7 +54,7 @@ impl AgentRuntime {
             .await?;
 
             if let Some(policy) = self.tool_policy.as_ref() {
-                policy.on_pre_call(tool_name, &args, &tool_ctx);
+                policy.before_call(tool_name, &args, &tool_ctx)?;
             }
 
             parsed_calls.push((tool_call_id.clone(), tool_name.clone(), tool_args_json.clone(), args));
@@ -70,12 +70,13 @@ impl AgentRuntime {
         Self::drain_async_events(event_rx, on_event)?;
 
         {
-            let session = self.session_mut_or_err(session_id)?;
             let tc: Vec<(String, String, String)> = parsed_calls
                 .iter()
                 .map(|(id, name, args_json, _)| (id.clone(), name.clone(), args_json.clone()))
                 .collect();
-            session.push_assistant_tool_calls(&tc);
+            self.with_session_mut(session_id, |session| {
+                session.push_assistant_tool_calls(&tc);
+            }).await?;
         }
 
         let tools = self.tools.clone();
@@ -177,7 +178,7 @@ impl AgentRuntime {
                             .find(|(_, n, _, _)| n == &name)
                             .map(|(_, _, _, a)| a)
                             .unwrap_or(&serde_json::Value::Null);
-                        policy.on_post_call(&name, orig_args, &output, &tool_ctx);
+                        policy.after_call(&name, orig_args, &output, &tool_ctx)?;
                     }
 
                     self.emit_event(AgentEvent::ToolCallFinished {
@@ -187,10 +188,9 @@ impl AgentRuntime {
                     });
                     Self::drain_async_events(event_rx, on_event)?;
 
-                    {
-                        let session = self.session_mut_or_err(session_id)?;
+                    self.with_session_mut(session_id, |session| {
                         session.push_tool_result(&id, &output.summary);
-                    }
+                    }).await?;
 
                     results.push((id, name, output));
                 }

@@ -9,7 +9,11 @@ use crate::types::SessionId;
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct AgentSession {
     id: Option<SessionId>,
+    /// Simplified message history for internal logic and debugging.
+    /// Each entry corresponds to a `ChatMessage` in `chat_messages`.
     messages: Vec<Message>,
+    /// LLM API format messages, sent directly to the provider.
+    /// This is the source of truth for the conversation state.
     chat_messages: Vec<ChatMessage>,
     always_allowed_actions: HashSet<String>,
 }
