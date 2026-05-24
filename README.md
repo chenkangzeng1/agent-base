@@ -12,7 +12,7 @@ A lightweight **Agent Runtime Kernel** for building AI agents in Rust.
 
 ```toml
 [dependencies]
-agent-base = "0.1.0"
+agent-base = "0.1.1"
 ```
 
 ## Design Principles
@@ -34,8 +34,7 @@ agent-base = "0.1.0"
 - **Context Management** — configurable `ContextWindowManager` for token budget control
 - **Middleware** — hooks at `on_user_message`, `on_pre_llm`, and `on_post_llm` for extensions
 - **Checkpoints** — structured `Checkpoint` events enable future replay, debugging, and resume
-- **MCP Support** — built-in `McpClient` for the Model Context Protocol
-- **Skills** — composable capability units with auto-registered tools and on-demand detailed prompts
+- **Tool Enforcement** — `ToolEnforcementMiddleware` nudges the LLM to call tools instead of just describing actions
 
 ## Quick Start
 
@@ -224,11 +223,11 @@ cargo run --example repl
 # Run the SubAgent demo
 cargo run --example subagent_demo
 
-# Run the MCP demo
-cargo run --example mcp_demo
+# Run the Middleware demo
+cargo run --example middleware_demo
 
-# Run the Skill demo
-cargo run --example skill_demo
+# Run the Plan demo
+cargo run --example plan_demo
 ```
 
 ## What agent-base Does NOT Do
@@ -239,13 +238,13 @@ cargo run --example skill_demo
 - Terminal UI or built-in approval dialog
 - Production-grade persistence or transaction system
 
-Business-specific tools and strategies belong in **upper layers** (e.g. `ops-agent`, `db-agent`, `browser-agent`).
+Business-specific tools and strategies belong in **upper layers** (e.g. `ops-agent`, `agent-works`, `db-agent`, `browser-agent`).
 
 ## Typical Layering
 
 ```
-ops-agent / db-agent / browser-agent    ← Business agents
-    └── agent-base                       ← Lightweight Runtime Kernel
+ops-agent / agent-works / ...          ← Business agents / Enhanced toolkits
+    └── agent-base                      ← Lightweight Runtime Kernel
 ```
 
 ## v1 Semantics
@@ -260,7 +259,7 @@ ops-agent / db-agent / browser-agent    ← Business agents
 
 ## Stability
 
-This project is in early development (v0.1.0). The core abstractions are settling but not yet frozen. Expect minor API changes as the ecosystem evolves.
+This project is in early development (v0.1.1). The core abstractions are settling but not yet frozen. Expect minor API changes as the ecosystem evolves.
 
 ## License
 

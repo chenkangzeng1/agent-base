@@ -163,7 +163,8 @@ src/
 │   ├── session.rs          ─── AgentSession (message history)
 │   ├── session_store.rs    ─── SessionStore trait + InMemory
 │   ├── context.rs          ─── ContextWindowManager (token trimming)
-│   └── recovery.rs         ─── ToolErrorRecovery trait + StopOnError/RetryOnError
+│   ├── recovery.rs         ─── ToolErrorRecovery trait + StopOnError/RetryOnError
+│   └── tool_enforcement.rs ─── ToolEnforcementMiddleware (nudge LLM to call tools)
 │
 ├── llm/                    ─── LLM provider abstraction
 │   ├── mod.rs              ─── LlmClient trait, StreamChunk, LlmCapabilities
@@ -175,12 +176,7 @@ src/
 │   ├── mod.rs              ─── Tool trait, ToolRegistry, ToolOutput
 │   ├── policy.rs           ─── ToolPolicy trait (approval evaluation)
 │   ├── subagent.rs         ─── SubAgentTool + SubAgentSessionPolicy
-│   └── mcp.rs              ─── MCP client for Model Context Protocol
-│
-├── skill/                  ─── Capability units
-│   ├── mod.rs              ─── Skill trait
-│   ├── prompter.rs         ─── Skill prompter strategies
-│   └── detail_tool.rs      ─── On-demand skill detail tool
+│   └── auto_continue.rs    ─── AutoContinueTool
 │
 └── types/                  ─── Core types
     ├── events.rs           ─── AgentEvent enum

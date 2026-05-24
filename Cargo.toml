@@ -9,8 +9,6 @@ readme = "README.md"
 keywords = ["agent", "ai", "llm", "runtime", "tool-calling"]
 categories = ["development-tools", "asynchronous"]
 
-exclude = ["agent-works.md", "harness.md", "implrove-from-codex.md"]
-
 [dependencies]
 anyhow = "1.0.102"
 async-trait = "0.1.89"
