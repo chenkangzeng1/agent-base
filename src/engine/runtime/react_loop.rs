@@ -13,6 +13,14 @@ pub(super) enum ToolCallResult {
     Break,
 }
 
+pub(super) struct PostLlmMwResult {
+    pub full_text: String,
+    pub is_tool_call: bool,
+    pub tool_calls: Vec<(String, String, String)>,
+    pub skip_push: bool,
+    pub follow_up_message: Option<String>,
+}
+
 impl AgentRuntime {
     pub(super) async fn apply_user_message_mw(
         &self,
@@ -54,18 +62,32 @@ impl AgentRuntime {
         full_text: String,
         is_tool_call: bool,
         tool_calls: Vec<(String, String, String)>,
-    ) -> AgentResult<(String, bool, Vec<(String, String, String)>)> {
+        available_tools: &[String],
+        turn_count: u32,
+        total_tool_calls: usize,
+    ) -> AgentResult<PostLlmMwResult> {
         let mut ctx = PostLlmCtx {
             session_id: session_id.clone(),
             full_text,
             is_tool_call,
             tool_calls,
             event_bus: self.event_bus.sender(),
+            available_tools: available_tools.to_vec(),
+            turn_count,
+            total_tool_calls,
+            skip_push: false,
+            follow_up_message: None,
         };
         for mw in &self.middlewares {
             mw.on_post_llm(&mut ctx).await?;
         }
-        Ok((ctx.full_text, ctx.is_tool_call, ctx.tool_calls))
+        Ok(PostLlmMwResult {
+            full_text: ctx.full_text,
+            is_tool_call: ctx.is_tool_call,
+            tool_calls: ctx.tool_calls,
+            skip_push: ctx.skip_push,
+            follow_up_message: ctx.follow_up_message,
+        })
     }
 
     pub(super) async fn handle_tool_error<F>(
@@ -145,6 +167,7 @@ impl AgentRuntime {
         F: FnMut(AgentEvent) -> AgentResult<()> + Send,
     {
         let max_turns = self.config.execution.max_turns.unwrap_or(super::DEFAULT_MAX_TURNS);
+        let mut total_tool_calls: usize = 0;
 
         loop {
             turn_count += 1;
@@ -218,42 +241,62 @@ impl AgentRuntime {
                         (id, name, args)
                     }).collect();
 
-                    let (full_text, is_tool_call, tool_calls_parsed) = self
-                        .apply_post_llm_mw(session_id, full_text, is_tool_call, tool_calls_parsed)
+                    let available_tools: Vec<String> = tool_definitions.iter()
+                        .filter_map(|d| d.get("function")?.get("name")?.as_str().map(|s| s.to_string()))
+                        .collect();
+
+                    let result = self
+                        .apply_post_llm_mw(
+                            session_id,
+                            full_text,
+                            is_tool_call,
+                            tool_calls_parsed,
+                            &available_tools,
+                            turn_count,
+                            total_tool_calls,
+                        )
                         .await?;
 
-                    if full_text.is_empty() && !is_tool_call {
-                        continue;
-                    }
-
-                    if !full_text.is_empty() {
+                    if !result.skip_push && !result.full_text.is_empty() {
                         self.with_session_mut(session_id, |session| {
-                            session.push_message(MessageRole::Assistant, full_text);
+                            session.push_message(MessageRole::Assistant, &result.full_text);
                         }).await?;
                     }
 
-                    if is_tool_call && !tool_calls_parsed.is_empty() {
+                    if let Some(follow_up) = result.follow_up_message {
+                        self.with_session_mut(session_id, |session| {
+                            session.push_message(MessageRole::User, &follow_up);
+                        }).await?;
+                        continue;
+                    }
+
+                    if result.full_text.is_empty() && !result.is_tool_call {
+                        continue;
+                    }
+
+                    if result.is_tool_call && !result.tool_calls.is_empty() {
                         self.emit_event(AgentEvent::Checkpoint {
                             session_id: session_id.clone(),
                             checkpoint: CheckpointData {
                                 session_id: session_id.clone(),
                                 user_input: user_input_owned.to_string(),
                                 step: CheckpointStep::BeforeToolCalls {
-                                    tool_calls: tool_calls_parsed.clone(),
+                                    tool_calls: result.tool_calls.clone(),
                                 },
                                 turn_count,
                             },
                         });
 
-                        match self.handle_tool_calls(session_id, &tool_calls_parsed, event_rx, on_event).await {
+                        match self.handle_tool_calls(session_id, &result.tool_calls, event_rx, on_event).await {
                             Ok(ToolCallResult::Continue) => {
+                                total_tool_calls += result.tool_calls.len();
                                 self.emit_event(AgentEvent::Checkpoint {
                                     session_id: session_id.clone(),
                                     checkpoint: CheckpointData {
                                         session_id: session_id.clone(),
                                         user_input: user_input_owned.to_string(),
                                         step: CheckpointStep::AfterToolCalls {
-                                            tool_calls: tool_calls_parsed.clone(),
+                                            tool_calls: result.tool_calls.clone(),
                                             results: Vec::new(),
                                         },
                                         turn_count,
@@ -262,13 +305,14 @@ impl AgentRuntime {
                                 continue;
                             }
                             Ok(ToolCallResult::Break) => {
+                                total_tool_calls += result.tool_calls.len();
                                 self.emit_event(AgentEvent::RunFinished { session_id: session_id.clone() });
                                 EventBus::drain_async_events(event_rx, on_event)?;
                                 return Ok((RunOutcome::Completed, turn_count));
                             }
                             Err(e) => {
                                 if let Some(outcome) = self
-                                    .handle_tool_error(session_id, &tool_calls_parsed, e, event_rx, on_event)
+                                    .handle_tool_error(session_id, &result.tool_calls, e, event_rx, on_event)
                                     .await?
                                 {
                                     return Ok((outcome, turn_count));

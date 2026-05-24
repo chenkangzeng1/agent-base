@@ -1629,3 +1629,233 @@ fn test_plan_serialization() {
     assert_eq!(deserialized.id, "test-id");
     assert_eq!(deserialized.objective, "test objective");
 }
+
+// =========================================================================
+// 9. Middleware skip_push / follow_up_message tests
+// =========================================================================
+
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+struct NudgeMiddleware {
+    nudge_count: AtomicUsize,
+    max_nudges: usize,
+    nudge_message: String,
+    skip_triggered: Arc<AtomicBool>,
+    total_tool_calls_seen: Arc<Mutex<Vec<usize>>>,
+}
+
+impl NudgeMiddleware {
+    fn new(max_nudges: usize, skip_triggered: Arc<AtomicBool>) -> Self {
+        Self {
+            nudge_count: AtomicUsize::new(0),
+            max_nudges,
+            nudge_message: "CRITICAL: Use tools now.".to_string(),
+            skip_triggered,
+            total_tool_calls_seen: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+}
+
+#[async_trait]
+impl agent_base::Middleware for NudgeMiddleware {
+    async fn on_post_llm(&self, ctx: &mut agent_base::PostLlmCtx) -> AgentResult<()> {
+        self.total_tool_calls_seen.lock().unwrap().push(ctx.total_tool_calls);
+
+        if ctx.available_tools.is_empty() || ctx.total_tool_calls > 0 {
+            return Ok(());
+        }
+        if ctx.is_tool_call || ctx.full_text.is_empty() {
+            return Ok(());
+        }
+
+        let count = self.nudge_count.fetch_add(1, Ordering::SeqCst);
+        if count >= self.max_nudges {
+            return Ok(());
+        }
+
+        self.skip_triggered.store(true, Ordering::SeqCst);
+        ctx.skip_push = true;
+        ctx.follow_up_message = Some(self.nudge_message.clone());
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn test_middleware_skip_push_with_follow_up_nudges_and_continues() {
+    let llm = Arc::new(MockLlmClient::new(vec![
+        vec![
+            StreamChunk::Text("I will execute the command for you.".to_string()),
+            StreamChunk::Stop,
+        ],
+        vec![
+            StreamChunk::ToolCall(json!({
+                "delta": {
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "function": {
+                            "name": "echo",
+                            "arguments": "{\"message\": \"nudged\"}"
+                        }
+                    }]
+                }
+            })),
+            StreamChunk::Stop,
+        ],
+        vec![
+            StreamChunk::Text("Task completed via echo.".to_string()),
+            StreamChunk::Stop,
+        ],
+    ]));
+
+    let skip_triggered = Arc::new(AtomicBool::new(false));
+    let mw = NudgeMiddleware::new(3, skip_triggered.clone());
+
+    let runtime = AgentBuilder::new(llm.clone())
+        .register_tool(EchoTool)
+        .system_prompt("sys")
+        .middleware(mw)
+        .build().unwrap();
+
+    let session_id = runtime.create_session().await;
+    let result = runtime.run_turn_stream(session_id.clone(), "do something").await;
+    assert!(result.is_ok(), "Expected ok: {result:?}");
+
+    assert!(skip_triggered.load(Ordering::SeqCst), "Nudge should have been triggered");
+    assert_eq!(llm.call_count(), 3, "Should make 3 LLM calls (hallucination + tool call after nudge + final text)");
+
+    let session = runtime.session(&session_id).await.unwrap();
+    let messages = session.chat_messages();
+
+    let has_hallucination = messages.iter().any(|m| {
+        matches!(m, ChatMessage::Assistant { content, .. } if content.as_deref() == Some("I will execute the command for you."))
+    });
+    assert!(!has_hallucination, "Hallucination text should NOT be in session (skip_push)");
+
+    let has_nudge = messages.iter().any(|m| {
+        matches!(m, ChatMessage::User { content, .. } if content.contains("CRITICAL: Use tools now"))
+    });
+    assert!(has_nudge, "Nudge message should be in session as user message");
+
+    let has_recovery = messages.iter().any(|m| {
+        matches!(m, ChatMessage::Assistant { content, .. } if content.as_deref() == Some("Task completed via echo."))
+    });
+    assert!(has_recovery, "Final recovery response should be in session");
+}
+
+#[tokio::test]
+async fn test_middleware_total_tool_calls_passed_correctly() {
+    let llm = Arc::new(MockLlmClient::new(vec![
+        vec![
+            StreamChunk::ToolCall(json!({
+                "delta": {
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "function": {
+                            "name": "echo",
+                            "arguments": "{\"message\": \"hello\"}"
+                        }
+                    }]
+                }
+            })),
+            StreamChunk::Stop,
+        ],
+        vec![
+            StreamChunk::Text("Done after tool call.".to_string()),
+            StreamChunk::Stop,
+        ],
+    ]));
+
+    let skip_triggered = Arc::new(AtomicBool::new(false));
+    let mw = NudgeMiddleware::new(3, skip_triggered.clone());
+    let seen = mw.total_tool_calls_seen.clone();
+
+    let runtime = AgentBuilder::new(llm.clone())
+        .register_tool(EchoTool)
+        .system_prompt("sys")
+        .middleware(mw)
+        .build().unwrap();
+
+    let session_id = runtime.create_session().await;
+    let result = runtime.run_turn_stream(session_id, "echo hello").await;
+    assert!(result.is_ok(), "Expected ok: {result:?}");
+
+    let calls_seen: Vec<usize> = seen.lock().unwrap().clone();
+    assert_eq!(calls_seen.len(), 2, "Middleware should be invoked twice (one per LLM call)");
+    assert_eq!(calls_seen[0], 0, "First turn: total_tool_calls should be 0 (tool not yet executed)");
+    assert_eq!(calls_seen[1], 1, "Second turn: total_tool_calls should be 1 (echo tool was executed)");
+
+    assert!(!skip_triggered.load(Ordering::SeqCst),
+        "Nudge should NOT trigger when total_tool_calls > 0");
+}
+
+#[tokio::test]
+async fn test_middleware_skip_push_only_suppresses_text() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    struct SuppressMiddleware {
+        suppressed: Arc<AtomicBool>,
+    }
+
+    #[async_trait]
+    impl agent_base::Middleware for SuppressMiddleware {
+        async fn on_post_llm(&self, ctx: &mut agent_base::PostLlmCtx) -> AgentResult<()> {
+            if ctx.full_text.contains("sensitive") {
+                ctx.skip_push = true;
+                self.suppressed.store(true, Ordering::SeqCst);
+            }
+            Ok(())
+        }
+    }
+
+    let suppressed = Arc::new(AtomicBool::new(false));
+
+    let llm = Arc::new(MockLlmClient::new(vec![vec![
+        StreamChunk::Text("This is sensitive content".to_string()),
+        StreamChunk::Stop,
+    ]]));
+
+    let runtime = AgentBuilder::new(llm.clone())
+        .system_prompt("sys")
+        .middleware(SuppressMiddleware { suppressed: suppressed.clone() })
+        .build().unwrap();
+
+    let session_id = runtime.create_session().await;
+    let result = runtime.run_turn_stream(session_id.clone(), "test").await;
+    assert!(result.is_ok(), "Expected ok: {result:?}");
+
+    assert!(suppressed.load(Ordering::SeqCst), "Middleware should have suppressed");
+
+    let session = runtime.session(&session_id).await.unwrap();
+    let messages = session.chat_messages();
+    let has_sensitive = messages.iter().any(|m| {
+        matches!(m, ChatMessage::Assistant { content, .. } if content.as_deref() == Some("This is sensitive content"))
+    });
+    assert!(!has_sensitive, "Sensitive text should NOT be in session (skip_push only, no follow_up)");
+}
+
+#[tokio::test]
+async fn test_middleware_backward_compatible_existing_behavior() {
+    let llm = Arc::new(MockLlmClient::new(vec![vec![
+        StreamChunk::Text("Hello, ".to_string()),
+        StreamChunk::Text("world!".to_string()),
+        StreamChunk::Stop,
+    ]]));
+
+    let runtime = AgentBuilder::new(llm.clone())
+        .system_prompt("You are a helpful assistant")
+        .build().unwrap();
+
+    let session_id = runtime.create_session().await;
+    let result = runtime.run_turn_stream(session_id.clone(), "Hi").await;
+    assert!(result.is_ok(), "Expected ok, got: {result:?}");
+    let (_events, outcome) = result.unwrap();
+    assert_eq!(outcome, RunOutcome::Completed);
+
+    let session = runtime.session(&session_id).await.unwrap();
+    let messages = session.chat_messages();
+    assert_eq!(messages.len(), 3);
+    assert!(matches!(messages[0], ChatMessage::System { .. }));
+    assert!(matches!(messages[1], ChatMessage::User { .. }));
+    assert!(matches!(messages[2], ChatMessage::Assistant { .. }));
+    assert_eq!(llm.call_count(), 1);
+}
