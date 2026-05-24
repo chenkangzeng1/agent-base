@@ -10,12 +10,10 @@ use crate::types::{AgentResult, AgentError, AgentEvent, SessionId};
 use crate::engine::SessionStore;
 
 pub mod auto_continue;
-pub mod mcp;
 pub mod policy;
 pub mod subagent;
 
 pub use auto_continue::AutoContinueTool;
-pub use mcp::{McpClient, McpToolInfo, McpToolRegistry};
 pub use subagent::{SubAgentSessionPolicy, SubAgentTool};
 
 pub use policy::ToolPolicy;

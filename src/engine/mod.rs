@@ -9,6 +9,7 @@ mod reflexion;
 mod runtime;
 mod session;
 mod session_store;
+mod tool_enforcement;
 
 pub use approval::{AllowAllApprovalHandler, ApprovalHandler, DenyAllApprovalHandler};
 pub use builder::AgentBuilder;
@@ -24,4 +25,5 @@ pub use reflexion::{AlternativeAction, ReflectionResult, ReflexionContext, Refle
 pub use runtime::AgentRuntime;
 pub use session::AgentSession;
 pub use session_store::{InMemorySessionStore, SessionStore};
+pub use tool_enforcement::{ToolEnforcementConfig, ToolEnforcementMiddleware};
 pub use crate::types::{AgentResult, ApprovalDecision, ApprovalRequest, RiskLevel, SessionId};

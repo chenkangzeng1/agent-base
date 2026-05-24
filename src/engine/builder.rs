@@ -1,8 +1,6 @@
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::llm::{LlmClient, ReasoningConfig};
-use crate::skill::{Skill, SkillDetailTool, SkillPrompter, LazySkillPrompter};
 use crate::tool::{Tool, ToolPolicy, ToolRegistry};
 use crate::types::{AgentConfig, ResponseFormat, RetryConfig, SessionIdGenerator, AtomicU64SessionIdGenerator};
 
@@ -22,10 +20,6 @@ pub struct AgentBuilder {
     middlewares: Vec<MiddlewareRef>,
     context_manager: Option<ContextWindowManager>,
     session_store: Option<Arc<dyn SessionStore>>,
-    skills: Vec<Arc<dyn Skill>>,
-    skill_prompter: Option<Arc<dyn SkillPrompter>>,
-    skill_detail_tool_name: String,
-    disable_skill_prompt_injection: bool,
     error_recovery: Option<Arc<dyn ToolErrorRecovery>>,
     event_bus_capacity: usize,
     session_id_generator: Option<Arc<dyn SessionIdGenerator>>,
@@ -42,10 +36,6 @@ impl AgentBuilder {
             middlewares: Vec::new(),
             context_manager: None,
             session_store: None,
-            skills: Vec::new(),
-            skill_prompter: None,
-            skill_detail_tool_name: "get_skill_detail".to_string(),
-            disable_skill_prompt_injection: false,
             error_recovery: None,
             event_bus_capacity: 2048,
             session_id_generator: None,
@@ -151,26 +141,6 @@ impl AgentBuilder {
         self
     }
 
-    pub fn register_skill(mut self, skill: impl Skill + 'static) -> Self {
-        self.skills.push(Arc::new(skill));
-        self
-    }
-
-    pub fn skill_prompter(mut self, prompter: Arc<dyn SkillPrompter>) -> Self {
-        self.skill_prompter = Some(prompter);
-        self
-    }
-
-    pub fn disable_skill_prompt_injection(mut self) -> Self {
-        self.disable_skill_prompt_injection = true;
-        self
-    }
-
-    pub fn skill_detail_tool_name(mut self, name: impl Into<String>) -> Self {
-        self.skill_detail_tool_name = name.into();
-        self
-    }
-
     pub fn error_recovery(mut self, recovery: Arc<dyn ToolErrorRecovery>) -> Self {
         self.error_recovery = Some(recovery);
         self
@@ -186,59 +156,7 @@ impl AgentBuilder {
         self
     }
 
-    pub fn build(mut self) -> crate::types::AgentResult<AgentRuntime> {
-        let prompter: Arc<dyn SkillPrompter> = self
-            .skill_prompter
-            .unwrap_or_else(|| Arc::new(LazySkillPrompter::new()));
-
-        let mut skill_refs: Vec<Arc<dyn Skill>> = Vec::new();
-        let mut known_tool_names: HashSet<String> = self
-            .tools
-            .definitions()
-            .iter()
-            .filter_map(|d| {
-                d.get("function")
-                    .and_then(|f| f.get("name"))
-                    .and_then(|n| n.as_str())
-                    .map(|s| s.to_string())
-            })
-            .collect();
-
-        for skill in self.skills {
-            for tool in skill.tools() {
-                let tool_name = tool.name().to_string();
-                if known_tool_names.contains(&tool_name) {
-                    return Err(crate::types::AgentError::internal(format!(
-                        "Tool name conflict: `{}` (Skill `{}`)",
-                        tool_name,
-                        skill.name()
-                    )));
-                }
-                known_tool_names.insert(tool_name.clone());
-                self.tools.register_arc(tool);
-            }
-            skill_refs.push(skill);
-        }
-
-        if !skill_refs.is_empty() && !self.disable_skill_prompt_injection {
-            let skill_prompt = prompter.build_prompt(&skill_refs);
-            if !skill_prompt.is_empty() {
-                let new_prompt = match self.config.system_prompt.take() {
-                    Some(existing) => format!("{}\n\n---\n\n{}", existing, skill_prompt),
-                    None => skill_prompt,
-                };
-                self.config.system_prompt = Some(new_prompt);
-            }
-        }
-
-        if !skill_refs.is_empty() {
-            let detail_tool = SkillDetailTool::new(
-                skill_refs.clone(),
-                std::mem::take(&mut self.skill_detail_tool_name),
-            );
-            self.tools.register(detail_tool);
-        }
-
+    pub fn build(self) -> crate::types::AgentResult<AgentRuntime> {
         let event_bus = super::runtime::EventBus::new(self.event_bus_capacity);
         let session_store = self
             .session_store
@@ -276,8 +194,6 @@ impl AgentBuilder {
             session_manager,
             event_bus,
             context_manager: self.context_manager,
-            skills: skill_refs,
-            skill_prompter: prompter,
             middlewares: self.middlewares,
         })
     }

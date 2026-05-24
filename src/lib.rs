@@ -1,6 +1,5 @@
 pub mod engine;
 pub mod llm;
-pub mod skill;
 pub mod tool;
 pub mod types;
 
@@ -65,6 +64,8 @@ pub use engine::{
     RiskLevel,
     RetryOnError,
     StopOnError,
+    ToolEnforcementConfig,
+    ToolEnforcementMiddleware,
     ToolErrorAction,
     ToolErrorRecovery,
 };
@@ -74,9 +75,6 @@ pub use engine::{
 // ---------------------------------------------------------------------------
 pub use tool::{
     AutoContinueTool,
-    McpClient,
-    McpToolInfo,
-    McpToolRegistry,
     SubAgentSessionPolicy,
     SubAgentTool,
     Tool,
@@ -86,16 +84,6 @@ pub use tool::{
     ToolPolicy,
     ToolRegistry,
     TypedTool,
-};
-
-// ---------------------------------------------------------------------------
-// Skill
-// ---------------------------------------------------------------------------
-pub use skill::{
-    FullDetailPrompter,
-    LazySkillPrompter,
-    Skill,
-    SkillPrompter,
 };
 
 // ---------------------------------------------------------------------------

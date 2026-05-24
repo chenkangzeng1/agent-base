@@ -4,7 +4,6 @@ use crate::engine::context::ContextWindowManager;
 use crate::engine::middleware::MiddlewareRef;
 use crate::engine::session_store::SessionStore;
 use crate::engine::AgentSession;
-use crate::skill::{Skill, SkillPrompter};
 use crate::types::{AgentConfig, AgentError, AgentEvent, AgentResult, CheckpointData, CheckpointStep, MessageRole, RunOutcome, SessionId};
 
 use super::approval::ApprovalHandler;
@@ -30,9 +29,6 @@ pub struct AgentRuntime {
     pub(crate) session_manager: SessionManager,
     pub(crate) event_bus: EventBus,
     pub(crate) context_manager: Option<ContextWindowManager>,
-    pub(crate) skills: Vec<Arc<dyn Skill>>,
-    #[allow(dead_code)]
-    pub(crate) skill_prompter: Arc<dyn SkillPrompter>,
     pub(crate) middlewares: Vec<MiddlewareRef>,
 }
 
@@ -313,10 +309,6 @@ impl AgentRuntime {
             return Err(AgentError::session_not_found(session_id.id));
         }
         Ok(())
-    }
-
-    pub fn skills(&self) -> &[Arc<dyn Skill>] {
-        &self.skills
     }
 
     pub fn session_store(&self) -> Arc<dyn SessionStore> {
