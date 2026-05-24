@@ -12,7 +12,7 @@ A lightweight **Agent Runtime Kernel** for building AI agents in Rust.
 
 ```toml
 [dependencies]
-agent-base = "0.1.1"
+agent-base = "0.1.2"
 ```
 
 ## Design Principles
@@ -259,7 +259,7 @@ ops-agent / agent-works / ...          ← Business agents / Enhanced toolkits
 
 ## Stability
 
-This project is in early development (v0.1.1). The core abstractions are settling but not yet frozen. Expect minor API changes as the ecosystem evolves.
+This project is in early development (v0.1.2). The core abstractions are settling but not yet frozen. Expect minor API changes as the ecosystem evolves.
 
 ## License
 
