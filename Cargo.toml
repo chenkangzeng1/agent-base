@@ -33,3 +33,5 @@ telemetry = ["opentelemetry", "tracing-opentelemetry"]
 
 [dev-dependencies]
 dotenvy = "0.15.7"
+serial_test = "3"
+tempfile = "3"

@@ -8,6 +8,12 @@ pub enum AgentError {
     #[error("LLM API error: {message}")]
     LlmApi { message: String },
 
+    #[error("LLM rate limit exceeded")]
+    RateLimitExceeded,
+
+    #[error("LLM service unavailable: {0}")]
+    ServiceUnavailable(String),
+
     #[error("SSE stream error: {0}")]
     LlmStream(String),
 
@@ -26,6 +32,9 @@ pub enum AgentError {
         #[source]
         source: Box<AgentError>,
     },
+
+    #[error("Tool timeout exceeded")]
+    ToolTimeout,
 
     #[error("Tool call rejected by approval: {tool_name}")]
     ApprovalDenied { tool_name: String },
@@ -50,6 +59,12 @@ pub enum AgentError {
 
     #[error("Plan storage error: {0}")]
     PlanStorage(String),
+
+    #[error("Resource unavailable: {0}")]
+    ResourceUnavailable(String),
+
+    #[error("Configuration error: {0}")]
+    ConfigError(String),
 
     #[error("Internal error: {0}")]
     Internal(String),
@@ -95,12 +110,40 @@ impl AgentError {
         Self::PlanStorage(message.into())
     }
 
+    pub fn tool_timeout() -> Self {
+        Self::ToolTimeout
+    }
+
+    pub fn rate_limit_exceeded() -> Self {
+        Self::RateLimitExceeded
+    }
+
+    pub fn service_unavailable(message: impl Into<String>) -> Self {
+        Self::ServiceUnavailable(message.into())
+    }
+
+    pub fn resource_unavailable(message: impl Into<String>) -> Self {
+        Self::ResourceUnavailable(message.into())
+    }
+
+    pub fn config_error(message: impl Into<String>) -> Self {
+        Self::ConfigError(message.into())
+    }
+
     pub fn is_cancelled(&self) -> bool {
         matches!(self, Self::Cancelled)
     }
 
     pub fn is_retryable(&self) -> bool {
-        matches!(self, Self::Llm(_) | Self::LlmApi { .. } | Self::LlmStream(_))
+        matches!(self, Self::Llm(_) | Self::LlmApi { .. } | Self::LlmStream(_) | Self::ServiceUnavailable(_) | Self::RateLimitExceeded)
+    }
+
+    pub fn is_rate_limited(&self) -> bool {
+        matches!(self, Self::RateLimitExceeded)
+    }
+
+    pub fn is_resource_unavailable(&self) -> bool {
+        matches!(self, Self::ResourceUnavailable(_))
     }
 }
 

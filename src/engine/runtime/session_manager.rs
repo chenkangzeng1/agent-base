@@ -33,6 +33,7 @@ impl SessionManager {
         }
         let mut sessions = self.sessions.write().await;
         sessions.insert(id.clone(), session);
+        tracing::debug!(session_id = id.id, "session created");
         id
     }
 
@@ -40,16 +41,26 @@ impl SessionManager {
         {
             let sessions = self.sessions.read().await;
             if sessions.contains_key(session_id) {
+                tracing::debug!(session_id = session_id.id, "session restore cache hit");
                 return sessions.get(session_id).cloned();
             }
         }
         match self.session_store.load(session_id).await {
             Ok(Some(session)) => {
+                let msg_count = session.chat_messages().len();
                 let mut sessions = self.sessions.write().await;
                 sessions.insert(session_id.clone(), session.clone());
+                tracing::debug!(session_id = session_id.id, msg_count, "session restored from store");
                 Some(session)
             }
-            _ => None,
+            Ok(None) => {
+                tracing::debug!(session_id = session_id.id, "session not found in store");
+                None
+            }
+            Err(e) => {
+                tracing::warn!(session_id = session_id.id, error = %e, "session restore failed");
+                None
+            }
         }
     }
 
@@ -93,6 +104,8 @@ impl SessionManager {
 
     pub async fn save_session(&self, session_id: &SessionId) -> AgentResult<()> {
         let session = self.session_or_err(session_id).await?;
+        let msg_count = session.chat_messages().len();
+        tracing::debug!(session_id = session_id.id, msg_count, "saving session");
         self.session_store.save(&session).await.map_err(|e| AgentError::internal(format!("Session persistence failed: {e}")))
     }
 

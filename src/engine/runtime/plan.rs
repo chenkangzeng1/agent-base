@@ -29,6 +29,7 @@ impl AgentRuntime {
     where
         F: FnMut(AgentEvent) -> AgentResult<()> + Send,
     {
+        tracing::info!(session_id = session_id.id, %objective, "run plan agentic start");
         let tool_definitions = self.tool_engine.definitions();
         let mut event_rx = self.subscribe_events();
 
@@ -94,6 +95,7 @@ impl AgentRuntime {
     where
         F: FnMut(AgentEvent) -> AgentResult<()> + Send,
     {
+        tracing::info!(session_id = session_id.id, %objective, "run plan deterministic start");
         let tool_definitions = self.tool_engine.definitions();
         let mut event_rx = self.subscribe_events();
 
@@ -169,6 +171,8 @@ impl AgentRuntime {
 
             plan.steps[i].status = StepStatus::Running;
 
+            tracing::debug!(session_id = session_id.id, step_index = i, step_id = plan.steps[i].id, "step running");
+
             self.emit_and_drain(
                 AgentEvent::PlanStepStarted {
                     session_id: session_id.clone(),
@@ -225,6 +229,7 @@ impl AgentRuntime {
 
                     if success {
                         plan.steps[i].status = StepStatus::Completed;
+                        tracing::debug!(session_id = session_id.id, step_index = i, step_id = plan.steps[i].id, "step completed");
 
                         self.emit_and_drain(
                             AgentEvent::PlanStepCompleted {
@@ -251,10 +256,12 @@ impl AgentRuntime {
                             RecoveryAction::Retry => {
                                 plan.steps[i].status = StepStatus::Pending;
                                 plan.steps[i].result = None;
+                                tracing::debug!(session_id = session_id.id, step_index = i, step_id = plan.steps[i].id, "step retry");
                                 // i is NOT incremented, so this step will be retried
                             }
                             RecoveryAction::Skip => {
                                 plan.steps[i].status = StepStatus::Skipped;
+                                tracing::debug!(session_id = session_id.id, step_index = i, step_id = plan.steps[i].id, "step skipped");
 
                                 self.emit_and_drain(
                                     AgentEvent::PlanStepCompleted {
@@ -272,6 +279,7 @@ impl AgentRuntime {
                             RecoveryAction::Abort => {
                                 plan.steps[i].status = StepStatus::Failed;
                                 plan.status = PlanStatus::Failed;
+                                tracing::warn!(session_id = session_id.id, step_index = i, step_id = plan.steps[i].id, "step abort");
 
                                 self.emit_and_drain(
                                     AgentEvent::PlanStepCompleted {
@@ -351,6 +359,8 @@ impl AgentRuntime {
         if step.dependencies.is_empty() {
             return true;
         }
+
+        tracing::debug!(step_index, step_id = step.id, deps_count = step.dependencies.len(), "checking step dependencies");
 
         step.dependencies.iter().all(|dep_id: &String| {
             plan.steps

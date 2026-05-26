@@ -59,6 +59,8 @@ impl ToolEngine {
         tool_timeout_ms: Option<u64>,
         max_output_chars: Option<usize>,
     ) -> AgentResult<ToolExecutionResult> {
+        tracing::debug!(session_id = session_id.id, tool = name, args_len = tool_args_json.len(), "execute tool start");
+
         self.event_bus.emit(AgentEvent::ToolCallStarted {
             session_id: session_id.clone(),
             tool_name: name.to_string(),
@@ -105,6 +107,7 @@ impl ToolEngine {
                             if output.summary.len() > max_chars {
                                 let original_summary_len = output.summary.len();
                                 let original_raw_len = output.raw.as_ref().map(|v| v.to_string().len());
+                                tracing::debug!(session_id = session_id.id, tool = name, original_len = original_summary_len, max_chars, "tool output truncated");
                                 let truncated_len = max_chars.saturating_sub("...(truncated)".len());
                                 output.summary.truncate(truncated_len);
                                 output.summary.push_str("...(truncated)");
@@ -126,12 +129,15 @@ impl ToolEngine {
                     }
                 }
             }
-            None => ToolOutput {
-                summary: format!("Tool {} not found", name),
-                raw: None,
-                control_flow: ToolControlFlow::Break,
-                truncation: None,
-            },
+            None => {
+                tracing::warn!(session_id = session_id.id, tool = name, "tool not found in registry");
+                ToolOutput {
+                    summary: format!("Tool {} not found", name),
+                    raw: None,
+                    control_flow: ToolControlFlow::Break,
+                    truncation: None,
+                }
+            }
         };
 
         if let Some(policy) = self.tool_policy.as_ref() {
@@ -177,8 +183,11 @@ impl ToolEngine {
         };
 
         if approved {
+            tracing::debug!(session_id = session_id.id, tool = tool_name, "approval cached, skipping");
             return Ok(());
         }
+
+        tracing::debug!(session_id = session_id.id, tool = tool_name, risk = ?request.risk_level, "requesting approval");
 
         self.event_bus.emit(AgentEvent::AwaitingApproval {
             session_id: session_id.clone(),

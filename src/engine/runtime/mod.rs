@@ -184,12 +184,14 @@ impl AgentRuntime {
         let mut event_rx = self.subscribe_events();
 
         if let Err(e) = self.validate_session(&session_id).await {
+            tracing::warn!(session_id = session_id.id, error = %e, "session validation failed");
             self.emit_event(AgentEvent::RunFinished { session_id: session_id.clone() });
             EventBus::drain_async_events(&mut event_rx, &mut on_event)?;
             return Err(e);
         }
 
         let tool_definitions = self.tool_engine.definitions();
+        tracing::debug!(session_id = session_id.id, tool_count = tool_definitions.len(), "agent run start");
         let user_input_owned = self.with_session_mut(&session_id, |session| {
             session.chat_messages().last()
                 .and_then(|m| match m {

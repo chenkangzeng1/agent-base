@@ -327,6 +327,7 @@ impl LlmClient for AnthropicClient {
                 .and_then(|e| e.get("message"))
                 .and_then(Value::as_str)
                 .unwrap_or("unknown error");
+            tracing::warn!(status = %status, error = %err_msg, "Anthropic API non-success");
             return Err(AgentError::LlmApi {
                 message: err_msg.to_string(),
             });
@@ -361,8 +362,10 @@ impl LlmClient for AnthropicClient {
             .map_err(|e| AgentError::llm(format!("HTTP request failed: {e}")))?;
 
         if !response.status().is_success() {
+            let status = response.status();
             let err_text = response.text().await
                 .map_err(|e| AgentError::llm(format!("Failed to read error response: {e}")))?;
+            tracing::warn!(%status, error = %err_text, "Anthropic API stream non-success");
             return Err(AgentError::LlmApi { message: err_text });
         }
 

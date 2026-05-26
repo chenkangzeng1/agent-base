@@ -106,16 +106,19 @@ impl Tool for SubAgentTool {
                 let new_id = runtime.create_session().await;
                 let mut sid_guard = self.sub_session_id.lock().await;
                 *sid_guard = Some(new_id.clone());
+                tracing::debug!(subagent = self.name, sub_session = new_id.id, "sub-agent ephemeral session created");
                 new_id
             }
             SubAgentSessionPolicy::Persistent => {
                 let mut sid_guard = self.sub_session_id.lock().await;
                 if let Some(id) = sid_guard.clone() {
+                    tracing::debug!(subagent = self.name, sub_session = id.id, "sub-agent reusing persistent session");
                     id
                 } else {
                     let runtime = self.sub_runtime.lock().await;
                     let new_id = runtime.create_session().await;
                     *sid_guard = Some(new_id.clone());
+                    tracing::debug!(subagent = self.name, sub_session = new_id.id, "sub-agent persistent session created");
                     new_id
                 }
             }
@@ -168,6 +171,8 @@ impl Tool for SubAgentTool {
         } else {
             final_text
         };
+
+        tracing::debug!(subagent = self.name, text_len = summary.len(), event_count = events.len(), "sub-agent completed");
 
         Ok(ToolOutput {
             summary,

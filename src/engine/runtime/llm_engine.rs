@@ -53,6 +53,7 @@ impl LlmEngine {
                 Ok(stream) => return Ok(stream),
                 Err(e) => {
                     if attempt > retry.max_retries {
+                        tracing::error!(session_id = session_id.id, attempts = attempt, error = %e, "LLM stream retry exhausted");
                         return Err(e);
                     }
                     tracing::warn!(session_id = session_id.id, attempt, error = %e, "LLM stream failed, retrying...");
@@ -82,6 +83,7 @@ impl LlmEngine {
         let start = std::time::Instant::now();
         let mut first_token = true;
         let mut aggregator = StreamAggregator::new();
+        tracing::debug!(session_id = session_id.id, "process stream start");
 
         loop {
             tokio::select! {
@@ -171,7 +173,7 @@ impl LlmEngine {
         }
 
         let total_elapsed = start.elapsed();
-        tracing::debug!(session_id = session_id.id, text_len = aggregator.full_text.len(), elapsed_ms = total_elapsed.as_millis(), "llm stream done");
+        tracing::debug!(session_id = session_id.id, text_len = aggregator.full_text.len(), tool_calls = aggregator.partials.len(), elapsed_ms = total_elapsed.as_millis(), "llm stream done");
 
         let tool_calls = aggregator
             .partials

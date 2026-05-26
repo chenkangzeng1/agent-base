@@ -157,6 +157,14 @@ impl AgentBuilder {
     }
 
     pub fn build(self) -> crate::types::AgentResult<AgentRuntime> {
+        tracing::info!(
+            tool_count = self.tools.len(),
+            middleware_count = self.middlewares.len(),
+            has_approval = self.approval_handler.is_some(),
+            has_context_window = self.context_manager.is_some(),
+            "building agent runtime"
+        );
+
         let event_bus = super::runtime::EventBus::new(self.event_bus_capacity);
         let session_store = self
             .session_store

@@ -2,6 +2,7 @@ pub mod engine;
 pub mod llm;
 pub mod tool;
 pub mod types;
+pub mod config_manager;
 
 // ---------------------------------------------------------------------------
 // Agent Runtime
@@ -87,6 +88,11 @@ pub use tool::{
 };
 
 // ---------------------------------------------------------------------------
+// Config Manager
+// ---------------------------------------------------------------------------
+pub use config_manager::{AgentConfig, ConfigManager, ConfigSource, ConfigError};
+
+// ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
 pub use types::AgentEvent;
@@ -100,7 +106,7 @@ pub use types::{AgentError, AgentResult};
 // Types
 // ---------------------------------------------------------------------------
 pub use types::{
-    AgentConfig,
+    AgentConfig as TypesAgentConfig,
     ChatMessage,
     CheckpointData,
     CheckpointStep,

@@ -169,10 +169,13 @@ impl AgentRuntime {
         let max_turns = self.config.execution.max_turns.unwrap_or(super::DEFAULT_MAX_TURNS);
         let mut total_tool_calls: usize = 0;
 
+        tracing::debug!(session_id = session_id.id, max_turns, "run turn loop start");
+
         loop {
             turn_count += 1;
 
             if turn_count > max_turns {
+                tracing::warn!(session_id = session_id.id, turn_count, max_turns, "max turns exceeded");
                 self.emit_event(AgentEvent::RunFinished {
                     session_id: session_id.clone(),
                 });
@@ -190,7 +193,9 @@ impl AgentRuntime {
             let tools_for_turn = tool_definitions.to_vec();
 
             if let Some(ref ctx_mgr) = self.context_manager {
+                let before = messages.len();
                 ctx_mgr.trim(&mut messages);
+                tracing::debug!(session_id = session_id.id, turn = turn_count, before, after = messages.len(), "context trimmed");
             }
 
             let (messages, tools_for_turn) = self.apply_pre_llm_mw(session_id, messages, tools_for_turn).await?;
@@ -271,6 +276,7 @@ impl AgentRuntime {
                     }
 
                     if result.full_text.is_empty() && !result.is_tool_call {
+                        tracing::debug!(session_id = session_id.id, turn = turn_count, "empty LLM response, continuing");
                         continue;
                     }
 
@@ -343,6 +349,9 @@ impl AgentRuntime {
     where
         F: FnMut(AgentEvent) -> AgentResult<()> + Send,
     {
+        let tool_names: Vec<&str> = tool_calls.iter().map(|(_, name, _)| name.as_str()).collect();
+        tracing::debug!(session_id = session_id.id, ?tool_names, "handle tool calls start");
+
         let mut parsed_calls: Vec<(String, String, String, serde_json::Value)> = Vec::new();
         for (id, name, args_str) in tool_calls {
             let args: serde_json::Value = serde_json::from_str(args_str).map_err(|_| AgentError::ToolArgsInvalid {
@@ -357,14 +366,7 @@ impl AgentRuntime {
             parsed_calls.push((id.clone(), name.clone(), args_str.clone(), args));
         }
 
-        for (_, tool_name, tool_args_json, _) in &parsed_calls {
-            self.emit_event(AgentEvent::ToolCallStarted {
-                session_id: session_id.clone(),
-                tool_name: tool_name.clone(),
-                args_json: tool_args_json.clone(),
-            });
-        }
-        EventBus::drain_async_events(event_rx, on_event)?;
+
 
         {
             let tc: Vec<(String, String, String)> = parsed_calls

@@ -267,10 +267,16 @@ impl LlmClient for OpenAiClient {
             .await
             .map_err(|e| AgentError::llm(format!("HTTP request failed: {e}")))?;
 
+        let status = response.status();
         let res_json: Value = response.json().await
             .map_err(|e| AgentError::json(format!("Response JSON parse failed: {e}")))?;
 
+        if !status.is_success() {
+            tracing::warn!(%status, "OpenAI API non-success");
+        }
+
         if let Some(error) = res_json.get("error") {
+            tracing::warn!(?error, "OpenAI API returned error");
             return Err(AgentError::LlmApi {
                 message: format!("{error:#?}"),
             });
@@ -318,8 +324,10 @@ impl LlmClient for OpenAiClient {
             .map_err(|e| AgentError::llm(format!("HTTP request failed: {e}")))?;
 
         if !response.status().is_success() {
+            let status = response.status();
             let err_text = response.text().await
                 .map_err(|e| AgentError::llm(format!("Failed to read error response: {e}")))?;
+            tracing::warn!(%status, error = %err_text, "OpenAI API stream non-success");
             return Err(AgentError::LlmApi { message: err_text });
         }
 
