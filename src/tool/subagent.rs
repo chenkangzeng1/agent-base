@@ -218,5 +218,8 @@ fn event_to_value(event: &AgentEvent) -> Value {
         AgentEvent::PlanFailed { plan_id, error, .. } => {
             json!({"type": "PlanFailed", "plan_id": plan_id, "error": error})
         }
+        AgentEvent::PlanStepWaitingConfirmation { step_id, step_description, payload, .. } => {
+            json!({"type": "PlanStepWaitingConfirmation", "step_id": step_id, "step_description": step_description, "payload": payload})
+        }
     }
 }

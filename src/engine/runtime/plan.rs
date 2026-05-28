@@ -5,6 +5,7 @@ use crate::types::{
     AgentError, AgentEvent, AgentResult, ExecutionPlan, PlanStatus, RecoveryAction,
     RunOutcome, SessionId, StepStatus,
 };
+use crate::tool::ToolContext;
 use crate::engine::plan::{
     AlwaysContinue, AbortOnFailure, PlanGenerator, PlanStore, RecoveryStrategy,
     StepContinuePolicy, StepExecutor,
@@ -178,6 +179,7 @@ impl AgentRuntime {
                     session_id: session_id.clone(),
                     step_id: plan.steps[i].id.clone(),
                     step_description: plan.steps[i].description.clone(),
+                    payload: None,
                 },
                 event_rx,
                 on_event,
@@ -198,7 +200,15 @@ impl AgentRuntime {
                 if !should_continue {
                     Ok(crate::types::StepResult::success("Skipped", 0))
                 } else {
-                    exec.execute_step(step, &plan.context).await
+                    let tool_ctx = ToolContext {
+                        session_id: session_id.clone(),
+                        event_bus: self.event_bus.sender(),
+                        event_sender: None,
+                        llm_client: Some(self.llm_engine().client.clone()),
+                        session_store: Some(self.session_manager.session_store().clone()),
+                        language: crate::types::Language::En,
+                    };
+                    exec.execute_step(step, &plan.context, &tool_ctx).await
                 }
             } else {
                 // Agentic mode: run as a full agent turn
@@ -237,6 +247,7 @@ impl AgentRuntime {
                                 step_id: plan.steps[i].id.clone(),
                                 success: true,
                                 result: plan.steps[i].result.as_ref().unwrap().output.clone(),
+                                payload: None,
                             },
                             event_rx,
                             on_event,
@@ -269,6 +280,7 @@ impl AgentRuntime {
                                         step_id: plan.steps[i].id.clone(),
                                         success: false,
                                         result: Some(format!("Skipped: {}", error)),
+                                        payload: None,
                                     },
                                     event_rx,
                                     on_event,
@@ -287,6 +299,7 @@ impl AgentRuntime {
                                         step_id: plan.steps[i].id.clone(),
                                         success: false,
                                         result: Some(error.clone()),
+                                        payload: None,
                                     },
                                     event_rx,
                                     on_event,
@@ -319,6 +332,7 @@ impl AgentRuntime {
                             step_id: plan.steps[i].id.clone(),
                             success: false,
                             result: Some(e.to_string()),
+                            payload: None,
                         },
                         event_rx,
                         on_event,

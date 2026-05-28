@@ -249,8 +249,9 @@ async fn test_approval_deny_stops_execution() {
 
     struct RequireApprovalPolicy;
 
+    #[async_trait]
     impl ToolPolicy for RequireApprovalPolicy {
-        fn evaluate_approval(
+        async fn evaluate_approval(
             &self,
             _tool_name: &str,
             _args: &Value,
@@ -330,8 +331,9 @@ async fn test_approval_allow_once_executes_tool() {
 
     struct RequireApprovalPolicy;
 
+    #[async_trait]
     impl ToolPolicy for RequireApprovalPolicy {
-        fn evaluate_approval(
+        async fn evaluate_approval(
             &self,
             _tool_name: &str,
             _args: &Value,
@@ -439,8 +441,9 @@ async fn test_tool_policy_hooks_are_invoked() {
         after: Arc<AtomicBool>,
     }
 
+    #[async_trait]
     impl ToolPolicy for HookTrackingPolicy {
-        fn evaluate_approval(&self, _tool_name: &str, _args: &Value) -> Option<ApprovalRequest> {
+        async fn evaluate_approval(&self, _tool_name: &str, _args: &Value) -> Option<ApprovalRequest> {
             None
         }
 
@@ -499,8 +502,9 @@ async fn test_tool_policy_hook_can_block_execution() {
 
     struct BlockingPolicy;
 
+    #[async_trait]
     impl ToolPolicy for BlockingPolicy {
-        fn evaluate_approval(&self, _tool_name: &str, _args: &Value) -> Option<ApprovalRequest> {
+        async fn evaluate_approval(&self, _tool_name: &str, _args: &Value) -> Option<ApprovalRequest> {
             None
         }
 
@@ -1138,8 +1142,9 @@ async fn approval_deny_with_stop_messages_remain_valid() {
     }
 
     struct RequireApprovalPolicy;
+    #[async_trait]
     impl ToolPolicy for RequireApprovalPolicy {
-        fn evaluate_approval(&self, _: &str, _: &Value) -> Option<ApprovalRequest> {
+        async fn evaluate_approval(&self, _: &str, _: &Value) -> Option<ApprovalRequest> {
             Some(ApprovalRequest {
                 title: "Test".to_string(),
                 message: "Require approval".to_string(),
@@ -1196,8 +1201,9 @@ async fn approval_deny_with_retry_tool_result_still_present() {
     }
 
     struct RequireApprovalPolicy;
+    #[async_trait]
     impl ToolPolicy for RequireApprovalPolicy {
-        fn evaluate_approval(&self, _: &str, _: &Value) -> Option<ApprovalRequest> {
+        async fn evaluate_approval(&self, _: &str, _: &Value) -> Option<ApprovalRequest> {
             Some(ApprovalRequest {
                 title: "Test".to_string(),
                 message: "Require approval".to_string(),
@@ -1412,6 +1418,7 @@ impl StepExecutor for MockStepExecutor {
         &self,
         step: &PlanStep,
         _plan_context: &Value,
+        _ctx: &ToolContext,
     ) -> AgentResult<StepResult> {
         let mut results = self.execution_results.lock().unwrap();
         if results.is_empty() {
@@ -1858,4 +1865,90 @@ async fn test_middleware_backward_compatible_existing_behavior() {
     assert!(matches!(messages[1], ChatMessage::User { .. }));
     assert!(matches!(messages[2], ChatMessage::Assistant { .. }));
     assert_eq!(llm.call_count(), 1);
+}
+
+/// 测试 async ToolPolicy 可以正常调用异步操作
+///
+/// 验证修复了 "Cannot start a runtime from within a runtime" 的问题
+/// 之前使用 handle.block_on() 会导致 panic，现在使用 async trait 可以正常工作
+#[tokio::test]
+async fn test_async_tool_policy_can_call_async_operations() {
+    use tokio::sync::RwLock;
+    use std::collections::HashMap;
+
+    // 模拟一个需要异步操作的 PlanStore
+    struct MockPlanStore {
+        plans: RwLock<HashMap<String, String>>,
+    }
+
+    impl MockPlanStore {
+        fn new() -> Self {
+            let mut plans = HashMap::new();
+            plans.insert("plan-1".to_string(), "test_plan_data".to_string());
+            Self {
+                plans: RwLock::new(plans),
+            }
+        }
+
+        async fn load_plan(&self, plan_id: &str) -> Option<String> {
+            // 模拟异步 IO 操作
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            let plans = self.plans.read().await;
+            plans.get(plan_id).cloned()
+        }
+    }
+
+    // 实现 async ToolPolicy，内部调用异步操作
+    struct AsyncPolicy {
+        plan_store: Arc<MockPlanStore>,
+    }
+
+    #[async_trait]
+    impl ToolPolicy for AsyncPolicy {
+        async fn evaluate_approval(
+            &self,
+            _tool_name: &str,
+            args: &Value,
+        ) -> Option<ApprovalRequest> {
+            // 直接 await 异步操作，不会 panic
+            let plan_id = args.get("plan_id").and_then(Value::as_str).unwrap_or("unknown");
+            let _plan_data = self.plan_store.load_plan(plan_id).await;
+
+            Some(ApprovalRequest {
+                title: "Test".to_string(),
+                message: "Async approval".to_string(),
+                action_key: None,
+                risk_level: RiskLevel::Sensitive,
+                raw: None,
+            })
+        }
+    }
+
+    let llm = Arc::new(MockLlmClient::new(vec![vec![
+        StreamChunk::ToolCall(json!({
+            "id": "call_1",
+            "type": "function",
+            "function": {
+                "name": "echo",
+                "arguments": "{\"message\": \"hello\"}"
+            }
+        })),
+        StreamChunk::Text("done".to_string()),
+        StreamChunk::Stop,
+    ]]));
+
+    let plan_store = Arc::new(MockPlanStore::new());
+    let policy = AsyncPolicy { plan_store };
+
+    let runtime = AgentBuilder::new(llm.clone())
+        .register_tool(EchoTool)
+        .tool_policy(Arc::new(policy))
+        .build()
+        .unwrap();
+
+    let session_id = runtime.create_session().await;
+    let result = runtime.run_turn_stream(session_id, "test").await;
+
+    // 验证没有 panic，正常完成
+    assert!(result.is_ok(), "Async ToolPolicy should not panic, got: {result:?}");
 }

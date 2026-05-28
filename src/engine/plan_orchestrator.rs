@@ -7,6 +7,8 @@ use crate::engine::{PlanGenerator, PlanStore, StepExecutor};
 use crate::tool::{Tool, ToolContext, ToolControlFlow, ToolOutput};
 use crate::types::{AgentError, AgentEvent, AgentResult, PlanStatus, StepStatus};
 
+use log;
+
 /// PlanOrchestrator is a domain-agnostic tool for creating execution plans.
 /// It delegates plan generation to a `PlanGenerator` implementation and
 /// stores the plan via a `PlanStore`.
@@ -88,21 +90,21 @@ impl Tool for PlanOrchestrator {
             format!("plan-{timestamp}-{count}")
         };
 
-        let event_bus_g = ctx.event_bus.clone();
+        let ctx_gen = ctx.clone();
         let session_id_g = ctx.session_id.clone();
         let plan_id_g = plan_id.clone();
         let on_generating = Box::new(move || {
-            let _ = event_bus_g.send(AgentEvent::PlanGenerating {
+            let _ = ctx_gen.emit_event(AgentEvent::PlanGenerating {
                 session_id: session_id_g.clone(),
                 plan_id: plan_id_g.clone(),
             });
         });
 
-        let event_bus_s = ctx.event_bus.clone();
+        let ctx_step = ctx.clone();
         let session_id_s = ctx.session_id.clone();
         let plan_id_s = plan_id.clone();
         let on_step_parsed = Box::new(move |index: usize, step_id: String, description: String| {
-            let _ = event_bus_s.send(AgentEvent::PlanStepParsed {
+            let _ = ctx_step.emit_event(AgentEvent::PlanStepParsed {
                 session_id: session_id_s.clone(),
                 plan_id: plan_id_s.clone(),
                 step_index: index,
@@ -111,10 +113,10 @@ impl Tool for PlanOrchestrator {
             });
         });
 
-        let event_bus_t = ctx.event_bus.clone();
+        let ctx_thought = ctx.clone();
         let session_id_t = ctx.session_id.clone();
-        let on_raw_chunk = Box::new(move |text: String| {
-            let _ = event_bus_t.send(AgentEvent::ThoughtDelta {
+        let on_thought = Box::new(move |text: String| {
+            let _ = ctx_thought.emit_event(AgentEvent::ThoughtDelta {
                 session_id: session_id_t.clone(),
                 text,
             });
@@ -130,19 +132,20 @@ impl Tool for PlanOrchestrator {
                 &tools,
                 on_generating,
                 on_step_parsed,
-                on_raw_chunk,
+                on_thought,
             )
             .await
         {
             Ok(mut plan) => {
                 plan.id = plan_id.clone();
                 plan.objective = objective.clone();
+                plan.status = crate::types::PlanStatus::AwaitingConfirmation;
 
                 self.plan_store
                     .save_plan(&plan, json!({"session_id": ctx.session_id.to_string()}))
                     .await?;
 
-                let _ = ctx.event_bus.send(AgentEvent::PlanGenerated {
+                let _ = ctx.emit_event(AgentEvent::PlanGenerated {
                     session_id: ctx.session_id.clone(),
                     plan: plan.clone(),
                 });
@@ -187,7 +190,7 @@ impl Tool for PlanOrchestrator {
                 })
             }
             Err(e) => {
-                let _ = ctx.event_bus.send(AgentEvent::PlanFailed {
+                let _ = ctx.emit_event(AgentEvent::PlanFailed {
                     session_id: ctx.session_id.clone(),
                     plan_id: plan_id.clone(),
                     error: e.to_string(),
@@ -216,6 +219,10 @@ impl Tool for PlanOrchestrator {
 }
 
 /// PlanExecTool is a domain-agnostic tool for executing previously created plans.
+///
+/// Steps are executed by the configured StepExecutor. If the StepExecutor is
+/// ToolCallingStepExecutor, each step's payload should contain `tool_name` and
+/// `args`, and the target tool itself handles any confirmation flow internally.
 #[derive(Clone)]
 pub struct PlanExecTool {
     step_executor: Arc<dyn StepExecutor>,
@@ -318,12 +325,19 @@ impl Tool for PlanExecTool {
                 continue;
             }
 
+            log::info!(
+                "PlanExecTool: executing step {} ({})",
+                step.id,
+                step.description
+            );
+
             step.status = StepStatus::Running;
 
-            let _ = ctx.event_bus.send(AgentEvent::PlanStepStarted {
+            let _ = ctx.emit_event(AgentEvent::PlanStepStarted {
                 session_id: ctx.session_id.clone(),
                 step_id: step.id.clone(),
                 step_description: step.description.clone(),
+                payload: Some(step.payload.clone()),
             });
 
             execution_summary.push_str(&if is_zh {
@@ -334,11 +348,16 @@ impl Tool for PlanExecTool {
 
             match self
                 .step_executor
-                .execute_step(step, &plan_data.metadata)
+                .execute_step(step, &plan_data.metadata, ctx)
                 .await
             {
                 Ok(result) => {
                     let step_success = result.success;
+                    log::info!(
+                        "PlanExecTool: step {} completed with success={}",
+                        step.id,
+                        step_success
+                    );
                     step.status = if step_success {
                         StepStatus::Completed
                     } else {
@@ -358,11 +377,12 @@ impl Tool for PlanExecTool {
                         )
                     });
 
-                    let _ = ctx.event_bus.send(AgentEvent::PlanStepCompleted {
+                    let _ = ctx.emit_event(AgentEvent::PlanStepCompleted {
                         session_id: ctx.session_id.clone(),
                         step_id: step.id.clone(),
                         success: step_success,
                         result: result.output.clone(),
+                        payload: Some(step.payload.clone()),
                     });
 
                     if step_success {
@@ -442,11 +462,12 @@ impl Tool for PlanExecTool {
                         format!("  Execution error: {e}\n")
                     });
 
-                    let _ = ctx.event_bus.send(AgentEvent::PlanStepCompleted {
+                    let _ = ctx.emit_event(AgentEvent::PlanStepCompleted {
                         session_id: ctx.session_id.clone(),
                         step_id: step.id.clone(),
                         success: false,
                         result: Some(e.to_string()),
+                        payload: Some(step.payload.clone()),
                     });
 
                     overall_success = false;
@@ -474,7 +495,7 @@ impl Tool for PlanExecTool {
             );
         }
 
-        let _ = ctx.event_bus.send(AgentEvent::PlanCompleted {
+        let _ = ctx.emit_event(AgentEvent::PlanCompleted {
             session_id: ctx.session_id.clone(),
             plan_id: plan_id.clone(),
             success: overall_success,

@@ -14,6 +14,8 @@ pub use engine::{
     AgentSession,
     AlwaysContinue,
     AlternativeAction,
+    DefaultPipeline,
+    EventEmittingPipeline,
     InMemoryPlanStore,
     InMemorySessionStore,
     PlanExecTool,
@@ -30,6 +32,8 @@ pub use engine::{
     StepExecutor,
     StepHistoryEntry,
     StreamingJsonParser,
+    ToolCallingStepExecutor,
+    ToolExecutionPipeline,
 };
 
 // ---------------------------------------------------------------------------

@@ -1,10 +1,12 @@
+use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::types::{AgentResult, ApprovalRequest};
 use super::{ToolContext, ToolOutput};
 
+#[async_trait]
 pub trait ToolPolicy: Send + Sync {
-    fn evaluate_approval(
+    async fn evaluate_approval(
         &self,
         tool_name: &str,
         args: &Value,

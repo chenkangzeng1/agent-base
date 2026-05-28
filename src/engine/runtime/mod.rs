@@ -92,6 +92,34 @@ impl AgentRuntime {
         self.tool_engine.tools_mut()
     }
 
+    /// Create a `ToolCallingStepExecutor` with the engine's execution pipeline.
+    ///
+    /// Plan steps executed through this executor get the same guarantees as
+    /// direct tool calls: policy hooks, timeout (`config.tool.tool_timeout_ms`),
+    /// and output truncation (`config.tool.max_tool_output_chars`).
+    ///
+    /// ```rust,no_run
+    /// # use std::sync::Arc;
+    /// # use agent_base::engine::{PlanExecTool, PlanStore, InMemoryPlanStore, AbortOnFailure};
+    /// # fn example(runtime: agent_base::engine::AgentRuntime) {
+    /// let step_executor = Arc::new(runtime.create_step_executor());
+    /// let plan_store = Arc::new(InMemoryPlanStore::new()) as Arc<dyn PlanStore>;
+    /// let recovery = Arc::new(AbortOnFailure);
+    /// let exec_tool = PlanExecTool::new(step_executor, plan_store, recovery);
+    /// # }
+    /// ```
+    pub fn create_step_executor(&self) -> crate::engine::ToolCallingStepExecutor {
+        use crate::engine::pipeline::DefaultPipeline;
+        let registry = Arc::new(self.tool_engine.tools().clone());
+        let base = self.tool_engine.execution_pipeline();
+        let pipeline = DefaultPipeline::new(
+            base.policy(),
+            self.config.tool.tool_timeout_ms,
+            self.config.tool.max_tool_output_chars,
+        );
+        crate::engine::ToolCallingStepExecutor::new(registry).with_pipeline(pipeline)
+    }
+
     pub fn config(&self) -> &AgentConfig {
         &self.config
     }

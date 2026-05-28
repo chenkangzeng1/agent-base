@@ -140,6 +140,7 @@ impl StepExecutor for SimpleStepExecutor {
         &self,
         step: &PlanStep,
         _plan_context: &Value,
+        _ctx: &ToolContext,
     ) -> AgentResult<StepResult> {
         println!("  Executing step: {} - {}", step.id, step.description);
         Ok(StepResult::success(format!("Step {} done", step.id), 100))

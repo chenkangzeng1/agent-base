@@ -29,6 +29,7 @@ pub struct PlanStep {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PlanStatus {
     Created,
+    AwaitingConfirmation,
     Approved,
     Executing,
     Completed,
@@ -39,6 +40,7 @@ pub enum PlanStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum StepStatus {
     Pending,
+    WaitingConfirmation,
     Running,
     Completed,
     Failed,

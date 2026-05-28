@@ -2,8 +2,10 @@ mod approval;
 mod builder;
 mod context;
 mod middleware;
+mod pipeline;
 mod plan;
 mod plan_orchestrator;
+
 mod recovery;
 mod reflexion;
 mod runtime;
@@ -18,8 +20,12 @@ pub use middleware::{Middleware, PostLlmCtx, PreLlmCtx, UserMessageCtx};
 pub use plan::{
     AbortOnFailure, AlwaysContinue, InMemoryPlanStore, PlanGenerator, PlanStore,
     RecoveryStrategy, StepContinuePolicy, StepExecutor, StreamingJsonParser,
+    ToolCallingStepExecutor,
 };
+pub use crate::types::{PlanStatus, StepStatus};
+pub use pipeline::{DefaultPipeline, EventEmittingPipeline, ToolExecutionPipeline};
 pub use plan_orchestrator::{PlanExecTool, PlanOrchestrator};
+
 pub use recovery::{RetryOnError, StopOnError, ToolErrorAction, ToolErrorRecovery};
 pub use reflexion::{AlternativeAction, ReflectionResult, ReflexionContext, ReflexionHandler, StepHistoryEntry};
 pub use runtime::AgentRuntime;

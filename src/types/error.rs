@@ -110,6 +110,13 @@ impl AgentError {
         Self::PlanStorage(message.into())
     }
 
+    pub fn plan_execution(message: impl Into<String>) -> Self {
+        Self::PlanStepFailed {
+            step_id: "unknown".to_string(),
+            message: message.into(),
+        }
+    }
+
     pub fn tool_timeout() -> Self {
         Self::ToolTimeout
     }

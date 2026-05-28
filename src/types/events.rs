@@ -50,12 +50,14 @@ pub enum AgentEvent {
         session_id: SessionId,
         step_id: String,
         step_description: String,
+        payload: Option<Value>,
     },
     PlanStepCompleted {
         session_id: SessionId,
         step_id: String,
         success: bool,
         result: Option<String>,
+        payload: Option<Value>,
     },
     PlanCompleted {
         session_id: SessionId,
@@ -77,5 +79,11 @@ pub enum AgentEvent {
         session_id: SessionId,
         plan_id: String,
         error: String,
+    },
+    PlanStepWaitingConfirmation {
+        session_id: SessionId,
+        step_id: String,
+        step_description: String,
+        payload: Option<Value>,
     },
 }

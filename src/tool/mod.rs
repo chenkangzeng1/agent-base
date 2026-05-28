@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 
 use crate::llm::LlmClient;
 use crate::types::{AgentResult, AgentError, AgentEvent, SessionId};
@@ -44,11 +44,26 @@ pub enum ToolControlFlow {
 pub struct ToolContext {
     pub session_id: SessionId,
     pub event_bus: broadcast::Sender<AgentEvent>,
+    /// Fast-path event sender for streaming events during tool execution.
+    /// When set, `emit_event` prefers this over `event_bus`.
+    pub event_sender: Option<mpsc::UnboundedSender<AgentEvent>>,
     pub llm_client: Option<Arc<dyn LlmClient>>,
     pub session_store: Option<Arc<dyn SessionStore>>,
     /// Language preference for tool output.
     /// Defaults to `Language::En` if not set.
     pub language: crate::types::Language,
+}
+
+impl ToolContext {
+    /// Send an event. When `event_sender` is available (tool execution context),
+    /// events go through the mpsc fast path; otherwise fall back to broadcast.
+    pub fn emit_event(&self, event: AgentEvent) {
+        if let Some(tx) = &self.event_sender {
+            let _ = tx.send(event);
+        } else {
+            let _ = self.event_bus.send(event);
+        }
+    }
 }
 
 #[async_trait]

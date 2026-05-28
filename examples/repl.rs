@@ -267,6 +267,9 @@ impl EventPrinter {
             AgentEvent::PlanCompleted { plan_id, success, .. } => {
                 println!("[Plan completed] {} success={}", plan_id, success);
             }
+            AgentEvent::PlanStepWaitingConfirmation { step_id, step_description, .. } => {
+                println!("[Plan step waiting confirmation] {} - {}", step_id, step_description);
+            }
             AgentEvent::PlanGenerating { .. } | AgentEvent::PlanStepParsed { .. } | AgentEvent::PlanFailed { .. } => {}
         }
         Ok(())
@@ -279,8 +282,9 @@ impl EventPrinter {
 
 struct ArithmeticToolPolicy;
 
+#[async_trait]
 impl ToolPolicy for ArithmeticToolPolicy {
-    fn evaluate_approval(
+    async fn evaluate_approval(
         &self,
         tool_name: &str,
         _args: &Value,

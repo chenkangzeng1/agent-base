@@ -12,6 +12,7 @@ dependencies = [
  "eventsource-stream",
  "futures-core",
  "futures-util",
+ "log",
  "opentelemetry 0.30.0",
  "reqwest",
  "schemars",
