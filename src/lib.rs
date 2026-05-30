@@ -120,6 +120,8 @@ pub use types::{
     Language,
     Message,
     MessageRole,
+    PhaseStatus,
+    PlanPhase,
     PlanStatus,
     PlanStep,
     PlanStoreData,

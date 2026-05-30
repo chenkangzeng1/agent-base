@@ -16,7 +16,7 @@ pub use events::AgentEvent;
 pub use message::{ChatMessage, ImageAttachment, ImageDetail, Message, MessageRole, ToolCallMessage};
 pub use outcome::RunOutcome;
 pub use plan::{
-    ExecutionPlan, PlanStatus, PlanStep, PlanStoreData, RecoveryAction, StepResult,
-    StepStatus,
+    ExecutionPlan, PhaseStatus, PlanPhase, PlanStatus, PlanStep, PlanStoreData, RecoveryAction,
+    StepResult, StepStatus,
 };
 pub use session::{SessionId, SessionIdGenerator, AtomicU64SessionIdGenerator, UuidSessionIdGenerator};

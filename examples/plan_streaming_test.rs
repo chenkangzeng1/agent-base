@@ -215,8 +215,7 @@ fn parse_jsonl_response(text: &str) -> (Option<String>, Vec<PlanStepLine>) {
 }
 
 fn lines_to_plan(objective_str: String, steps: Vec<PlanStepLine>) -> ExecutionPlan {
-    let mut plan = ExecutionPlan::new("test-plan", objective_str);
-    plan.steps = steps
+    let plan_steps: Vec<PlanStep> = steps
         .into_iter()
         .map(|s| {
             PlanStep::new(
@@ -231,7 +230,7 @@ fn lines_to_plan(objective_str: String, steps: Vec<PlanStepLine>) -> ExecutionPl
             .with_dependencies(s.depends_on)
         })
         .collect();
-    plan
+    ExecutionPlan::with_single_phase("test-plan", objective_str, plan_steps)
 }
 
 #[async_trait]
@@ -450,7 +449,7 @@ async fn test_plan_orchestrator(
                         println!(
                             "{} 📋 PlanGenerated: {} steps, objective=\"{}\"",
                             now_ms(t0),
-                            plan.steps.len(),
+                            plan.total_steps(),
                             plan.objective,
                         );
                     }

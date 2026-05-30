@@ -100,37 +100,113 @@ mod tests {
 
     #[test]
     fn test_execution_plan_progress() {
-        let mut plan = ExecutionPlan::new("plan-1", "Test");
-        plan.steps
-            .push(PlanStep::new("s1", "Step 1", Value::Null));
-        plan.steps
-            .push(PlanStep::new("s2", "Step 2", Value::Null));
-        plan.steps
-            .push(PlanStep::new("s3", "Step 3", Value::Null));
-
+        let plan = ExecutionPlan::with_single_phase(
+            "plan-1",
+            "Test",
+            vec![
+                PlanStep::new("s1", "Step 1", Value::Null),
+                PlanStep::new("s2", "Step 2", Value::Null),
+                PlanStep::new("s3", "Step 3", Value::Null),
+            ],
+        );
+        // Use into_inner pattern to mutate steps
+        let mut plan = plan;
         assert_eq!(plan.progress(), (0, 3));
         assert!(!plan.is_completed());
 
-        plan.steps[0].status = crate::types::StepStatus::Completed;
+        plan.find_step_mut("s1").unwrap().status = crate::types::StepStatus::Completed;
         assert_eq!(plan.progress(), (1, 3));
 
-        plan.steps[1].status = crate::types::StepStatus::Skipped;
+        plan.find_step_mut("s2").unwrap().status = crate::types::StepStatus::Skipped;
         assert_eq!(plan.progress(), (2, 3));
 
-        plan.steps[2].status = crate::types::StepStatus::Completed;
+        plan.find_step_mut("s3").unwrap().status = crate::types::StepStatus::Completed;
         assert_eq!(plan.progress(), (3, 3));
         assert!(plan.is_completed());
     }
 
     #[test]
     fn test_execution_plan_has_failed() {
-        let mut plan = ExecutionPlan::new("plan-1", "Test");
-        plan.steps
-            .push(PlanStep::new("s1", "Step 1", Value::Null));
+        let mut plan = ExecutionPlan::with_single_phase(
+            "plan-1",
+            "Test",
+            vec![PlanStep::new("s1", "Step 1", Value::Null)],
+        );
 
         assert!(!plan.has_failed());
 
-        plan.steps[0].status = crate::types::StepStatus::Failed;
+        plan.find_step_mut("s1").unwrap().status = crate::types::StepStatus::Failed;
         assert!(plan.has_failed());
+    }
+
+    #[test]
+    fn test_multi_phase_plan() {
+        use crate::types::{PhaseStatus, PlanPhase};
+
+        let mut plan = ExecutionPlan::new("plan-multi", "Multi-phase test");
+        plan.phases = vec![
+            PlanPhase::new(
+                "phase-1",
+                "系统资源检查",
+                vec![
+                    PlanStep::new("s1", "检查CPU", Value::Null),
+                    PlanStep::new("s2", "检查内存", Value::Null),
+                ],
+            ),
+            PlanPhase::new(
+                "phase-2",
+                "服务检查",
+                vec![
+                    PlanStep::new("s3", "检查sshd", Value::Null)
+                        .with_dependencies(vec!["s1".to_string()]),
+                ],
+            ),
+        ];
+
+        // Initial state
+        assert_eq!(plan.total_steps(), 3);
+        assert_eq!(plan.progress(), (0, 3));
+        assert!(!plan.is_completed());
+        assert!(!plan.has_failed());
+
+        // Phase 1: complete first step
+        plan.find_step_mut("s1").unwrap().status = crate::types::StepStatus::Completed;
+        assert_eq!(plan.progress(), (1, 3));
+        assert!(!plan.is_completed());
+
+        // Cross-phase dependency: s3 depends on s1 (now completed)
+        let s3 = plan.find_step("s3").unwrap();
+        assert!(s3.dependencies.iter().all(|dep| {
+            plan.find_step(dep)
+                .map(|s| matches!(s.status, crate::types::StepStatus::Completed))
+                .unwrap_or(false)
+        }));
+
+        // Complete all steps
+        plan.find_step_mut("s2").unwrap().status = crate::types::StepStatus::Completed;
+        plan.find_step_mut("s3").unwrap().status = crate::types::StepStatus::Completed;
+        assert_eq!(plan.progress(), (3, 3));
+
+        // Set phase statuses (simulating execution)
+        plan.phases[0].status = PhaseStatus::Completed;
+        plan.phases[1].status = PhaseStatus::Completed;
+        assert!(plan.is_completed());
+
+        // Test phase progress
+        assert_eq!(plan.phases[0].progress(), (2, 2));
+        assert_eq!(plan.phases[1].progress(), (1, 1));
+        assert!(plan.phases[0].is_completed());
+        assert!(plan.phases[1].is_completed());
+
+        // Test all_steps ordering: phase-1 steps before phase-2 steps
+        let step_ids: Vec<&str> = plan.all_steps().map(|s| s.id.as_str()).collect();
+        assert_eq!(step_ids, vec!["s1", "s2", "s3"]);
+    }
+
+    #[test]
+    fn test_empty_phases_not_completed() {
+        let plan = ExecutionPlan::new("plan-empty", "Empty");
+        assert!(!plan.is_completed());
+        assert_eq!(plan.total_steps(), 0);
     }
 }

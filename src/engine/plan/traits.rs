@@ -28,7 +28,7 @@ pub trait PlanGenerator: Send + Sync {
         // Default implementation falls back to non-streaming
         let plan = self.generate_plan(objective, context, tools).await?;
         on_generating();
-        for (i, step) in plan.steps.iter().enumerate() {
+        for (i, step) in plan.all_steps().enumerate() {
             on_step_parsed(i, step.id.clone(), step.description.clone());
         }
         Ok(plan)

@@ -151,8 +151,7 @@ impl Tool for PlanOrchestrator {
                 });
 
                 let step_details: Vec<Value> = plan
-                    .steps
-                    .iter()
+                    .all_steps()
                     .map(|s| {
                         json!({
                             "id": s.id,
@@ -164,13 +163,13 @@ impl Tool for PlanOrchestrator {
                 let summary = if ctx.language == crate::types::Language::Zh {
                     format!(
                         "计划已生成，包含 {} 个步骤，等待用户确认。计划ID: {}",
-                        plan.steps.len(),
+                        plan.total_steps(),
                         plan_id
                     )
                 } else {
                     format!(
                         "Plan generated with {} steps, awaiting user confirmation. plan_id: {}",
-                        plan.steps.len(),
+                        plan.total_steps(),
                         plan_id
                     )
                 };
@@ -180,7 +179,7 @@ impl Tool for PlanOrchestrator {
                     raw: Some(json!({
                         "objective": objective,
                         "plan_id": plan_id,
-                        "steps_count": plan.steps.len(),
+                        "steps_count": plan.total_steps(),
                         "steps": step_details,
                         "success": true,
                         "status": "awaiting_confirmation",
@@ -310,6 +309,7 @@ impl Tool for PlanExecTool {
 
         let mut plan = plan_data.plan;
         let objective = plan.objective.clone();
+        let plan_metadata = plan_data.metadata.clone();
         let mut execution_summary = if is_zh {
             format!("计划 '{}' 的执行结果:\n", objective)
         } else {
@@ -319,161 +319,186 @@ impl Tool for PlanExecTool {
         let mut overall_success = true;
         let mut failed_step_name: Option<String> = None;
         let mut _completed_count = 0usize;
+        let mut global_step_index = 0usize;
 
-        for (index, step) in plan.steps.iter_mut().enumerate() {
-            if step.status != StepStatus::Pending {
-                continue;
-            }
+        'phase_loop: for phase in plan.phases.iter_mut() {
+            phase.status = crate::types::PhaseStatus::Running;
 
-            log::info!(
-                "PlanExecTool: executing step {} ({})",
-                step.id,
-                step.description
-            );
+            for step in phase.steps.iter_mut() {
+                if step.status != StepStatus::Pending {
+                    global_step_index += 1;
+                    continue;
+                }
 
-            step.status = StepStatus::Running;
+                log::info!(
+                    "PlanExecTool: executing step {} ({})",
+                    step.id,
+                    step.description
+                );
 
-            let _ = ctx.emit_event(AgentEvent::PlanStepStarted {
-                session_id: ctx.session_id.clone(),
-                step_id: step.id.clone(),
-                step_description: step.description.clone(),
-                payload: Some(step.payload.clone()),
-            });
+                step.status = StepStatus::Running;
 
-            execution_summary.push_str(&if is_zh {
-                format!("步骤 {}: {}\n", index + 1, step.description)
-            } else {
-                format!("Step {}: {}\n", index + 1, step.description)
-            });
+                let _ = ctx.emit_event(AgentEvent::PlanStepStarted {
+                    session_id: ctx.session_id.clone(),
+                    step_id: step.id.clone(),
+                    step_description: step.description.clone(),
+                    payload: Some(step.payload.clone()),
+                });
 
-            match self
-                .step_executor
-                .execute_step(step, &plan_data.metadata, ctx)
-                .await
-            {
-                Ok(result) => {
-                    let step_success = result.success;
-                    log::info!(
-                        "PlanExecTool: step {} completed with success={}",
-                        step.id,
-                        step_success
-                    );
-                    step.status = if step_success {
-                        StepStatus::Completed
-                    } else {
-                        StepStatus::Failed
-                    };
-                    step.result = Some(result.clone());
+                execution_summary.push_str(&if is_zh {
+                    format!("步骤 {}: {}\n", global_step_index + 1, step.description)
+                } else {
+                    format!("Step {}: {}\n", global_step_index + 1, step.description)
+                });
 
-                    execution_summary.push_str(&if is_zh {
-                        format!(
-                            "  结果: {}\n",
-                            if step_success { "成功" } else { "失败" }
-                        )
-                    } else {
-                        format!(
-                            "  Result: {}\n",
-                            if step_success { "OK" } else { "FAILED" }
-                        )
-                    });
+                match self
+                    .step_executor
+                    .execute_step(step, &plan_metadata, ctx)
+                    .await
+                {
+                    Ok(result) => {
+                        let step_success = result.success;
+                        log::info!(
+                            "PlanExecTool: step {} completed with success={}",
+                            step.id,
+                            step_success
+                        );
+                        step.status = if step_success {
+                            StepStatus::Completed
+                        } else {
+                            StepStatus::Failed
+                        };
+                        step.result = Some(result.clone());
 
-                    let _ = ctx.emit_event(AgentEvent::PlanStepCompleted {
-                        session_id: ctx.session_id.clone(),
-                        step_id: step.id.clone(),
-                        success: step_success,
-                        result: result.output.clone(),
-                        payload: Some(step.payload.clone()),
-                    });
-
-                    if step_success {
-                        _completed_count += 1;
-                    } else {
-                        if let Some(ref output) = result.output {
-                            execution_summary.push_str(&if is_zh {
-                                format!("  错误: {output}\n")
-                            } else {
-                                format!("  Error: {output}\n")
-                            });
-                        }
-
-                        match self
-                            .recovery
-                            .handle_step_failure(
-                                step,
-                                result.output.as_deref().unwrap_or(""),
-                                0,
+                        execution_summary.push_str(&if is_zh {
+                            format!(
+                                "  结果: {}\n",
+                                if step_success { "成功" } else { "失败" }
                             )
-                            .await
-                        {
-                            Ok(action) => match action {
-                                crate::types::RecoveryAction::Retry => {
-                                    execution_summary.push_str(
-                                        if is_zh {
-                                            "  [重试] 系统建议重试该步骤（计划标记为未完全成功）\n"
-                                        } else {
-                                            "  [Retry] System suggests retrying this step (plan marked as not fully successful)\n"
-                                        },
-                                    );
-                                    overall_success = false;
-                                }
-                                crate::types::RecoveryAction::Skip => {
-                                    execution_summary.push_str(
-                                        if is_zh {
-                                            "  [跳过] 系统建议跳过该步骤（计划标记为未完全成功）\n"
-                                        } else {
-                                            "  [Skip] System suggests skipping this step (plan marked as not fully successful)\n"
-                                        },
-                                    );
-                                    step.status = StepStatus::Skipped;
-                                    overall_success = false;
-                                }
-                                crate::types::RecoveryAction::Abort => {
-                                    execution_summary.push_str(
-                                        if is_zh {
-                                            "  [中止] 系统建议中止计划\n"
-                                        } else {
-                                            "  [Abort] System suggests aborting the plan\n"
-                                        },
-                                    );
+                        } else {
+                            format!(
+                                "  Result: {}\n",
+                                if step_success { "OK" } else { "FAILED" }
+                            )
+                        });
+
+                        let _ = ctx.emit_event(AgentEvent::PlanStepCompleted {
+                            session_id: ctx.session_id.clone(),
+                            step_id: step.id.clone(),
+                            success: step_success,
+                            result: result.output.clone(),
+                            payload: Some(step.payload.clone()),
+                        });
+
+                        if step_success {
+                            _completed_count += 1;
+                        } else {
+                            if let Some(ref output) = result.output {
+                                execution_summary.push_str(&if is_zh {
+                                    format!("  错误: {output}\n")
+                                } else {
+                                    format!("  Error: {output}\n")
+                                });
+                            }
+
+                            match self
+                                .recovery
+                                .handle_step_failure(
+                                    step,
+                                    result.output.as_deref().unwrap_or(""),
+                                    0,
+                                )
+                                .await
+                            {
+                                Ok(action) => match action {
+                                    crate::types::RecoveryAction::Retry => {
+                                        execution_summary.push_str(
+                                            if is_zh {
+                                                "  [重试] 系统建议重试该步骤（计划标记为未完全成功）\n"
+                                            } else {
+                                                "  [Retry] System suggests retrying this step (plan marked as not fully successful)\n"
+                                            },
+                                        );
+                                        overall_success = false;
+                                    }
+                                    crate::types::RecoveryAction::Skip => {
+                                        execution_summary.push_str(
+                                            if is_zh {
+                                                "  [跳过] 系统建议跳过该步骤（计划标记为未完全成功）\n"
+                                            } else {
+                                                "  [Skip] System suggests skipping this step (plan marked as not fully successful)\n"
+                                            },
+                                        );
+                                        step.status = StepStatus::Skipped;
+                                        overall_success = false;
+                                    }
+                                    crate::types::RecoveryAction::Abort => {
+                                        execution_summary.push_str(
+                                            if is_zh {
+                                                "  [中止] 系统建议中止计划\n"
+                                            } else {
+                                                "  [Abort] System suggests aborting the plan\n"
+                                            },
+                                        );
+                                        overall_success = false;
+                                        failed_step_name = Some(step.description.clone());
+                                        phase.status = crate::types::PhaseStatus::Failed;
+                                        break 'phase_loop;
+                                    }
+                                },
+                                Err(_e) => {
                                     overall_success = false;
                                     failed_step_name = Some(step.description.clone());
-                                    break;
+                                    phase.status = crate::types::PhaseStatus::Failed;
+                                    break 'phase_loop;
                                 }
-                            },
-                            Err(_e) => {
-                                overall_success = false;
-                                failed_step_name = Some(step.description.clone());
-                                break;
                             }
                         }
+
+                        step_results.push(json!({
+                            "step": step.description,
+                            "success": step_success,
+                            "output": result.output,
+                        }));
                     }
+                    Err(e) => {
+                        step.status = StepStatus::Failed;
+                        execution_summary.push_str(&if is_zh {
+                            format!("  执行错误: {e}\n")
+                        } else {
+                            format!("  Execution error: {e}\n")
+                        });
 
-                    step_results.push(json!({
-                        "step": step.description,
-                        "success": step_success,
-                        "output": result.output,
-                    }));
+                        let _ = ctx.emit_event(AgentEvent::PlanStepCompleted {
+                            session_id: ctx.session_id.clone(),
+                            step_id: step.id.clone(),
+                            success: false,
+                            result: Some(e.to_string()),
+                            payload: Some(step.payload.clone()),
+                        });
+
+                        overall_success = false;
+                        failed_step_name = Some(step.description.clone());
+                        phase.status = crate::types::PhaseStatus::Failed;
+                        break 'phase_loop;
+                    }
                 }
-                Err(e) => {
-                    step.status = StepStatus::Failed;
-                    execution_summary.push_str(&if is_zh {
-                        format!("  执行错误: {e}\n")
-                    } else {
-                        format!("  Execution error: {e}\n")
-                    });
 
-                    let _ = ctx.emit_event(AgentEvent::PlanStepCompleted {
-                        session_id: ctx.session_id.clone(),
-                        step_id: step.id.clone(),
-                        success: false,
-                        result: Some(e.to_string()),
-                        payload: Some(step.payload.clone()),
-                    });
+                global_step_index += 1;
+            }
 
-                    overall_success = false;
-                    failed_step_name = Some(step.description.clone());
-                    break;
-                }
+            // Phase completed or already marked failed
+            if phase.status == crate::types::PhaseStatus::Running {
+                phase.status = if phase.has_failed() {
+                    crate::types::PhaseStatus::Failed
+                } else {
+                    crate::types::PhaseStatus::Completed
+                };
+            }
+
+            // Skip remaining phases if any step in this phase failed
+            if !overall_success {
+                break 'phase_loop;
             }
         }
 

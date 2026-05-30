@@ -1406,8 +1406,7 @@ impl PlanGenerator for MockPlanGenerator {
         _context: &str,
         _tools: &[Value],
     ) -> AgentResult<ExecutionPlan> {
-        let mut plan = ExecutionPlan::new("test-plan-1", objective);
-        plan.steps = self.steps.clone();
+        let plan = ExecutionPlan::with_single_phase("test-plan-1", objective, self.steps.clone());
         Ok(plan)
     }
 }
@@ -1597,18 +1596,18 @@ async fn test_plan_store_operations() {
 
 #[test]
 fn test_plan_data_structures() {
-    let mut plan = ExecutionPlan::new("test", "objective");
+    let plan = ExecutionPlan::new("test", "objective");
     assert_eq!(plan.status, PlanStatus::Created);
-    assert!(plan.steps.is_empty());
+    assert_eq!(plan.total_steps(), 0);
 
     let step = PlanStep::new("step-1", "description", json!({"type": "tool_call"}));
-    plan.steps.push(step);
+    let mut plan = ExecutionPlan::with_single_phase("test", "objective", vec![step]);
 
     assert_eq!(plan.progress(), (0, 1));
     assert!(!plan.is_completed());
     assert!(!plan.has_failed());
 
-    plan.steps[0].status = StepStatus::Completed;
+    plan.find_step_mut("step-1").unwrap().status = StepStatus::Completed;
     assert_eq!(plan.progress(), (1, 1));
     assert!(plan.is_completed());
 }

@@ -113,20 +113,22 @@ impl PlanGenerator for SimplePlanGenerator {
         _context: &str,
         _tools: &[Value],
     ) -> AgentResult<ExecutionPlan> {
-        let mut plan = ExecutionPlan::new("demo-plan", objective);
-
-        plan.steps = vec![
-            PlanStep::new(
-                "step-1",
-                "Greet the user",
-                json!({"type": "tool_call", "tool_name": "greet", "args": {"name": "User"}}),
-            ),
-            PlanStep::new(
-                "step-2",
-                "Confirm completion",
-                json!({"type": "tool_call", "tool_name": "greet", "args": {"name": "Team"}}),
-            ),
-        ];
+        let plan = ExecutionPlan::with_single_phase(
+            "demo-plan",
+            objective,
+            vec![
+                PlanStep::new(
+                    "step-1",
+                    "Greet the user",
+                    json!({"type": "tool_call", "tool_name": "greet", "args": {"name": "User"}}),
+                ),
+                PlanStep::new(
+                    "step-2",
+                    "Confirm completion",
+                    json!({"type": "tool_call", "tool_name": "greet", "args": {"name": "Team"}}),
+                ),
+            ],
+        );
 
         Ok(plan)
     }
@@ -182,8 +184,8 @@ async fn main() -> AgentResult<()> {
             |event| match event {
                 AgentEvent::PlanGenerated { plan, .. } => {
                     println!("[PlanGenerated] id={}, objective={}", plan.id, plan.objective);
-                    println!("  Steps: {}", plan.steps.len());
-                    for step in &plan.steps {
+                    println!("  Steps: {}", plan.total_steps());
+                    for step in plan.all_steps() {
                         println!("    - {}: {}", step.id, step.description);
                     }
                     Ok(())

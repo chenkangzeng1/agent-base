@@ -142,7 +142,13 @@ impl AgentRuntime {
         result
     }
 
-    /// Internal: shared plan-step execution loop.
+    /// Internal: shared plan-step execution loop (phase-aware).
+    ///
+    /// Iterates through phases in order. Within each phase, iterates through
+    /// steps. Steps whose dependencies are not met are skipped.
+    ///
+    /// Uses index-based iteration to avoid borrow-checker conflicts when
+    /// reading `plan` (for dependency checks) while mutating phases/steps.
     ///
     /// - If `executor` is `None` → agentic mode (step becomes agent turn).
     /// - If `executor` is `Some` → deterministic mode (step goes to executor).
@@ -159,198 +165,214 @@ impl AgentRuntime {
     where
         F: FnMut(AgentEvent) -> AgentResult<()> + Send,
     {
-        let mut i = 0usize;
-        while i < plan.steps.len() {
-            // Check dependencies before running
-            if plan.steps[i].status == StepStatus::Pending
-                && !self.check_dependencies_met(plan, i)
-            {
-                plan.steps[i].status = StepStatus::Skipped;
-                i += 1;
-                continue;
-            }
+        for phase_idx in 0..plan.phases.len() {
+            plan.phases[phase_idx].status = crate::types::PhaseStatus::Running;
 
-            plan.steps[i].status = StepStatus::Running;
+            let mut step_idx = 0usize;
+            while step_idx < plan.phases[phase_idx].steps.len() {
+                let step_id = plan.phases[phase_idx].steps[step_idx].id.clone();
 
-            tracing::debug!(session_id = session_id.id, step_index = i, step_id = plan.steps[i].id, "step running");
+                // Check dependencies (immutable borrow of plan, no conflict with index-based access)
+                if plan.phases[phase_idx].steps[step_idx].status == StepStatus::Pending
+                    && !Self::check_dependencies_met(plan, &step_id)
+                {
+                    plan.phases[phase_idx].steps[step_idx].status = StepStatus::Skipped;
+                    step_idx += 1;
+                    continue;
+                }
 
-            self.emit_and_drain(
-                AgentEvent::PlanStepStarted {
-                    session_id: session_id.clone(),
-                    step_id: plan.steps[i].id.clone(),
-                    step_description: plan.steps[i].description.clone(),
-                    payload: None,
-                },
-                event_rx,
-                on_event,
-            );
+                plan.phases[phase_idx].steps[step_idx].status = StepStatus::Running;
+                let step_desc = plan.phases[phase_idx].steps[step_idx].description.clone();
 
-            // Step execution
-            let step = &plan.steps[i];
-            let step_result = if let Some(exec) = &executor {
-                // Deterministic mode
-                let should_continue = if let Some(p) = &policy {
-                    p.should_continue(plan, step)
-                        .await
-                        .unwrap_or(true)
+                tracing::debug!(session_id = session_id.id, %step_id, "step running");
+
+                self.emit_and_drain(
+                    AgentEvent::PlanStepStarted {
+                        session_id: session_id.clone(),
+                        step_id: step_id.clone(),
+                        step_description: step_desc.clone(),
+                        payload: None,
+                    },
+                    event_rx,
+                    on_event,
+                );
+
+                // Step execution — immutable borrow of step, released before mutation below
+                let step = &plan.phases[phase_idx].steps[step_idx];
+                let step_result = if let Some(exec) = &executor {
+                    // Deterministic mode
+                    let should_continue = if let Some(p) = &policy {
+                        p.should_continue(plan, step)
+                            .await
+                            .unwrap_or(true)
+                    } else {
+                        true
+                    };
+
+                    if !should_continue {
+                        Ok(crate::types::StepResult::success("Skipped", 0))
+                    } else {
+                        let tool_ctx = ToolContext {
+                            session_id: session_id.clone(),
+                            event_bus: self.event_bus.sender(),
+                            event_sender: None,
+                            llm_client: Some(self.llm_engine().client.clone()),
+                            session_store: Some(self.session_manager.session_store().clone()),
+                            language: crate::types::Language::En,
+                        };
+                        exec.execute_step(step, &plan.context, &tool_ctx).await
+                    }
                 } else {
-                    true
+                    // Agentic mode: run as a full agent turn
+                    let mut step_events = Vec::new();
+                    let outcome = self
+                        .run(session_id.clone(), |event| {
+                            step_events.push(event.clone());
+                            on_event(event)
+                        })
+                        .await;
+
+                    let _ = EventBus::drain_async_events(event_rx, on_event);
+
+                    match outcome {
+                        Ok(RunOutcome::Completed) => Ok(crate::types::StepResult::success("Step completed", 0)),
+                        Ok(RunOutcome::Failed { error }) => Ok(crate::types::StepResult::failure(error, 0)),
+                        Ok(RunOutcome::MaxTurnsExceeded { .. }) => Ok(crate::types::StepResult::failure("Max turns exceeded".to_string(), 0)),
+                        Ok(RunOutcome::Cancelled) => Ok(crate::types::StepResult::failure("Cancelled".to_string(), 0)),
+                        Err(e) => Err(e),
+                    }
                 };
 
-                if !should_continue {
-                    Ok(crate::types::StepResult::success("Skipped", 0))
-                } else {
-                    let tool_ctx = ToolContext {
-                        session_id: session_id.clone(),
-                        event_bus: self.event_bus.sender(),
-                        event_sender: None,
-                        llm_client: Some(self.llm_engine().client.clone()),
-                        session_store: Some(self.session_manager.session_store().clone()),
-                        language: crate::types::Language::En,
-                    };
-                    exec.execute_step(step, &plan.context, &tool_ctx).await
-                }
-            } else {
-                // Agentic mode: run as a full agent turn
-                let mut step_events = Vec::new();
-                let outcome = self
-                    .run(session_id.clone(), |event| {
-                        step_events.push(event.clone());
-                        on_event(event)
-                    })
-                    .await;
+                // Handle result — mutable access via index
+                match step_result {
+                    Ok(result) => {
+                        let error = result.error.clone().unwrap_or_default();
+                        let success = result.success;
+                        plan.phases[phase_idx].steps[step_idx].result = Some(result);
 
-                let _ = EventBus::drain_async_events(event_rx, on_event);
+                        if success {
+                            plan.phases[phase_idx].steps[step_idx].status = StepStatus::Completed;
+                            tracing::debug!(session_id = session_id.id, %step_id, "step completed");
 
-                match outcome {
-                    Ok(RunOutcome::Completed) => Ok(crate::types::StepResult::success("Step completed", 0)),
-                    Ok(RunOutcome::Failed { error }) => Ok(crate::types::StepResult::failure(error, 0)),
-                    Ok(RunOutcome::MaxTurnsExceeded { .. }) => Ok(crate::types::StepResult::failure("Max turns exceeded".to_string(), 0)),
-                    Ok(RunOutcome::Cancelled) => Ok(crate::types::StepResult::failure("Cancelled".to_string(), 0)),
-                    Err(e) => Err(e),
-                }
-            };
+                            let output = plan.phases[phase_idx].steps[step_idx]
+                                .result.as_ref().unwrap().output.clone();
 
-            match step_result {
-                Ok(result) => {
-                    let error = result.error.clone().unwrap_or_default();
-                    let success = result.success;
-                    plan.steps[i].result = Some(result);
+                            self.emit_and_drain(
+                                AgentEvent::PlanStepCompleted {
+                                    session_id: session_id.clone(),
+                                    step_id: step_id.clone(),
+                                    success: true,
+                                    result: output,
+                                    payload: None,
+                                },
+                                event_rx,
+                                on_event,
+                            );
 
-                    if success {
-                        plan.steps[i].status = StepStatus::Completed;
-                        tracing::debug!(session_id = session_id.id, step_index = i, step_id = plan.steps[i].id, "step completed");
+                            step_idx += 1;
+                        } else {
+                            let action: RecoveryAction = if let Some(r) = &recovery {
+                                r.handle_step_failure(&plan.phases[phase_idx].steps[step_idx], &error, 0)
+                                    .await
+                                    .unwrap_or(RecoveryAction::Abort)
+                            } else {
+                                RecoveryAction::Abort
+                            };
+
+                            match action {
+                                RecoveryAction::Retry => {
+                                    plan.phases[phase_idx].steps[step_idx].status = StepStatus::Pending;
+                                    plan.phases[phase_idx].steps[step_idx].result = None;
+                                    tracing::debug!(session_id = session_id.id, %step_id, "step retry");
+                                    // step_idx is NOT incremented, so this step will be retried
+                                }
+                                RecoveryAction::Skip => {
+                                    plan.phases[phase_idx].steps[step_idx].status = StepStatus::Skipped;
+                                    tracing::debug!(session_id = session_id.id, %step_id, "step skipped");
+
+                                    self.emit_and_drain(
+                                        AgentEvent::PlanStepCompleted {
+                                            session_id: session_id.clone(),
+                                            step_id: step_id.clone(),
+                                            success: false,
+                                            result: Some(format!("Skipped: {}", error)),
+                                            payload: None,
+                                        },
+                                        event_rx,
+                                        on_event,
+                                    );
+
+                                    step_idx += 1;
+                                }
+                                RecoveryAction::Abort => {
+                                    plan.phases[phase_idx].steps[step_idx].status = StepStatus::Failed;
+                                    plan.phases[phase_idx].status = crate::types::PhaseStatus::Failed;
+                                    plan.status = PlanStatus::Failed;
+                                    tracing::warn!(session_id = session_id.id, %step_id, "step abort");
+
+                                    self.emit_and_drain(
+                                        AgentEvent::PlanStepCompleted {
+                                            session_id: session_id.clone(),
+                                            step_id: step_id.clone(),
+                                            success: false,
+                                            result: Some(error.clone()),
+                                            payload: None,
+                                        },
+                                        event_rx,
+                                        on_event,
+                                    );
+
+                                    self.emit_and_drain(
+                                        AgentEvent::PlanCompleted {
+                                            session_id: session_id.clone(),
+                                            plan_id: plan.id.clone(),
+                                            success: false,
+                                        },
+                                        event_rx,
+                                        on_event,
+                                    );
+
+                                    return Ok(RunOutcome::Failed {
+                                        error: format!("Step '{}' failed: {}", step_id, error),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        plan.phases[phase_idx].steps[step_idx].status = StepStatus::Failed;
+                        plan.phases[phase_idx].status = crate::types::PhaseStatus::Failed;
+                        plan.status = PlanStatus::Failed;
 
                         self.emit_and_drain(
                             AgentEvent::PlanStepCompleted {
                                 session_id: session_id.clone(),
-                                step_id: plan.steps[i].id.clone(),
-                                success: true,
-                                result: plan.steps[i].result.as_ref().unwrap().output.clone(),
+                                step_id: step_id.clone(),
+                                success: false,
+                                result: Some(e.to_string()),
                                 payload: None,
                             },
                             event_rx,
                             on_event,
                         );
 
-                        i += 1; // Move to next step
-                    } else {
-                        let action: RecoveryAction = if let Some(r) = &recovery {
-                            r.handle_step_failure(&plan.steps[i], &error, 0)
-                                .await
-                                .unwrap_or(RecoveryAction::Abort)
-                        } else {
-                            RecoveryAction::Abort
-                        };
+                        self.emit_and_drain(
+                            AgentEvent::PlanCompleted {
+                                session_id: session_id.clone(),
+                                plan_id: plan.id.clone(),
+                                success: false,
+                            },
+                            event_rx,
+                            on_event,
+                        );
 
-                        match action {
-                            RecoveryAction::Retry => {
-                                plan.steps[i].status = StepStatus::Pending;
-                                plan.steps[i].result = None;
-                                tracing::debug!(session_id = session_id.id, step_index = i, step_id = plan.steps[i].id, "step retry");
-                                // i is NOT incremented, so this step will be retried
-                            }
-                            RecoveryAction::Skip => {
-                                plan.steps[i].status = StepStatus::Skipped;
-                                tracing::debug!(session_id = session_id.id, step_index = i, step_id = plan.steps[i].id, "step skipped");
-
-                                self.emit_and_drain(
-                                    AgentEvent::PlanStepCompleted {
-                                        session_id: session_id.clone(),
-                                        step_id: plan.steps[i].id.clone(),
-                                        success: false,
-                                        result: Some(format!("Skipped: {}", error)),
-                                        payload: None,
-                                    },
-                                    event_rx,
-                                    on_event,
-                                );
-
-                                i += 1; // Move to next step
-                            }
-                            RecoveryAction::Abort => {
-                                plan.steps[i].status = StepStatus::Failed;
-                                plan.status = PlanStatus::Failed;
-                                tracing::warn!(session_id = session_id.id, step_index = i, step_id = plan.steps[i].id, "step abort");
-
-                                self.emit_and_drain(
-                                    AgentEvent::PlanStepCompleted {
-                                        session_id: session_id.clone(),
-                                        step_id: plan.steps[i].id.clone(),
-                                        success: false,
-                                        result: Some(error.clone()),
-                                        payload: None,
-                                    },
-                                    event_rx,
-                                    on_event,
-                                );
-
-                                self.emit_and_drain(
-                                    AgentEvent::PlanCompleted {
-                                        session_id: session_id.clone(),
-                                        plan_id: plan.id.clone(),
-                                        success: false,
-                                    },
-                                    event_rx,
-                                    on_event,
-                                );
-
-                                return Ok(RunOutcome::Failed {
-                                    error: format!("Step '{}' failed: {}", plan.steps[i].id, error),
-                                });
-                            }
-                        }
+                        return Err(e);
                     }
                 }
-                Err(e) => {
-                    plan.steps[i].status = StepStatus::Failed;
-                    plan.status = PlanStatus::Failed;
-
-                    self.emit_and_drain(
-                        AgentEvent::PlanStepCompleted {
-                            session_id: session_id.clone(),
-                            step_id: plan.steps[i].id.clone(),
-                            success: false,
-                            result: Some(e.to_string()),
-                            payload: None,
-                        },
-                        event_rx,
-                        on_event,
-                    );
-
-                    self.emit_and_drain(
-                        AgentEvent::PlanCompleted {
-                            session_id: session_id.clone(),
-                            plan_id: plan.id.clone(),
-                            success: false,
-                        },
-                        event_rx,
-                        on_event,
-                    );
-
-                    return Err(e);
-                }
             }
+
+            // Phase completed
+            plan.phases[phase_idx].status = crate::types::PhaseStatus::Completed;
         }
 
         plan.status = PlanStatus::Completed;
@@ -368,18 +390,24 @@ impl AgentRuntime {
         Ok(RunOutcome::Completed)
     }
 
-    fn check_dependencies_met(&self, plan: &ExecutionPlan, step_index: usize) -> bool {
-        let step = &plan.steps[step_index];
+    /// Check if all dependencies of a step (found by id across all phases) are met.
+    ///
+    /// This is a static method that only performs immutable reads on the plan,
+    /// safe to call alongside index-based mutation in `run_plan_steps`.
+    fn check_dependencies_met(plan: &ExecutionPlan, step_id: &str) -> bool {
+        let step = match plan.find_step(step_id) {
+            Some(s) => s,
+            None => return true,
+        };
+
         if step.dependencies.is_empty() {
             return true;
         }
 
-        tracing::debug!(step_index, step_id = step.id, deps_count = step.dependencies.len(), "checking step dependencies");
+        tracing::debug!(%step_id, deps_count = step.dependencies.len(), "checking step dependencies");
 
         step.dependencies.iter().all(|dep_id: &String| {
-            plan.steps
-                .iter()
-                .find(|s| s.id == *dep_id)
+            plan.find_step(dep_id)
                 .map(|s| matches!(s.status, StepStatus::Completed | StepStatus::Skipped))
                 .unwrap_or(false)
         })
