@@ -2,9 +2,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use agent_base::{
-    AgentBuilder, AgentEvent, AgentResult, AllowAllApprovalHandler, ChatMessage, ExecutionPlan,
+    AgentBuilder, AgentResult, AllowAllApprovalHandler, ChatMessage, ExecutionPlan,
     InMemoryPlanStore, LlmClient, OpenAiClient, PlanGenerator, PlanOrchestrator, PlanStep,
-    ReasoningConfig, StepExecutor, StepResult, StreamChunk, ToolContext,
+    ReasoningConfig, RuntimeEvent, StepExecutor, StepResult, StreamChunk, ToolContext,
 };
 use async_trait::async_trait;
 use futures_util::StreamExt;
@@ -431,10 +431,10 @@ async fn test_plan_orchestrator(
             "全面检查服务器健康状况\n\n[可用主机信息]\n- test-host (IP: 121.41.191.236)",
             |event| {
                 match event {
-                    AgentEvent::PlanGenerating { .. } => {
+                    RuntimeEvent::PlanGenerating { .. } => {
                         println!("{} 🔄 PlanGenerating", now_ms(t0));
                     }
-                    AgentEvent::PlanStepParsed {
+                    RuntimeEvent::PlanStepParsed {
                         step_index,
                         step_id,
                         step_description,
@@ -445,7 +445,7 @@ async fn test_plan_orchestrator(
                             now_ms(t0), step_index, step_id, step_description,
                         );
                     }
-                    AgentEvent::PlanGenerated { plan, .. } => {
+                    RuntimeEvent::PlanGenerated { plan, .. } => {
                         println!(
                             "{} 📋 PlanGenerated: {} steps, objective=\"{}\"",
                             now_ms(t0),
@@ -453,10 +453,10 @@ async fn test_plan_orchestrator(
                             plan.objective,
                         );
                     }
-                    AgentEvent::ToolCallStarted { tool_name, .. } => {
+                    RuntimeEvent::ToolCallStarted { tool_name, .. } => {
                         println!("{} 🔧 ToolCallStarted: {}", now_ms(t0), tool_name);
                     }
-                    AgentEvent::ToolCallFinished {
+                    RuntimeEvent::ToolCallFinished {
                         tool_name, ..
                     } => {
                         println!(
@@ -464,10 +464,10 @@ async fn test_plan_orchestrator(
                             now_ms(t0), tool_name,
                         );
                     }
-                    AgentEvent::RunFinished { .. } => {
+                    RuntimeEvent::RunFinished { .. } => {
                         println!("{} 🏁 RunFinished", now_ms(t0));
                     }
-                    AgentEvent::ThoughtDelta { text, .. } => {
+                    RuntimeEvent::ThoughtDelta { text, .. } => {
                         let short = &text[..text.len().min(60)];
                         println!("{} 💭 \"{}\"", now_ms(t0), short);
                     }

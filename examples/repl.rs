@@ -2,9 +2,9 @@ use std::io::{self, Write};
 use std::sync::Arc;
 
 use agent_base::{
-    AgentBuilder, AgentError, AgentEvent, AgentResult, ApprovalDecision, ApprovalHandler,
-    ApprovalRequest, OpenAiClient, RiskLevel, Tool, ToolContext, ToolControlFlow, ToolOutput,
-    ToolPolicy,
+    AgentBuilder, AgentError, AgentResult, ApprovalDecision, ApprovalHandler,
+    ApprovalRequest, OpenAiClient, RiskLevel, RuntimeEvent, Tool, ToolContext,
+    ToolControlFlow, ToolOutput, ToolPolicy,
 };
 use async_trait::async_trait;
 use dotenvy::dotenv;
@@ -219,58 +219,55 @@ impl ApprovalHandler for CliApprovalHandler {
 struct EventPrinter;
 
 impl EventPrinter {
-    fn handle(event: AgentEvent) -> AgentResult<()> {
+    fn handle(event: RuntimeEvent) -> AgentResult<()> {
         match event {
-            AgentEvent::TextDelta { text, .. } => {
+            RuntimeEvent::TextDelta { text, .. } => {
                 print!("{}", text);
                 io::stdout().flush().unwrap();
             }
-            AgentEvent::ThoughtDelta { text, .. } => {
+            RuntimeEvent::ThoughtDelta { text, .. } => {
                 print!("[Thinking]：\x1b[90m{} \x1b[0m", text);
                 println!();
                 io::stdout().flush().unwrap();
             }
-            AgentEvent::ToolCallStarted {
+            RuntimeEvent::ToolCallStarted {
                 tool_name, args_json, ..
             } => {
                 println!();
                 println!("[Tool call] {} (with args: {})", tool_name, args_json);
             }
-            AgentEvent::ToolCallFinished {
+            RuntimeEvent::ToolCallFinished {
                 tool_name, summary, ..
             } => {
                 println!("[Tool finished] {} -> {}", tool_name, summary);
             }
-            AgentEvent::AwaitingApproval { request, .. } => {
+            RuntimeEvent::AwaitingApproval { request, .. } => {
                 println!(
                     "[Waiting for approval] {} (Risk: {:?})",
                     request.title, request.risk_level
                 );
             }
-            AgentEvent::RunFinished { .. } => {
+            RuntimeEvent::RunFinished { .. } => {
                 println!();
                 println!("[Run finished]");
             }
-            AgentEvent::Custom { payload, .. } => {
-                println!("[Custom event] {}", payload);
-            }
-            AgentEvent::Checkpoint { .. } => {}
-            AgentEvent::PlanGenerated { plan, .. } => {
+            RuntimeEvent::Checkpoint { .. } => {}
+            RuntimeEvent::PlanGenerated { plan, .. } => {
                 println!("[Plan generated] id={}, objective={}", plan.id, plan.objective);
             }
-            AgentEvent::PlanStepStarted { step_id, step_description, .. } => {
+            RuntimeEvent::PlanStepStarted { step_id, step_description, .. } => {
                 println!("[Plan step started] {} - {}", step_id, step_description);
             }
-            AgentEvent::PlanStepCompleted { step_id, success, .. } => {
+            RuntimeEvent::PlanStepCompleted { step_id, success, .. } => {
                 println!("[Plan step completed] {} success={}", step_id, success);
             }
-            AgentEvent::PlanCompleted { plan_id, success, .. } => {
+            RuntimeEvent::PlanCompleted { plan_id, success, .. } => {
                 println!("[Plan completed] {} success={}", plan_id, success);
             }
-            AgentEvent::PlanStepWaitingConfirmation { step_id, step_description, .. } => {
+            RuntimeEvent::PlanStepWaitingConfirmation { step_id, step_description, .. } => {
                 println!("[Plan step waiting confirmation] {} - {}", step_id, step_description);
             }
-            AgentEvent::PlanGenerating { .. } | AgentEvent::PlanStepParsed { .. } | AgentEvent::PlanFailed { .. } => {}
+            _ => {}
         }
         Ok(())
     }

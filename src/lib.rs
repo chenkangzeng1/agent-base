@@ -15,7 +15,6 @@ pub use engine::{
     AlwaysContinue,
     AlternativeAction,
     DefaultPipeline,
-    EventEmittingPipeline,
     InMemoryPlanStore,
     InMemorySessionStore,
     PlanExecTool,
@@ -99,7 +98,7 @@ pub use config_manager::{AgentConfig, ConfigManager, ConfigSource, ConfigError};
 // ---------------------------------------------------------------------------
 // Events
 // ---------------------------------------------------------------------------
-pub use types::AgentEvent;
+pub use types::{RuntimeEvent, UserEvent};
 
 // ---------------------------------------------------------------------------
 // Errors

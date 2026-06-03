@@ -4,19 +4,17 @@ use serde_json::Value;
 use tokio::sync::{broadcast, mpsc};
 
 use crate::engine::approval::ApprovalHandler;
-use crate::engine::middleware::MiddlewareRef;
 use crate::engine::pipeline::DefaultPipeline;
 use crate::engine::recovery::ToolErrorRecovery;
 use crate::engine::runtime::event_bus::EventBus;
 use crate::engine::runtime::session_manager::SessionManager;
 use crate::tool::{ToolContext, ToolControlFlow, ToolOutput, ToolPolicy, ToolRegistry};
-use crate::types::{AgentError, AgentEvent, AgentResult, Language, SessionId};
+use crate::types::{AgentError, AgentEvent, AgentResult, Language, RuntimeEvent, SessionId, UserEvent};
 
-pub struct ToolEngine {
+pub(crate) struct ToolEngine {
     tools: ToolRegistry,
     approval_handler: Option<Arc<dyn ApprovalHandler>>,
     tool_policy: Option<Arc<dyn ToolPolicy>>,
-    middlewares: Vec<MiddlewareRef>,
     error_recovery: Arc<dyn ToolErrorRecovery>,
     event_bus: EventBus,
     pipeline: DefaultPipeline,
@@ -27,7 +25,6 @@ impl ToolEngine {
         tools: ToolRegistry,
         approval_handler: Option<Arc<dyn ApprovalHandler>>,
         tool_policy: Option<Arc<dyn ToolPolicy>>,
-        middlewares: Vec<MiddlewareRef>,
         error_recovery: Arc<dyn ToolErrorRecovery>,
         event_bus: EventBus,
     ) -> Self {
@@ -36,7 +33,6 @@ impl ToolEngine {
             tools,
             approval_handler,
             tool_policy,
-            middlewares,
             error_recovery,
             event_bus,
             pipeline,
@@ -55,7 +51,7 @@ impl ToolEngine {
         self.pipeline.clone()
     }
 
-    pub async fn execute_tool(
+    pub async fn execute_tool<F>(
         &self,
         session_id: &SessionId,
         id: &str,
@@ -63,15 +59,19 @@ impl ToolEngine {
         args: &Value,
         tool_args_json: &str,
         event_rx: &mut broadcast::Receiver<AgentEvent>,
-        on_event: &mut (dyn FnMut(AgentEvent) -> AgentResult<()> + Send),
+        on_event: &mut F,
         session_manager: &SessionManager,
         llm_client: Option<Arc<dyn crate::llm::LlmClient>>,
         language: Language,
         tool_timeout_ms: Option<u64>,
         max_output_chars: Option<usize>,
-    ) -> AgentResult<ToolExecutionResult> {
+    ) -> AgentResult<ToolExecutionResult>
+    where
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
+    {
         tracing::debug!(session_id = session_id.id, tool = name, args_len = tool_args_json.len(), "execute tool start");
 
+        // Emit ToolCallStarted via internal EventBus
         tracing::info!(session_id = session_id.id, tool = name, "ToolEngine: emitting ToolCallStarted to broadcast");
         self.event_bus.emit(AgentEvent::ToolCallStarted {
             session_id: session_id.clone(),
@@ -82,12 +82,12 @@ impl ToolEngine {
         EventBus::drain_async_events(event_rx, on_event)?;
         tracing::info!(session_id = session_id.id, tool = name, "ToolEngine: broadcast drain complete");
 
-        let (event_tx, mut event_rx_mpsc) = mpsc::unbounded_channel::<AgentEvent>();
+        // Create UserEvent channel for this tool invocation
+        let (user_event_tx, mut user_event_rx) = mpsc::unbounded_channel::<UserEvent>();
 
         let tool_context = ToolContext {
             session_id: session_id.clone(),
-            event_bus: self.event_bus.sender(),
-            event_sender: Some(event_tx),
+            user_event_tx,
             llm_client: llm_client.clone(),
             session_store: Some(session_manager.session_store().clone()),
             language: language.clone(),
@@ -110,10 +110,12 @@ impl ToolEngine {
                     loop {
                         tokio::select! {
                             result = &mut future => break result,
-                            Some(event) = event_rx_mpsc.recv() => {
-                                tracing::info!(session_id = session_id.id, tool_name = name, event_type = ?std::mem::discriminant(&event), "mpsc event received, forwarding to event_bus");
-                                self.event_bus.emit(event);
-                                EventBus::drain_async_events(event_rx, on_event)?;
+                            Some(user_event) = user_event_rx.recv() => {
+                                // Forward UserEvent as RuntimeEvent::UserEvent
+                                on_event(RuntimeEvent::UserEvent {
+                                    session_id: session_id.clone(),
+                                    event: user_event,
+                                })?;
                             }
                             _ = &mut sleep => {
                                 tracing::warn!(session_id = session_id.id, tool_name = name, "Tool execution timed out");
@@ -130,17 +132,22 @@ impl ToolEngine {
                     loop {
                         tokio::select! {
                             result = &mut future => break result,
-                            Some(event) = event_rx_mpsc.recv() => {
-                                self.event_bus.emit(event);
-                                EventBus::drain_async_events(event_rx, on_event)?;
+                            Some(user_event) = user_event_rx.recv() => {
+                                on_event(RuntimeEvent::UserEvent {
+                                    session_id: session_id.clone(),
+                                    event: user_event,
+                                })?;
                             }
                         }
                     }
                 };
 
-                while let Ok(event) = event_rx_mpsc.try_recv() {
-                    self.event_bus.emit(event);
-                    EventBus::drain_async_events(event_rx, on_event)?;
+                // Drain remaining UserEvents
+                while let Ok(user_event) = user_event_rx.try_recv() {
+                    on_event(RuntimeEvent::UserEvent {
+                        session_id: session_id.clone(),
+                        event: user_event,
+                    })?;
                 }
 
                 match output {
@@ -200,16 +207,19 @@ impl ToolEngine {
         })
     }
 
-    pub async fn process_approval(
+    pub async fn process_approval<F>(
         &self,
         session_id: &SessionId,
         tool_name: &str,
         args: &Value,
         tool_args_json: &str,
         event_rx: &mut broadcast::Receiver<AgentEvent>,
-        on_event: &mut (dyn FnMut(AgentEvent) -> AgentResult<()> + Send),
+        on_event: &mut F,
         session_manager: &SessionManager,
-    ) -> AgentResult<()> {
+    ) -> AgentResult<()>
+    where
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
+    {
         let approval_request = match self.tool_policy.as_ref() {
             Some(policy) => policy.evaluate_approval(tool_name, args).await,
             None => None,

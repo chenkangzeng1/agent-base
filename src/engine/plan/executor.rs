@@ -189,10 +189,10 @@ mod tests {
     }
 
     fn create_test_tool_context() -> ToolContext {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         ToolContext {
             session_id: crate::types::SessionId::new(1),
-            event_bus: tokio::sync::broadcast::channel(1).0,
-            event_sender: None,
+            user_event_tx: tx,
             llm_client: None,
             session_store: None,
             language: crate::types::Language::En,

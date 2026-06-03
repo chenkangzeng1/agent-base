@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
-use crate::engine::{PlanGenerator, PlanStore, StepExecutor};
+use crate::engine::{EventBus, PlanGenerator, PlanStore, StepExecutor};
 use crate::tool::{Tool, ToolContext, ToolControlFlow, ToolOutput};
 use crate::types::{AgentError, AgentEvent, AgentResult, PlanStatus, StepStatus};
 
@@ -17,6 +17,7 @@ pub struct PlanOrchestrator {
     plan_generator: Arc<dyn PlanGenerator>,
     step_executor: Arc<dyn StepExecutor>,
     plan_store: Arc<dyn PlanStore>,
+    event_bus: Option<EventBus>,
 }
 
 impl PlanOrchestrator {
@@ -29,7 +30,13 @@ impl PlanOrchestrator {
             plan_generator,
             step_executor,
             plan_store,
+            event_bus: None,
         }
+    }
+
+    /// Inject the internal event bus. Called by `AgentBuilder::build()`.
+    pub(crate) fn set_event_bus(&mut self, event_bus: EventBus) {
+        self.event_bus = Some(event_bus);
     }
 
     pub fn with_step_executor(&mut self, step_executor: Arc<dyn StepExecutor>) {
@@ -42,6 +49,8 @@ impl Tool for PlanOrchestrator {
     fn name(&self) -> &'static str {
         "create_plan"
     }
+
+    fn as_any(&self) -> Option<&dyn std::any::Any> { Some(self) }
 
     fn definition(&self) -> Value {
         json!({
@@ -90,36 +99,42 @@ impl Tool for PlanOrchestrator {
             format!("plan-{timestamp}-{count}")
         };
 
-        let ctx_gen = ctx.clone();
+        let eb = self.event_bus.clone();
         let session_id_g = ctx.session_id.clone();
         let plan_id_g = plan_id.clone();
         let on_generating = Box::new(move || {
-            let _ = ctx_gen.emit_event(AgentEvent::PlanGenerating {
-                session_id: session_id_g.clone(),
-                plan_id: plan_id_g.clone(),
-            });
+            if let Some(bus) = &eb {
+                bus.emit(AgentEvent::PlanGenerating {
+                    session_id: session_id_g.clone(),
+                    plan_id: plan_id_g.clone(),
+                });
+            }
         });
 
-        let ctx_step = ctx.clone();
+        let eb = self.event_bus.clone();
         let session_id_s = ctx.session_id.clone();
         let plan_id_s = plan_id.clone();
         let on_step_parsed = Box::new(move |index: usize, step_id: String, description: String| {
-            let _ = ctx_step.emit_event(AgentEvent::PlanStepParsed {
-                session_id: session_id_s.clone(),
-                plan_id: plan_id_s.clone(),
-                step_index: index,
-                step_id,
-                step_description: description,
-            });
+            if let Some(bus) = &eb {
+                bus.emit(AgentEvent::PlanStepParsed {
+                    session_id: session_id_s.clone(),
+                    plan_id: plan_id_s.clone(),
+                    step_index: index,
+                    step_id,
+                    step_description: description,
+                });
+            }
         });
 
-        let ctx_thought = ctx.clone();
+        let eb = self.event_bus.clone();
         let session_id_t = ctx.session_id.clone();
         let on_thought = Box::new(move |text: String| {
-            let _ = ctx_thought.emit_event(AgentEvent::ThoughtDelta {
-                session_id: session_id_t.clone(),
-                text,
-            });
+            if let Some(bus) = &eb {
+                bus.emit(AgentEvent::ThoughtDelta {
+                    session_id: session_id_t.clone(),
+                    text,
+                });
+            }
         });
 
         let tools = vec![];
@@ -145,7 +160,7 @@ impl Tool for PlanOrchestrator {
                     .save_plan(&plan, json!({"session_id": ctx.session_id.to_string()}))
                     .await?;
 
-                let _ = ctx.emit_event(AgentEvent::PlanGenerated {
+                let _ = self.event_bus.as_ref().expect("EventBus must be injected by AgentBuilder::build()").emit(AgentEvent::PlanGenerated {
                     session_id: ctx.session_id.clone(),
                     plan: plan.clone(),
                 });
@@ -189,7 +204,7 @@ impl Tool for PlanOrchestrator {
                 })
             }
             Err(e) => {
-                let _ = ctx.emit_event(AgentEvent::PlanFailed {
+                let _ = self.event_bus.as_ref().expect("EventBus must be injected by AgentBuilder::build()").emit(AgentEvent::PlanFailed {
                     session_id: ctx.session_id.clone(),
                     plan_id: plan_id.clone(),
                     error: e.to_string(),
@@ -227,6 +242,7 @@ pub struct PlanExecTool {
     step_executor: Arc<dyn StepExecutor>,
     plan_store: Arc<dyn PlanStore>,
     recovery: Arc<dyn crate::engine::RecoveryStrategy>,
+    event_bus: Option<EventBus>,
 }
 
 impl PlanExecTool {
@@ -239,7 +255,13 @@ impl PlanExecTool {
             step_executor,
             plan_store,
             recovery,
+            event_bus: None,
         }
+    }
+
+    /// Inject the internal event bus. Called by `AgentBuilder::build()`.
+    pub(crate) fn set_event_bus(&mut self, event_bus: EventBus) {
+        self.event_bus = Some(event_bus);
     }
 }
 
@@ -248,6 +270,8 @@ impl Tool for PlanExecTool {
     fn name(&self) -> &'static str {
         "execute_plan"
     }
+
+    fn as_any(&self) -> Option<&dyn std::any::Any> { Some(self) }
 
     fn definition(&self) -> Value {
         json!({
@@ -338,7 +362,7 @@ impl Tool for PlanExecTool {
 
                 step.status = StepStatus::Running;
 
-                let _ = ctx.emit_event(AgentEvent::PlanStepStarted {
+                let _ = self.event_bus.as_ref().expect("EventBus must be injected by AgentBuilder::build()").emit(AgentEvent::PlanStepStarted {
                     session_id: ctx.session_id.clone(),
                     step_id: step.id.clone(),
                     step_description: step.description.clone(),
@@ -382,7 +406,7 @@ impl Tool for PlanExecTool {
                             )
                         });
 
-                        let _ = ctx.emit_event(AgentEvent::PlanStepCompleted {
+                        let _ = self.event_bus.as_ref().expect("EventBus must be injected by AgentBuilder::build()").emit(AgentEvent::PlanStepCompleted {
                             session_id: ctx.session_id.clone(),
                             step_id: step.id.clone(),
                             success: step_success,
@@ -469,7 +493,7 @@ impl Tool for PlanExecTool {
                             format!("  Execution error: {e}\n")
                         });
 
-                        let _ = ctx.emit_event(AgentEvent::PlanStepCompleted {
+                        let _ = self.event_bus.as_ref().expect("EventBus must be injected by AgentBuilder::build()").emit(AgentEvent::PlanStepCompleted {
                             session_id: ctx.session_id.clone(),
                             step_id: step.id.clone(),
                             success: false,
@@ -520,7 +544,7 @@ impl Tool for PlanExecTool {
             );
         }
 
-        let _ = ctx.emit_event(AgentEvent::PlanCompleted {
+        let _ = self.event_bus.as_ref().expect("EventBus must be injected by AgentBuilder::build()").emit(AgentEvent::PlanCompleted {
             session_id: ctx.session_id.clone(),
             plan_id: plan_id.clone(),
             success: overall_success,

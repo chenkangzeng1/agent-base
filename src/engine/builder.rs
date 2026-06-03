@@ -156,7 +156,7 @@ impl AgentBuilder {
         self
     }
 
-    pub fn build(self) -> crate::types::AgentResult<AgentRuntime> {
+    pub fn build(mut self) -> crate::types::AgentResult<AgentRuntime> {
         tracing::info!(
             tool_count = self.tools.len(),
             middleware_count = self.middlewares.len(),
@@ -166,6 +166,11 @@ impl AgentBuilder {
         );
 
         let event_bus = super::runtime::EventBus::new(self.event_bus_capacity);
+
+        // Inject EventBus into framework-provided tools that need it
+        // (PlanOrchestrator, PlanExecTool)
+        self.tools.inject_event_bus(&event_bus);
+
         let session_store = self
             .session_store
             .unwrap_or_else(|| Arc::new(InMemorySessionStore::new()));
@@ -190,7 +195,6 @@ impl AgentBuilder {
             self.tools,
             self.approval_handler,
             self.tool_policy,
-            self.middlewares.clone(),
             error_recovery,
             event_bus.clone(),
         );

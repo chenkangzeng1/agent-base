@@ -12,7 +12,8 @@ pub use approval::{ApprovalDecision, ApprovalRequest, RiskLevel};
 pub use checkpoint::{CheckpointData, CheckpointStep, ToolResultData};
 pub use config::{AgentConfig, Language, ResponseFormat, RetryConfig};
 pub use error::{AgentError, AgentResult};
-pub use events::AgentEvent;
+pub(crate) use events::AgentEvent;
+pub use events::{RuntimeEvent, UserEvent};
 pub use message::{ChatMessage, ImageAttachment, ImageDetail, Message, MessageRole, ToolCallMessage};
 pub use outcome::RunOutcome;
 pub use plan::{

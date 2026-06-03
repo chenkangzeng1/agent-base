@@ -1,9 +1,9 @@
 use serde_json::json;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, mpsc};
 
 use crate::types::{
     AgentError, AgentEvent, AgentResult, ExecutionPlan, PlanStatus, RecoveryAction,
-    RunOutcome, SessionId, StepStatus,
+    RunOutcome, RuntimeEvent, SessionId, StepStatus, UserEvent,
 };
 use crate::tool::ToolContext;
 use crate::engine::plan::{
@@ -28,7 +28,7 @@ impl AgentRuntime {
         mut on_event: F,
     ) -> AgentResult<RunOutcome>
     where
-        F: FnMut(AgentEvent) -> AgentResult<()> + Send,
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
         tracing::info!(session_id = session_id.id, %objective, "run plan agentic start");
         let tool_definitions = self.tool_engine.definitions();
@@ -94,7 +94,7 @@ impl AgentRuntime {
         mut on_event: F,
     ) -> AgentResult<RunOutcome>
     where
-        F: FnMut(AgentEvent) -> AgentResult<()> + Send,
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
         tracing::info!(session_id = session_id.id, %objective, "run plan deterministic start");
         let tool_definitions = self.tool_engine.definitions();
@@ -163,7 +163,7 @@ impl AgentRuntime {
         on_event: &mut F,
     ) -> AgentResult<RunOutcome>
     where
-        F: FnMut(AgentEvent) -> AgentResult<()> + Send,
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
         for phase_idx in 0..plan.phases.len() {
             plan.phases[phase_idx].status = crate::types::PhaseStatus::Running;
@@ -212,10 +212,15 @@ impl AgentRuntime {
                     if !should_continue {
                         Ok(crate::types::StepResult::success("Skipped", 0))
                     } else {
+                        // Deterministic mode: create a ToolContext for the step executor.
+                        // Note: UserEvents emitted by the step's tool are not forwarded to
+                        // the external callback here — deterministic mode executes pre-planned
+                        // steps without real-time monitoring. If UserEvent forwarding is needed,
+                        // consume `user_event_rx` and map to `on_event` in a select loop.
+                        let (user_event_tx, _user_event_rx) = mpsc::unbounded_channel::<UserEvent>();
                         let tool_ctx = ToolContext {
                             session_id: session_id.clone(),
-                            event_bus: self.event_bus.sender(),
-                            event_sender: None,
+                            user_event_tx,
                             llm_client: Some(self.llm_engine().client.clone()),
                             session_store: Some(self.session_manager.session_store().clone()),
                             language: crate::types::Language::En,
@@ -419,7 +424,7 @@ impl AgentRuntime {
         event_rx: &mut broadcast::Receiver<AgentEvent>,
         on_event: &mut F,
     ) where
-        F: FnMut(AgentEvent) -> AgentResult<()>,
+        F: FnMut(RuntimeEvent) -> AgentResult<()>,
     {
         self.emit_event(event);
         let _ = EventBus::drain_async_events(event_rx, on_event);

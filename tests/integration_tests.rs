@@ -3,10 +3,10 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use agent_base::{
-    AbortOnFailure, AgentBuilder, AgentError, AgentEvent, AgentResult, ApprovalDecision, ApprovalHandler,
+    AbortOnFailure, AgentBuilder, AgentError, AgentResult, ApprovalDecision, ApprovalHandler,
     ApprovalRequest, ChatMessage, ExecutionPlan, InMemoryPlanStore, LlmCapabilities, LlmClient,
     PlanGenerator, PlanStatus, PlanStep, PlanStore, RecoveryAction, ResponseFormat, RetryOnError,
-    RiskLevel, RunOutcome, StepExecutor, StepResult, StepStatus, StreamChunk, Tool,
+    RiskLevel, RunOutcome, RuntimeEvent, StepExecutor, StepResult, StepStatus, StreamChunk, Tool,
     ToolContext, ToolControlFlow, ToolOutput, ToolPolicy, AlwaysContinue, StepContinuePolicy,
     RecoveryStrategy,
 };
@@ -210,7 +210,7 @@ async fn test_tool_not_found() {
 
     let (events, _outcome) = result.unwrap();
     let has_tool_error = events.iter().any(|e| {
-        matches!(e, AgentEvent::ToolCallFinished { summary, .. } if summary.contains("not found"))
+        matches!(e, RuntimeEvent::ToolCallFinished { summary, .. } if summary.contains("not found"))
     });
     assert!(has_tool_error, "Should have tool not found in finished events");
 }
@@ -286,11 +286,11 @@ async fn test_approval_deny_stops_execution() {
 
     let has_awaiting_approval = events
         .iter()
-        .any(|e| matches!(e, AgentEvent::AwaitingApproval { .. }));
+        .any(|e| matches!(e, RuntimeEvent::AwaitingApproval { .. }));
     assert!(has_awaiting_approval, "Should emit AwaitingApproval event");
 
     let has_denial_finished = events.iter().any(|e| {
-        matches!(e, AgentEvent::ToolCallFinished { summary, .. } if summary.contains("rejected by approval"))
+        matches!(e, RuntimeEvent::ToolCallFinished { summary, .. } if summary.contains("rejected by approval"))
     });
     assert!(has_denial_finished, "Should emit ToolCallFinished with denial summary");
 
@@ -540,9 +540,9 @@ async fn test_event_collection() {
     let session_id = runtime.create_session().await;
     let (events, _outcome) = runtime.run_turn_stream(session_id, "test").await.unwrap();
 
-    let has_text_delta = events.iter().any(|e| matches!(e, AgentEvent::TextDelta { .. }));
+    let has_text_delta = events.iter().any(|e| matches!(e, RuntimeEvent::TextDelta { .. }));
     let has_run_finished =
-        events.iter().any(|e| matches!(e, AgentEvent::RunFinished { .. }));
+        events.iter().any(|e| matches!(e, RuntimeEvent::RunFinished { .. }));
 
     assert!(has_text_delta, "Should have TextDelta event");
     assert!(has_run_finished, "Should have RunFinished event");
@@ -690,7 +690,7 @@ async fn test_checkpoint_events_emitted() {
 
     let checkpoint_count = events
         .iter()
-        .filter(|e| matches!(e, AgentEvent::Checkpoint { .. }))
+        .filter(|e| matches!(e, RuntimeEvent::Checkpoint { .. }))
         .count();
     assert!(
         checkpoint_count >= 2,
@@ -698,17 +698,17 @@ async fn test_checkpoint_events_emitted() {
     );
 
     let has_after_user_input = events.iter().any(|e| {
-        matches!(e, AgentEvent::Checkpoint { checkpoint, .. } if matches!(checkpoint.step, agent_base::CheckpointStep::AfterUserInput))
+        matches!(e, RuntimeEvent::Checkpoint { checkpoint, .. } if matches!(checkpoint.step, agent_base::CheckpointStep::AfterUserInput))
     });
     assert!(has_after_user_input, "Should have AfterUserInput checkpoint");
 
     let has_before_llm = events.iter().any(|e| {
-        matches!(e, AgentEvent::Checkpoint { checkpoint, .. } if matches!(checkpoint.step, agent_base::CheckpointStep::BeforeLlm { .. }))
+        matches!(e, RuntimeEvent::Checkpoint { checkpoint, .. } if matches!(checkpoint.step, agent_base::CheckpointStep::BeforeLlm { .. }))
     });
     assert!(has_before_llm, "Should have BeforeLlm checkpoint");
 
     let has_before_tool_calls = events.iter().any(|e| {
-        matches!(e, AgentEvent::Checkpoint { checkpoint, .. } if matches!(checkpoint.step, agent_base::CheckpointStep::BeforeToolCalls { .. }))
+        matches!(e, RuntimeEvent::Checkpoint { checkpoint, .. } if matches!(checkpoint.step, agent_base::CheckpointStep::BeforeToolCalls { .. }))
     });
     assert!(has_before_tool_calls, "Should have BeforeToolCalls checkpoint");
 }
@@ -731,7 +731,7 @@ async fn test_resume_from_after_user_input_checkpoint() {
     let mut checkpoint_opt: Option<agent_base::CheckpointData> = None;
     let _ = runtime
         .run_turn_with_handler(session_id.clone(), "resume test", |event| {
-            if let AgentEvent::Checkpoint { checkpoint, .. } = &event {
+            if let RuntimeEvent::Checkpoint { checkpoint, .. } = &event {
                 if matches!(checkpoint.step, agent_base::CheckpointStep::AfterUserInput) {
                     checkpoint_opt = Some(checkpoint.clone());
                     return Err(agent_base::AgentError::Cancelled);
@@ -787,7 +787,7 @@ async fn test_resume_from_before_tool_calls_checkpoint() {
     let mut checkpoint_opt: Option<agent_base::CheckpointData> = None;
     let _ = runtime
         .run_turn_with_handler(session_id.clone(), "echo hello", |event| {
-            if let AgentEvent::Checkpoint { checkpoint, .. } = &event {
+            if let RuntimeEvent::Checkpoint { checkpoint, .. } = &event {
                 if matches!(checkpoint.step, agent_base::CheckpointStep::BeforeToolCalls { .. }) {
                     checkpoint_opt = Some(checkpoint.clone());
                     return Err(agent_base::AgentError::Cancelled);
@@ -1007,7 +1007,7 @@ async fn tool_execution_error_retry_llm_receives_error_and_recovers() {
 
     assert_eq!(llm.call_count(), 2, "Should make 2 LLM calls (tool call then recovery)");
 
-    let has_run_finished = events.iter().any(|e| matches!(e, AgentEvent::RunFinished { .. }));
+    let has_run_finished = events.iter().any(|e| matches!(e, RuntimeEvent::RunFinished { .. }));
     assert!(has_run_finished, "Should emit RunFinished on completion");
 }
 
@@ -1032,7 +1032,7 @@ async fn tool_execution_error_stop_on_error_default() {
     let (events, outcome) = result.unwrap();
     assert!(matches!(outcome, RunOutcome::Failed { .. }), "Should be Failed, got: {outcome:?}");
 
-    let has_run_finished = events.iter().any(|e| matches!(e, AgentEvent::RunFinished { .. }));
+    let has_run_finished = events.iter().any(|e| matches!(e, RuntimeEvent::RunFinished { .. }));
     assert!(has_run_finished, "Should emit RunFinished even on failure");
 
     assert_eq!(llm.call_count(), 1, "Should only make 1 LLM call before stopping");
@@ -1315,7 +1315,7 @@ async fn run_with_handler_cancelled_emits_run_finished_and_saves() {
 
     let result = runtime
         .run_turn_with_handler(session_id.clone(), "test", |event| {
-            if matches!(event, AgentEvent::ToolCallStarted { .. }) {
+            if matches!(event, RuntimeEvent::ToolCallStarted { .. }) {
                 return Err(AgentError::Cancelled);
             }
             Ok(())
@@ -1561,16 +1561,16 @@ async fn test_plan_events_emitted() {
 
     assert!(result.is_ok());
 
-    let has_plan_generated = events.iter().any(|e| matches!(e, AgentEvent::PlanGenerated { .. }));
+    let has_plan_generated = events.iter().any(|e| matches!(e, RuntimeEvent::PlanGenerated { .. }));
     assert!(has_plan_generated, "Should emit PlanGenerated event");
 
-    let has_step_started = events.iter().any(|e| matches!(e, AgentEvent::PlanStepStarted { .. }));
+    let has_step_started = events.iter().any(|e| matches!(e, RuntimeEvent::PlanStepStarted { .. }));
     assert!(has_step_started, "Should emit PlanStepStarted event");
 
-    let has_step_completed = events.iter().any(|e| matches!(e, AgentEvent::PlanStepCompleted { .. }));
+    let has_step_completed = events.iter().any(|e| matches!(e, RuntimeEvent::PlanStepCompleted { .. }));
     assert!(has_step_completed, "Should emit PlanStepCompleted event");
 
-    let has_plan_completed = events.iter().any(|e| matches!(e, AgentEvent::PlanCompleted { .. }));
+    let has_plan_completed = events.iter().any(|e| matches!(e, RuntimeEvent::PlanCompleted { .. }));
     assert!(has_plan_completed, "Should emit PlanCompleted event");
 }
 

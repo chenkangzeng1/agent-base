@@ -3,15 +3,15 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::Value;
-use tokio::sync::broadcast;
 
+use crate::engine::EventBus;
 use crate::tool::{Tool, ToolContext, ToolControlFlow, ToolOutput, ToolPolicy, TruncationInfo};
 use crate::types::{AgentEvent, AgentResult};
 
 /// Pure execution pipeline — cares about *how* to safely execute a tool.
 ///
 /// Responsibilities: policy hooks, timeout, output truncation.
-/// Does NOT do: tool lookup, event emission, mpsc event forwarding.
+/// Does NOT do: tool lookup, event emission, user-event forwarding.
 #[async_trait]
 pub trait ToolExecutionPipeline: Send + Sync {
     async fn execute(
@@ -114,17 +114,15 @@ impl ToolExecutionPipeline for DefaultPipeline {
     }
 }
 
-/// Event-emitting decorator — wraps any pipeline to emit ToolCallStarted/Finished events.
-///
-/// This is an optional decorator. ReAct loops may prefer direct event management
-/// (with mpsc forwarding); this wrapper is for simpler use cases.
-pub struct EventEmittingPipeline<P: ToolExecutionPipeline> {
+/// Event-emitting decorator — wraps any pipeline to emit ToolCallStarted/Finished
+/// events on the internal [`EventBus`] and forward [`UserEvent`]s from tools.
+pub(crate) struct EventEmittingPipeline<P: ToolExecutionPipeline> {
     inner: P,
-    event_bus: broadcast::Sender<AgentEvent>,
+    event_bus: EventBus,
 }
 
 impl<P: ToolExecutionPipeline> EventEmittingPipeline<P> {
-    pub fn new(inner: P, event_bus: broadcast::Sender<AgentEvent>) -> Self {
+    pub fn new(inner: P, event_bus: EventBus) -> Self {
         Self { inner, event_bus }
     }
 }
@@ -137,7 +135,7 @@ impl<P: ToolExecutionPipeline + Send + Sync> ToolExecutionPipeline for EventEmit
         args: &Value,
         ctx: &ToolContext,
     ) -> AgentResult<ToolOutput> {
-        let _ = self.event_bus.send(AgentEvent::ToolCallStarted {
+        self.event_bus.emit(AgentEvent::ToolCallStarted {
             session_id: ctx.session_id.clone(),
             tool_name: tool.name().to_string(),
             args_json: args.to_string(),
@@ -149,7 +147,7 @@ impl<P: ToolExecutionPipeline + Send + Sync> ToolExecutionPipeline for EventEmit
             Ok(output) => output.summary.clone(),
             Err(e) => e.to_string(),
         };
-        let _ = self.event_bus.send(AgentEvent::ToolCallFinished {
+        self.event_bus.emit(AgentEvent::ToolCallFinished {
             session_id: ctx.session_id.clone(),
             tool_name: tool.name().to_string(),
             summary,
@@ -170,11 +168,13 @@ mod tests {
 
     // ── Test helpers ──
 
+    use tokio::sync::mpsc;
+
     fn test_ctx() -> ToolContext {
+        let (tx, _rx) = mpsc::unbounded_channel();
         ToolContext {
             session_id: SessionId::new(1),
-            event_bus: broadcast::channel(64).0,
-            event_sender: None,
+            user_event_tx: tx,
             llm_client: None,
             session_store: None,
             language: Language::En,
@@ -328,8 +328,9 @@ mod tests {
     #[tokio::test]
     async fn emits_start_and_finish_events() {
         let inner = DefaultPipeline::new(None, None, None);
-        let (tx, mut rx) = broadcast::channel(64);
-        let pipeline = EventEmittingPipeline::new(inner, tx);
+        let event_bus = EventBus::new(64);
+        let mut rx = event_bus.subscribe();
+        let pipeline = EventEmittingPipeline::new(inner, event_bus);
 
         let _ = pipeline.execute(&EchoTool, &json!({"msg": "test"}), &test_ctx()).await;
 
@@ -355,8 +356,9 @@ mod tests {
     #[tokio::test]
     async fn emits_finish_with_error_on_failure() {
         let inner = DefaultPipeline::new(None, None, None);
-        let (tx, mut rx) = broadcast::channel(64);
-        let pipeline = EventEmittingPipeline::new(inner, tx);
+        let event_bus = EventBus::new(64);
+        let mut rx = event_bus.subscribe();
+        let pipeline = EventEmittingPipeline::new(inner, event_bus);
 
         let _ = pipeline.execute(&FailingTool, &json!({}), &test_ctx()).await;
 
@@ -378,8 +380,8 @@ mod tests {
     async fn event_emitting_delegates_to_inner() {
         let policy = Arc::new(TrackingPolicy::new());
         let inner = DefaultPipeline::new(Some(policy.clone()), None, None);
-        let (tx, _) = broadcast::channel(64);
-        let pipeline = EventEmittingPipeline::new(inner, tx);
+        let event_bus = EventBus::new(64);
+        let pipeline = EventEmittingPipeline::new(inner, event_bus);
 
         let output = pipeline.execute(&EchoTool, &json!({"msg": "delegated"}), &test_ctx()).await.unwrap();
         assert_eq!(output.summary, "delegated");

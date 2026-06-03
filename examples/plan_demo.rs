@@ -2,10 +2,10 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use agent_base::{
-    AbortOnFailure, AgentBuilder, AgentEvent, AgentResult, AlwaysContinue, ExecutionPlan,
+    AbortOnFailure, AgentBuilder, AgentResult, AlwaysContinue, ExecutionPlan,
     InMemoryPlanStore, LlmCapabilities, LlmClient, PlanGenerator, PlanStep, PlanStore,
-    ResponseFormat, StepExecutor, StepResult, StreamChunk, Tool, ToolContext, ToolControlFlow,
-    ToolOutput, ChatMessage, RecoveryStrategy, StepContinuePolicy,
+    ResponseFormat, RuntimeEvent, StepExecutor, StepResult, StreamChunk, Tool, ToolContext,
+    ToolControlFlow, ToolOutput, ChatMessage, RecoveryStrategy, StepContinuePolicy,
 };
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -182,7 +182,7 @@ async fn main() -> AgentResult<()> {
             Some(Arc::new(AbortOnFailure)),
             Some(plan_store.clone()),
             |event| match event {
-                AgentEvent::PlanGenerated { plan, .. } => {
+                RuntimeEvent::PlanGenerated { plan, .. } => {
                     println!("[PlanGenerated] id={}, objective={}", plan.id, plan.objective);
                     println!("  Steps: {}", plan.total_steps());
                     for step in plan.all_steps() {
@@ -190,18 +190,18 @@ async fn main() -> AgentResult<()> {
                     }
                     Ok(())
                 }
-                AgentEvent::PlanStepStarted { step_id, step_description, .. } => {
+                RuntimeEvent::PlanStepStarted { step_id, step_description, .. } => {
                     println!("[PlanStepStarted] {} - {}", step_id, step_description);
                     Ok(())
                 }
-                AgentEvent::PlanStepCompleted { step_id, success, result, .. } => {
+                RuntimeEvent::PlanStepCompleted { step_id, success, result, .. } => {
                     println!(
                         "[PlanStepCompleted] {} success={} result={:?}",
                         step_id, success, result
                     );
                     Ok(())
                 }
-                AgentEvent::PlanCompleted { plan_id, success, .. } => {
+                RuntimeEvent::PlanCompleted { plan_id, success, .. } => {
                     println!("[PlanCompleted] {} success={}", plan_id, success);
                     Ok(())
                 }
