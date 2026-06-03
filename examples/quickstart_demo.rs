@@ -1,15 +1,15 @@
-//! Quickstart Demo — Corresponding to the QUICKSTART.md tutorial
+//! 快速上手 Demo —— 对应 QUICKSTART_CN.md 教程
 //!
-//! A complete server health check Agent demonstrating:
-//!   - Tool definitions (disk check, memory check, service restart)
-//!   - Approval flow (ToolPolicy + ApprovalHandler)
-//!   - Middleware (anti-hallucination nudge)
-//!   - Real-time event stream
-//!   - Multi-turn REPL conversation
+//! 一个完整的服务器健康检查 Agent，演示：
+//!   - Tool 定义（磁盘检查、内存检查、服务重启）
+//!   - 审批流程（ToolPolicy + ApprovalHandler）
+//!   - Middleware（反幻觉推动）
+//!   - 实时事件流
+//!   - 多轮 REPL 对话
 //!
-//! How to run:
+//! 运行方式：
 //!   cp .env.example .env
-//!   # Edit .env and fill in your API Key
+//!   # 编辑 .env 填入你的 API Key
 //!   cargo run --example quickstart_demo
 
 use std::io::{self, Write};
@@ -17,8 +17,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use agent_base::{
-    AgentBuilder, AgentError, AgentEvent, AgentResult, ApprovalDecision, ApprovalHandler,
-    ApprovalRequest, Middleware, OpenAiClient, PostLlmCtx, RiskLevel, Tool,
+    AgentBuilder, AgentError, AgentResult, ApprovalDecision, ApprovalHandler,
+    ApprovalRequest, Middleware, OpenAiClient, PostLlmCtx, RiskLevel, RuntimeEvent, Tool,
     ToolContext, ToolControlFlow, ToolOutput, ToolPolicy,
 };
 use async_trait::async_trait;
@@ -26,10 +26,10 @@ use dotenvy::dotenv;
 use serde_json::{json, Value};
 
 // ============================================================================
-// Tool definitions
+// 工具定义
 // ============================================================================
 
-/// Disk check tool
+/// 磁盘检查工具
 struct DiskCheckTool;
 
 #[async_trait]
@@ -43,13 +43,13 @@ impl Tool for DiskCheckTool {
             "type": "function",
             "function": {
                 "name": "check_disk",
-                "description": "Check server disk usage. Returns used/total space and usage percentage.",
+                "description": "检查服务器磁盘使用情况。返回已用/总空间和使用百分比。",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "Filesystem path to check (e.g. '/', '/home', '/var')"
+                            "description": "要检查的文件系统路径（如 '/'、'/home'、'/var'）"
                         }
                     },
                     "required": ["path"]
@@ -61,7 +61,7 @@ impl Tool for DiskCheckTool {
     async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
         let path = args["path"].as_str().unwrap_or("/");
         let output = format!(
-            "Filesystem: {}\nTotal: 50G  Used: 32G  Available: 18G  Usage: 64%",
+            "文件系统: {}\n总计: 50G  已用: 32G  可用: 18G  使用率: 64%",
             path
         );
         Ok(ToolOutput {
@@ -73,7 +73,7 @@ impl Tool for DiskCheckTool {
     }
 }
 
-/// Memory check tool
+/// 内存检查工具
 struct MemCheckTool;
 
 #[async_trait]
@@ -87,7 +87,7 @@ impl Tool for MemCheckTool {
             "type": "function",
             "function": {
                 "name": "check_memory",
-                "description": "Check server memory usage. Returns used/total memory and usage percentage.",
+                "description": "检查服务器内存使用情况。返回已用/总内存和使用百分比。",
                 "parameters": {
                     "type": "object",
                     "properties": {}
@@ -98,7 +98,7 @@ impl Tool for MemCheckTool {
 
     async fn call(&self, _args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
         Ok(ToolOutput {
-            summary: "Total: 16G  Used: 12G  Available: 4G  Usage: 75%\nSwap: Total 4G  Used 512M".into(),
+            summary: "总计: 16G  已用: 12G  可用: 4G  使用率: 75%\nSwap: 总计 4G  已用 512M".into(),
             raw: Some(json!({ "total_gb": 16, "used_gb": 12, "percent": 75, "swap_total_gb": 4, "swap_used_gb": 0.5 })),
             control_flow: ToolControlFlow::Continue,
             truncation: None,
@@ -106,7 +106,7 @@ impl Tool for MemCheckTool {
     }
 }
 
-/// Service restart tool (sensitive operation, requires approval)
+/// 服务重启工具（敏感操作，需要审批）
 struct RestartServiceTool;
 
 #[async_trait]
@@ -120,13 +120,13 @@ impl Tool for RestartServiceTool {
             "type": "function",
             "function": {
                 "name": "restart_service",
-                "description": "Restart a specified system service. This operation causes a brief service interruption and requires manual approval.",
+                "description": "重启指定的系统服务。此操作会导致服务短暂中断，需要人工审批。",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "service": {
                             "type": "string",
-                            "description": "Service name (e.g. nginx, mysql, redis)"
+                            "description": "服务名称（如 nginx、mysql、redis）"
                         }
                     },
                     "required": ["service"]
@@ -138,7 +138,7 @@ impl Tool for RestartServiceTool {
     async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
         let service = args["service"].as_str().unwrap_or("unknown");
         Ok(ToolOutput {
-            summary: format!("Service '{}' has been successfully restarted. Status: active (running)", service),
+            summary: format!("服务 '{}' 已成功重启。状态: active (running)", service),
             raw: Some(json!({ "service": service, "status": "restarted", "success": true })),
             control_flow: ToolControlFlow::Continue,
             truncation: None,
@@ -147,10 +147,10 @@ impl Tool for RestartServiceTool {
 }
 
 // ============================================================================
-// Approval: ToolPolicy + ApprovalHandler
+// 审批：ToolPolicy + ApprovalHandler
 // ============================================================================
 
-/// Approval policy: restart_service requires manual approval, other tools are auto-approved
+/// 审批策略：restart_service 需要人工审批，其他工具自动放行
 struct HealthCheckPolicy;
 
 #[async_trait]
@@ -167,8 +167,8 @@ impl ToolPolicy for HealthCheckPolicy {
                     .and_then(Value::as_str)
                     .unwrap_or("unknown");
                 Some(ApprovalRequest {
-                    title: "Restart Service".into(),
-                    message: format!("Do you want to restart the service '{}'? This will cause a brief service interruption.", service),
+                    title: "重启服务".into(),
+                    message: format!("是否允许重启服务 '{}'？此操作会导致服务短暂中断。", service),
                     risk_level: RiskLevel::Sensitive,
                     action_key: Some(format!("restart:{}", service)),
                     raw: None,
@@ -193,19 +193,19 @@ impl ToolPolicy for HealthCheckPolicy {
     }
 }
 
-/// CLI approval interaction
+/// CLI 审批交互
 struct CliApproval;
 
 #[async_trait]
 impl ApprovalHandler for CliApproval {
     async fn approve(&self, request: ApprovalRequest) -> AgentResult<ApprovalDecision> {
         println!();
-        println!("⚠️  Approval Request: {}", request.title);
-        println!("   Risk Level: {:?}", request.risk_level);
-        println!("   Details: {}", request.message);
+        println!("⚠️  审批请求: {}", request.title);
+        println!("   风险等级: {:?}", request.risk_level);
+        println!("   详情: {}", request.message);
 
         loop {
-            print!("   Select [y=allow once / a=always allow / n=deny]: ");
+            print!("   选择 [y=本次允许 / a=总是允许 / n=拒绝]: ");
             io::stdout()
                 .flush()
                 .map_err(|e| AgentError::internal(format!("flush stdout failed: {e}")))?;
@@ -213,8 +213,8 @@ impl ApprovalHandler for CliApproval {
             let mut input = String::new();
             match io::stdin().read_line(&mut input) {
                 Ok(0) => {
-                    // stdin EOF (piped mode), default deny
-                    println!("   [stdin EOF, default deny]");
+                    // stdin EOF（管道模式），默认拒绝
+                    println!("   [stdin EOF，默认拒绝]");
                     return Ok(ApprovalDecision::Deny);
                 }
                 Ok(_) => {}
@@ -227,20 +227,20 @@ impl ApprovalHandler for CliApproval {
                 "a" | "always" => return Ok(ApprovalDecision::AllowAlways),
                 "n" | "no" => return Ok(ApprovalDecision::Deny),
                 "" => {
-                    // empty line (possibly end of pipe), default deny
+                    // 空行（可能来自管道末尾），默认拒绝
                     return Ok(ApprovalDecision::Deny);
                 }
-                _ => println!("   Invalid input, please enter y / a / n"),
+                _ => println!("   无效输入，请输入 y / a / n"),
             }
         }
     }
 }
 
 // ============================================================================
-// Middleware: anti-hallucination nudge
+// Middleware：反幻觉推动
 // ============================================================================
 
-/// When the LLM has tools available but doesn't call them — only describes what it would do — force it to call the tool
+/// 当 LLM 有工具可用却不调用、只在"描述它会做什么"时，强制它去调用工具
 struct ToolEnforcement {
     max_nudges: usize,
     nudge_count: AtomicUsize,
@@ -272,20 +272,20 @@ impl Middleware for ToolEnforcement {
         }
 
         println!(
-            "\n[Middleware] Detected LLM did not call a tool, nudging (attempt {})...",
+            "\n[Middleware] 检测到 LLM 未调用工具，推动第 {} 次...",
             count + 1
         );
 
         ctx.skip_push = true;
         ctx.follow_up_message = Some(
-            "You have tools available. Please call a tool directly to get data, don't just describe what you would do.".into(),
+            "你有可用的工具。请直接调用工具获取数据，不要只描述你会做什么。".into(),
         );
         Ok(())
     }
 }
 
 // ============================================================================
-// Event printing
+// 事件打印
 // ============================================================================
 
 struct CliEventPrinter {
@@ -299,9 +299,9 @@ impl CliEventPrinter {
         }
     }
 
-    fn handle(&mut self, event: AgentEvent) -> AgentResult<()> {
+    fn handle(&mut self, event: RuntimeEvent) -> AgentResult<()> {
         match event {
-            AgentEvent::TextDelta { text, .. } => {
+            RuntimeEvent::TextDelta { text, .. } => {
                 if !self.assistant_prefix_printed {
                     print!("Assistant > ");
                     self.assistant_prefix_printed = true;
@@ -311,21 +311,21 @@ impl CliEventPrinter {
                     .flush()
                     .map_err(|e| AgentError::internal(format!("flush failed: {e}")))?;
             }
-            AgentEvent::ThoughtDelta { text, .. } => {
-                print!("\x1b[90m[Thought] {} \x1b[0m", text);
+            RuntimeEvent::ThoughtDelta { text, .. } => {
+                print!("\x1b[90m[思考] {} \x1b[0m", text);
                 io::stdout()
                     .flush()
                     .map_err(|e| AgentError::internal(format!("flush failed: {e}")))?;
             }
-            AgentEvent::ToolCallStarted {
+            RuntimeEvent::ToolCallStarted {
                 tool_name,
                 args_json,
                 ..
             } => {
                 self.finish();
-                println!("[Tool Call] {} ({})", tool_name, args_json);
+                println!("[工具调用] {} ({})", tool_name, args_json);
             }
-            AgentEvent::ToolCallFinished {
+            RuntimeEvent::ToolCallFinished {
                 tool_name, summary, ..
             } => {
                 self.finish();
@@ -334,13 +334,13 @@ impl CliEventPrinter {
                 } else {
                     summary.clone()
                 };
-                println!("[Tool Done] {}", tool_name);
+                println!("[工具完成] {}", tool_name);
                 println!("  → {}", display);
             }
-            AgentEvent::AwaitingApproval { .. } => {
+            RuntimeEvent::AwaitingApproval { .. } => {
                 self.finish();
             }
-            AgentEvent::RunFinished { .. } => {
+            RuntimeEvent::RunFinished { .. } => {
                 self.finish();
             }
             _ => {}
@@ -360,16 +360,16 @@ impl CliEventPrinter {
 // System Prompt
 // ============================================================================
 
-const SYSTEM_PROMPT: &str = r#"You are a server health check assistant.
+const SYSTEM_PROMPT: &str = r#"你是一个服务器健康检查助手。
 
-You have the following tools:
-- check_disk: Check disk usage for a specified path
-- check_memory: Check memory usage
-- restart_service: Restart a system service (requires manual approval)
+你拥有以下工具：
+- check_disk: 检查指定路径的磁盘使用情况
+- check_memory: 检查内存使用情况
+- restart_service: 重启系统服务（需要人工审批）
 
-When the user asks about server health, **you MUST call a tool** to get data — do not fabricate data.
-Keep your answers concise and report results in bullet points.
-If you find usage is too high, proactively alert the user and offer suggestions."#;
+当用户询问服务器健康状况时，**必须调用工具**获取数据，不要凭空编造数据。
+回答要简洁，用要点列表汇报结果。
+如果发现使用率过高，主动提醒用户并给出建议。"#;
 
 // ============================================================================
 // Main
@@ -383,7 +383,7 @@ async fn main() -> AgentResult<()> {
         .or_else(|_| std::env::var("DASHSCOPE_API_KEY"))
         .map_err(|_| {
             AgentError::internal(
-                "Please set OPENAI_API_KEY or DASHSCOPE_API_KEY in your .env file",
+                "请在 .env 文件中设置 OPENAI_API_KEY 或 DASHSCOPE_API_KEY",
             )
         })?;
 
@@ -412,22 +412,22 @@ async fn main() -> AgentResult<()> {
     let mut session_id = runtime.create_session().await;
 
     println!("╔══════════════════════════════════════════════════════╗");
-    println!("║       agent-base Quickstart Demo (Server Health)     ║");
+    println!("║       agent-base 快速上手 Demo (服务器健康检查)       ║");
     println!("╠══════════════════════════════════════════════════════╣");
-    println!("║  Model: {:<47} ║", model);
+    println!("║  模型: {:<46} ║", model);
     println!("║                                                      ║");
-    println!("║  Available tools:                                    ║");
-    println!("║    · check_disk      Check disk usage                ║");
-    println!("║    · check_memory    Check memory usage              ║");
-    println!("║    · restart_service Restart service (needs approval)║");
+    println!("║  可用工具:                                           ║");
+    println!("║    · check_disk      检查磁盘使用情况                ║");
+    println!("║    · check_memory    检查内存使用情况                ║");
+    println!("║    · restart_service 重启服务（需审批）              ║");
     println!("║                                                      ║");
-    println!("║  Try saying:                                         ║");
-    println!("║    \"Check the disk\"                                  ║");
-    println!("║    \"How's the memory?\"                               ║");
-    println!("║    \"Restart nginx\"                                   ║");
-    println!("║    \"Full server health check\"                       ║");
+    println!("║  试一试:                                             ║");
+    println!("║    \"检查一下磁盘\"                                    ║");
+    println!("║    \"看看内存够不够用\"                                ║");
+    println!("║    \"帮我重启 nginx\"                                  ║");
+    println!("║    \"全面检查一下服务器状态\"                          ║");
     println!("║                                                      ║");
-    println!("║  Commands: exit=quit  reset=reset session  session=history║");
+    println!("║  命令: exit=退出  reset=重置会话  session=查看历史   ║");
     println!("╚══════════════════════════════════════════════════════╝");
     println!();
 
@@ -447,31 +447,31 @@ async fn main() -> AgentResult<()> {
             continue;
         }
         if matches!(input.as_str(), "exit" | "quit") {
-            println!("Goodbye!");
+            println!("再见！");
             break;
         }
         if input == "reset" {
             session_id = runtime.create_session().await;
-            println!("Session reset\n");
+            println!("已重置会话\n");
             continue;
         }
         if input == "session" {
             if let Some(session) = runtime.session(&session_id).await {
-                println!("\n--- Session History ---");
+                println!("\n--- 会话历史 ---");
                 for msg in session.chat_messages() {
                     match msg {
                         agent_base::ChatMessage::System { content, .. } => {
-                            println!("[System] {}...", &content[..content.len().min(80)]);
+                            println!("[系统] {}...", &content[..content.len().min(80)]);
                         }
                         agent_base::ChatMessage::User { content, .. } => {
-                            println!("[User] {}", content);
+                            println!("[用户] {}", content);
                         }
                         agent_base::ChatMessage::Assistant {
                             content, tool_calls, ..
                         } => {
                             if let Some(tc) = tool_calls {
                                 println!(
-                                    "[Assistant] Tool calls: {:?}",
+                                    "[助手] 工具调用: {:?}",
                                     tc.iter()
                                         .map(|t| format!("{}({})", t.name, t.arguments))
                                         .collect::<Vec<_>>()
@@ -482,7 +482,7 @@ async fn main() -> AgentResult<()> {
                                 } else {
                                     c.clone()
                                 };
-                                println!("[Assistant] {}", display);
+                                println!("[助手] {}", display);
                             }
                         }
                         agent_base::ChatMessage::Tool {
@@ -493,7 +493,7 @@ async fn main() -> AgentResult<()> {
                             } else {
                                 content.clone()
                             };
-                            println!("[Tool:{}] {}", tool_call_id, display);
+                            println!("[工具:{}] {}", tool_call_id, display);
                         }
                     }
                 }
@@ -513,9 +513,9 @@ async fn main() -> AgentResult<()> {
             Err(e) => {
                 printer.finish();
                 if e.is_cancelled() {
-                    println!("[Cancelled]");
+                    println!("[已取消]");
                 } else {
-                    eprintln!("[Error] {}", e);
+                    eprintln!("[错误] {}", e);
                 }
             }
         }

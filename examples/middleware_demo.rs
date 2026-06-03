@@ -2,8 +2,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use agent_base::{
-    AgentBuilder, AgentError, AgentEvent, AgentResult, ChatMessage, Middleware,
-    OpenAiClient, PostLlmCtx, SessionId, Tool, ToolContext, ToolControlFlow,
+    AgentBuilder, AgentError, AgentResult, ChatMessage, Middleware,
+    OpenAiClient, PostLlmCtx, RuntimeEvent, SessionId, Tool, ToolContext, ToolControlFlow,
     ToolOutput,
 };
 use async_trait::async_trait;
@@ -185,25 +185,25 @@ impl Middleware for SensitiveContentFilter {
 struct EventPrinter;
 
 impl EventPrinter {
-    fn handle(event: AgentEvent) -> AgentResult<()> {
+    fn handle(event: RuntimeEvent) -> AgentResult<()> {
         match event {
-            AgentEvent::TextDelta { text, .. } => {
+            RuntimeEvent::TextDelta { text, .. } => {
                 print!("{}", text);
                 use std::io::{self, Write};
                 io::stdout().flush().unwrap();
             }
-            AgentEvent::ToolCallStarted {
+            RuntimeEvent::ToolCallStarted {
                 tool_name, args_json, ..
             } => {
                 println!();
                 println!("[Tool call] {} (args: {})", tool_name, args_json);
             }
-            AgentEvent::ToolCallFinished {
+            RuntimeEvent::ToolCallFinished {
                 tool_name, summary, ..
             } => {
                 println!("[Tool finished] {} -> {}", tool_name, summary);
             }
-            AgentEvent::RunFinished { .. } => {
+            RuntimeEvent::RunFinished { .. } => {
                 println!();
                 println!("[Run finished]");
             }

@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use tokio::sync::Mutex;
 
 use crate::engine::AgentRuntime;
-use crate::types::{AgentError, AgentEvent, AgentResult, SessionId};
+use crate::types::{AgentError, AgentResult, RuntimeEvent, SessionId, UserEvent};
 use super::{Tool, ToolContext, ToolControlFlow, ToolOutput};
 
 /// Sub-Agent session policy
@@ -97,8 +97,7 @@ impl Tool for SubAgentTool {
             });
         }
 
-        let parent_event_bus = ctx.event_bus.clone();
-        let parent_session_id = ctx.session_id.clone();
+        let user_event_tx = ctx.user_event_tx.clone();
 
         let sub_session_id = match self.session_policy {
             SubAgentSessionPolicy::Ephemeral => {
@@ -133,12 +132,12 @@ impl Tool for SubAgentTool {
             })?;
         }
 
-        let mut events = Vec::new();
+        let mut runtime_events = Vec::new();
         let _outcome = {
             let runtime = self.sub_runtime.lock().await;
             runtime
                 .run(sub_session_id, |event| {
-                    events.push(event.clone());
+                    runtime_events.push(event.clone());
                     Ok(())
                 })
                 .await
@@ -149,20 +148,17 @@ impl Tool for SubAgentTool {
         };
 
         let mut final_text = String::new();
-        for event in &events {
+        for event in &runtime_events {
             match event {
-                AgentEvent::TextDelta { text, .. } => {
+                RuntimeEvent::TextDelta { text, .. } => {
                     final_text.push_str(&text);
                 }
                 _ => {}
             }
-            let _ = parent_event_bus.send(AgentEvent::Custom {
-                session_id: parent_session_id.clone(),
-                payload: json!({
-                    "type": "subagent_event",
-                    "subagent": self.name,
-                    "event": event_to_value(&event),
-                }),
+            // Forward each sub-agent event to the parent via UserEvent::SubAgentEvent
+            let _ = user_event_tx.send(UserEvent::SubAgentEvent {
+                subagent: self.name.to_string(),
+                event: Box::new(event.clone()),
             });
         }
 
@@ -172,7 +168,7 @@ impl Tool for SubAgentTool {
             final_text
         };
 
-        tracing::debug!(subagent = self.name, text_len = summary.len(), event_count = events.len(), "sub-agent completed");
+        tracing::debug!(subagent = self.name, text_len = summary.len(), event_count = runtime_events.len(), "sub-agent completed");
 
         Ok(ToolOutput {
             summary,
@@ -180,46 +176,5 @@ impl Tool for SubAgentTool {
             control_flow: ToolControlFlow::Continue,
             truncation: None,
         })
-    }
-}
-
-fn event_to_value(event: &AgentEvent) -> Value {
-    match event {
-        AgentEvent::TextDelta { text, .. } => json!({"type": "TextDelta", "text": text}),
-        AgentEvent::ThoughtDelta { text, .. } => json!({"type": "ThoughtDelta", "text": text}),
-        AgentEvent::ToolCallStarted { tool_name, args_json, .. } => {
-            json!({"type": "ToolCallStarted", "tool_name": tool_name, "args_json": args_json})
-        }
-        AgentEvent::ToolCallFinished { tool_name, summary, .. } => {
-            json!({"type": "ToolCallFinished", "tool_name": tool_name, "summary": summary})
-        }
-        AgentEvent::AwaitingApproval { request, .. } => {
-            json!({"type": "AwaitingApproval", "title": request.title})
-        }
-        AgentEvent::Checkpoint { .. } => json!({"type": "Checkpoint"}),
-        AgentEvent::RunFinished { .. } => json!({"type": "RunFinished"}),
-        AgentEvent::Custom { payload, .. } => json!({"type": "Custom", "payload": payload}),
-        AgentEvent::PlanGenerated { plan, .. } => json!({"type": "PlanGenerated", "plan_id": plan.id}),
-        AgentEvent::PlanStepStarted { step_id, step_description, .. } => {
-            json!({"type": "PlanStepStarted", "step_id": step_id, "step_description": step_description})
-        }
-        AgentEvent::PlanStepCompleted { step_id, success, result, .. } => {
-            json!({"type": "PlanStepCompleted", "step_id": step_id, "success": success, "result": result})
-        }
-        AgentEvent::PlanCompleted { plan_id, success, .. } => {
-            json!({"type": "PlanCompleted", "plan_id": plan_id, "success": success})
-        }
-        AgentEvent::PlanGenerating { plan_id, .. } => {
-            json!({"type": "PlanGenerating", "plan_id": plan_id})
-        }
-        AgentEvent::PlanStepParsed { plan_id, step_index, step_id, step_description, .. } => {
-            json!({"type": "PlanStepParsed", "plan_id": plan_id, "step_index": step_index, "step_id": step_id, "step_description": step_description})
-        }
-        AgentEvent::PlanFailed { plan_id, error, .. } => {
-            json!({"type": "PlanFailed", "plan_id": plan_id, "error": error})
-        }
-        AgentEvent::PlanStepWaitingConfirmation { step_id, step_description, payload, .. } => {
-            json!({"type": "PlanStepWaitingConfirmation", "step_id": step_id, "step_description": step_description, "payload": payload})
-        }
     }
 }

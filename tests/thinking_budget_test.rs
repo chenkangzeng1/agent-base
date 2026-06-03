@@ -1,4 +1,4 @@
-use agent_base::{AgentBuilder, AgentEvent, ChatMessage, LlmClient, OpenAiClient, StreamChunk};
+use agent_base::{AgentBuilder, RuntimeEvent, ChatMessage, LlmClient, OpenAiClient, StreamChunk};
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use serde_json::{json, Value};

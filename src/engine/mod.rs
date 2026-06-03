@@ -15,6 +15,7 @@ mod tool_enforcement;
 
 pub use approval::{AllowAllApprovalHandler, ApprovalHandler, DenyAllApprovalHandler};
 pub use builder::AgentBuilder;
+pub(crate) use runtime::EventBus;
 pub use context::ContextWindowManager;
 pub use middleware::{Middleware, PostLlmCtx, PreLlmCtx, UserMessageCtx};
 pub use plan::{
@@ -23,7 +24,7 @@ pub use plan::{
     ToolCallingStepExecutor,
 };
 pub use crate::types::{PlanStatus, StepStatus};
-pub use pipeline::{DefaultPipeline, EventEmittingPipeline, ToolExecutionPipeline};
+pub use pipeline::{DefaultPipeline, ToolExecutionPipeline};
 pub use plan_orchestrator::{PlanExecTool, PlanOrchestrator};
 
 pub use recovery::{RetryOnError, StopOnError, ToolErrorAction, ToolErrorRecovery};

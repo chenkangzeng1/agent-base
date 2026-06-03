@@ -3,10 +3,10 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::mpsc;
 
 use crate::llm::LlmClient;
-use crate::types::{AgentResult, AgentError, AgentEvent, SessionId};
+use crate::types::{AgentResult, AgentError, SessionId, UserEvent};
 use crate::engine::SessionStore;
 
 pub mod auto_continue;
@@ -43,10 +43,9 @@ pub enum ToolControlFlow {
 #[derive(Clone)]
 pub struct ToolContext {
     pub session_id: SessionId,
-    pub event_bus: broadcast::Sender<AgentEvent>,
-    /// Fast-path event sender for streaming events during tool execution.
-    /// When set, `emit_event` prefers this over `event_bus`.
-    pub event_sender: Option<mpsc::UnboundedSender<AgentEvent>>,
+    /// Channel for sending user-space events (progress, sub-agent, structured).
+    /// Tools should use `emit_user_event()` or `emit_progress()`.
+    pub user_event_tx: mpsc::UnboundedSender<UserEvent>,
     pub llm_client: Option<Arc<dyn LlmClient>>,
     pub session_store: Option<Arc<dyn SessionStore>>,
     /// Language preference for tool output.
@@ -55,14 +54,14 @@ pub struct ToolContext {
 }
 
 impl ToolContext {
-    /// Send an event. When `event_sender` is available (tool execution context),
-    /// events go through the mpsc fast path; otherwise fall back to broadcast.
-    pub fn emit_event(&self, event: AgentEvent) {
-        if let Some(tx) = &self.event_sender {
-            let _ = tx.send(event);
-        } else {
-            let _ = self.event_bus.send(event);
-        }
+    /// Send a user-space event (progress, sub-agent forwarding, structured data).
+    pub fn emit_user_event(&self, event: UserEvent) {
+        let _ = self.user_event_tx.send(event);
+    }
+
+    /// Convenience: send a progress event with text.
+    pub fn emit_progress(&self, text: impl Into<String>) {
+        self.emit_user_event(UserEvent::Progress { text: text.into() });
     }
 }
 
@@ -71,6 +70,10 @@ pub trait Tool: Send + Sync {
     fn name(&self) -> &'static str;
     fn definition(&self) -> Value;
     async fn call(&self, args: &Value, ctx: &ToolContext) -> AgentResult<ToolOutput>;
+
+    /// Support downcasting for framework-provided tools that need internal
+    /// infrastructure (e.g. `EventBus` injection). Default returns `None`.
+    fn as_any(&self) -> Option<&dyn std::any::Any> { None }
 }
 
 #[async_trait]
@@ -164,5 +167,38 @@ impl ToolRegistry {
 
     pub fn is_empty(&self) -> bool {
         self.tools.is_empty()
+    }
+
+    /// Inject the internal `EventBus` into framework-provided tools that
+    /// implement `set_event_bus` (PlanOrchestrator, PlanExecTool).
+    ///
+    /// **Calling order constraint**: This must be called *after* all tools are
+    /// registered and *before* the `ToolRegistry` is moved into `ToolEngine`.
+    /// Any `Arc<dyn Tool>` references held before this call will point to the
+    /// old (event_bus=None) clones and must not be used after injection.
+    pub(crate) fn inject_event_bus(&mut self, event_bus: &crate::engine::EventBus) {
+        let names: Vec<String> = self.tools.keys().cloned().collect();
+        for name in names {
+            let needs_inject = self.tools.get(&name).and_then(|t| t.as_any()).map(|any| {
+                any.downcast_ref::<crate::engine::PlanOrchestrator>().is_some()
+                    || any.downcast_ref::<crate::engine::PlanExecTool>().is_some()
+            }).unwrap_or(false);
+
+            if needs_inject {
+                if let Some(tool) = self.tools.remove(&name) {
+                    if let Some(any) = tool.as_any() {
+                        if let Some(p) = any.downcast_ref::<crate::engine::PlanOrchestrator>() {
+                            let mut clone = p.clone();
+                            clone.set_event_bus(event_bus.clone());
+                            self.tools.insert(name.clone(), Arc::new(clone));
+                        } else if let Some(p) = any.downcast_ref::<crate::engine::PlanExecTool>() {
+                            let mut clone = p.clone();
+                            clone.set_event_bus(event_bus.clone());
+                            self.tools.insert(name.clone(), Arc::new(clone));
+                        }
+                    }
+                }
+            }
+        }
     }
 }

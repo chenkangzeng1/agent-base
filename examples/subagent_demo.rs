@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use agent_base::{
-    AgentBuilder, AgentEvent, AgentResult, ChatMessage, LlmCapabilities, LlmClient,
-    ResponseFormat, StreamChunk, SubAgentTool,
+    AgentBuilder, AgentResult, ChatMessage, LlmCapabilities, LlmClient,
+    ResponseFormat, RuntimeEvent, StreamChunk, SubAgentTool,
 };
 use async_trait::async_trait;
 use futures_core::Stream;
@@ -142,45 +142,31 @@ async fn main() -> AgentResult<()> {
     println!();
     for event in &events {
         match event {
-            AgentEvent::TextDelta { text, .. } => print!("{text}"),
-            AgentEvent::ToolCallStarted { tool_name, args_json, .. } => {
+            RuntimeEvent::TextDelta { text, .. } => print!("{text}"),
+            RuntimeEvent::ToolCallStarted { tool_name, args_json, .. } => {
                 println!();
                 println!(">>> Parent agent calling tool: {tool_name}");
                 println!("    with args: {args_json}");
             }
-            AgentEvent::ToolCallFinished { tool_name, summary, .. } => {
+            RuntimeEvent::ToolCallFinished { tool_name, summary, .. } => {
                 println!();
                 println!("<<< Tool result ({tool_name}):");
                 println!("    {summary}");
             }
-            AgentEvent::Custom { payload, .. } => {
-                if let Some(event_type) = payload
-                    .get("type")
-                    .and_then(Value::as_str)
-                {
-                    if event_type == "subagent_event" {
-                        if let Some(inner) = payload.get("event") {
-                            if let Some(inner_type) = inner.get("type").and_then(Value::as_str)
-                            {
-                                match inner_type {
-                                    "TextDelta" => {
-                                        if let Some(t) = inner.get("text").and_then(Value::as_str)
-                                        {
-                                            print!("  [sub-agentAgent] {t}");
-                                        }
-                                    }
-                                    "RunFinished" => {
-                                        println!();
-                                        println!("  [Sub-agent] analysis done");
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
+            RuntimeEvent::UserEvent { event: agent_base::UserEvent::SubAgentEvent { subagent, event }, .. } => {
+                print!("  [sub-agent {subagent}] ");
+                match event.as_ref() {
+                    RuntimeEvent::TextDelta { text, .. } => {
+                        print!("{text}");
                     }
+                    RuntimeEvent::RunFinished { .. } => {
+                        println!();
+                        println!("  [Sub-agent] analysis done");
+                    }
+                    _ => {}
                 }
             }
-            AgentEvent::RunFinished { .. } => {
+            RuntimeEvent::RunFinished { .. } => {
                 println!();
                 println!();
                 println!("--- Executedone ---");

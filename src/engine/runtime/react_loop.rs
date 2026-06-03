@@ -4,7 +4,7 @@ use crate::engine::middleware::{PostLlmCtx, PreLlmCtx, UserMessageCtx};
 use crate::engine::recovery::ToolErrorAction;
 use crate::engine::runtime::event_bus::EventBus;
 use crate::engine::runtime::llm_engine::LlmTurnResult;
-use crate::types::{AgentError, AgentEvent, AgentResult, CheckpointData, CheckpointStep, MessageRole, RunOutcome, SessionId};
+use crate::types::{AgentError, AgentEvent, AgentResult, CheckpointData, CheckpointStep, MessageRole, RunOutcome, RuntimeEvent, SessionId};
 
 use super::AgentRuntime;
 
@@ -30,7 +30,6 @@ impl AgentRuntime {
         let mut ctx = UserMessageCtx {
             session_id: session_id.clone(),
             user_input,
-            event_bus: self.event_bus.sender(),
         };
         for mw in &self.middlewares {
             mw.on_user_message(&mut ctx).await?;
@@ -48,7 +47,6 @@ impl AgentRuntime {
             session_id: session_id.clone(),
             messages,
             tools,
-            event_bus: self.event_bus.sender(),
         };
         for mw in &self.middlewares {
             mw.on_pre_llm(&mut ctx).await?;
@@ -71,7 +69,6 @@ impl AgentRuntime {
             full_text,
             is_tool_call,
             tool_calls,
-            event_bus: self.event_bus.sender(),
             available_tools: available_tools.to_vec(),
             turn_count,
             total_tool_calls,
@@ -99,7 +96,7 @@ impl AgentRuntime {
         on_event: &mut F,
     ) -> AgentResult<Option<RunOutcome>>
     where
-        F: FnMut(AgentEvent) -> AgentResult<()> + Send,
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
         if e.is_cancelled() {
             self.emit_event(AgentEvent::RunFinished { session_id: session_id.clone() });
@@ -164,7 +161,7 @@ impl AgentRuntime {
         on_event: &mut F,
     ) -> AgentResult<(RunOutcome, u32)>
     where
-        F: FnMut(AgentEvent) -> AgentResult<()> + Send,
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
         let max_turns = self.config.execution.max_turns.unwrap_or(super::DEFAULT_MAX_TURNS);
         let mut total_tool_calls: usize = 0;
@@ -347,7 +344,7 @@ impl AgentRuntime {
         on_event: &mut F,
     ) -> AgentResult<ToolCallResult>
     where
-        F: FnMut(AgentEvent) -> AgentResult<()> + Send,
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
         let tool_names: Vec<&str> = tool_calls.iter().map(|(_, name, _)| name.as_str()).collect();
         tracing::debug!(session_id = session_id.id, ?tool_names, "handle tool calls start");

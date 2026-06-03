@@ -4,11 +4,12 @@ use crate::engine::context::ContextWindowManager;
 use crate::engine::middleware::MiddlewareRef;
 use crate::engine::session_store::SessionStore;
 use crate::engine::AgentSession;
-use crate::types::{AgentConfig, AgentError, AgentEvent, AgentResult, CheckpointData, CheckpointStep, MessageRole, RunOutcome, SessionId};
+use crate::types::{AgentConfig, AgentError, AgentEvent, AgentResult, CheckpointData, CheckpointStep, MessageRole, RunOutcome, RuntimeEvent, SessionId};
 
 use super::approval::ApprovalHandler;
 
 mod event_bus;
+pub(crate) use event_bus::EventBus;
 mod llm_engine;
 mod plan;
 mod react_loop;
@@ -17,10 +18,9 @@ mod tool_engine;
 
 pub(super) const DEFAULT_MAX_TURNS: u32 = 50;
 
-pub use event_bus::EventBus;
 pub use llm_engine::LlmEngine;
 pub use session_manager::SessionManager;
-pub use tool_engine::ToolEngine;
+pub(crate) use tool_engine::ToolEngine;
 
 pub struct AgentRuntime {
     pub(crate) config: AgentConfig,
@@ -56,16 +56,12 @@ impl AgentRuntime {
         self.session_manager.with_session_mut(session_id, f).await
     }
 
-    pub fn emit_event(&self, event: AgentEvent) {
+    pub(crate) fn emit_event(&self, event: AgentEvent) {
         self.event_bus.emit(event);
     }
 
-    pub fn subscribe_events(&self) -> tokio::sync::broadcast::Receiver<AgentEvent> {
+    pub(crate) fn subscribe_events(&self) -> tokio::sync::broadcast::Receiver<AgentEvent> {
         self.event_bus.subscribe()
-    }
-
-    pub fn event_bus(&self) -> &EventBus {
-        &self.event_bus
     }
 
     pub fn session_manager(&self) -> &SessionManager {
@@ -74,14 +70,6 @@ impl AgentRuntime {
 
     pub fn llm_engine(&self) -> &LlmEngine {
         &self.llm_engine
-    }
-
-    pub fn tool_engine(&self) -> &ToolEngine {
-        &self.tool_engine
-    }
-
-    pub fn tool_engine_mut(&mut self) -> &mut ToolEngine {
-        &mut self.tool_engine
     }
 
     pub fn client(&self) -> Arc<dyn crate::llm::LlmClient> {
@@ -154,7 +142,7 @@ impl AgentRuntime {
         mut on_event: F,
     ) -> AgentResult<RunOutcome>
     where
-        F: FnMut(AgentEvent) -> AgentResult<()> + Send,
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
         let session_id = checkpoint.session_id.clone();
         let user_input = checkpoint.user_input.clone();
@@ -204,7 +192,7 @@ impl AgentRuntime {
         mut on_event: F,
     ) -> AgentResult<RunOutcome>
     where
-        F: FnMut(AgentEvent) -> AgentResult<()> + Send,
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
         let span = tracing::info_span!("agent_run", session_id = session_id.id);
         let _enter = span.enter();
@@ -253,7 +241,7 @@ impl AgentRuntime {
         mut on_event: F,
     ) -> AgentResult<RunOutcome>
     where
-        F: FnMut(AgentEvent) -> AgentResult<()> + Send,
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
         let span = tracing::Span::current();
         let _guard = span.enter();
@@ -298,7 +286,7 @@ impl AgentRuntime {
         &self,
         session_id: SessionId,
         user_input: &str,
-    ) -> AgentResult<(Vec<AgentEvent>, RunOutcome)> {
+    ) -> AgentResult<(Vec<RuntimeEvent>, RunOutcome)> {
         let mut events = Vec::new();
         let outcome = self.run_turn_with_handler(session_id, user_input, |event| {
             events.push(event);

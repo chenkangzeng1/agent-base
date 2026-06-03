@@ -8,7 +8,7 @@ use serde_json::Value;
 use tracing::Span;
 
 use crate::llm::{LlmClient, ReasoningConfig, StreamChunk, UsageInfo};
-use crate::types::{AgentEvent, AgentResult, ChatMessage, SessionId};
+use crate::types::{AgentEvent, AgentResult, ChatMessage, RuntimeEvent, SessionId};
 use crate::engine::runtime::event_bus::EventBus;
 
 pub struct LlmEngine {
@@ -17,7 +17,7 @@ pub struct LlmEngine {
 }
 
 impl LlmEngine {
-    pub fn new(client: Arc<dyn LlmClient>, event_bus: EventBus) -> Self {
+    pub(crate) fn new(client: Arc<dyn LlmClient>, event_bus: EventBus) -> Self {
         Self { client, event_bus }
     }
 
@@ -68,7 +68,7 @@ impl LlmEngine {
         }
     }
 
-    pub async fn process_stream<F>(
+    pub(crate) async fn process_stream<F>(
         &self,
         session_id: &SessionId,
         mut stream: Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>,
@@ -77,7 +77,7 @@ impl LlmEngine {
         on_event: &mut F,
     ) -> AgentResult<LlmTurnResult>
     where
-        F: FnMut(AgentEvent) -> AgentResult<()> + Send,
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
         let _enter = span.enter();
         let start = std::time::Instant::now();
@@ -89,7 +89,7 @@ impl LlmEngine {
             tokio::select! {
                 recv_result = event_rx.recv() => {
                     match recv_result {
-                        Ok(event) => on_event(event)?,
+                        Ok(event) => on_event(RuntimeEvent::from(event))?,
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
