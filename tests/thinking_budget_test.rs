@@ -93,7 +93,7 @@ async fn test_thinking_budget_parameter_passed() {
         .build().unwrap();
 
     let session_id = runtime.create_session().await;
-    let _ = runtime.run_turn_stream(session_id, "test").await;
+    let _ = runtime.run_turn_collect(session_id, "test").await;
 
     let bodies = llm.captured_bodies();
     assert!(!bodies.is_empty(), "Should have captured at least one request body");
@@ -122,7 +122,7 @@ async fn test_extra_body_format_for_thinking() {
         .build().unwrap();
 
     let session_id = runtime.create_session().await;
-    let _ = runtime.run_turn_stream(session_id, "test").await;
+    let _ = runtime.run_turn_collect(session_id, "test").await;
 
     let bodies = llm.captured_bodies();
     assert!(!bodies.is_empty(), "Should have captured at least one request body");

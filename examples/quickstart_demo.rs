@@ -504,7 +504,7 @@ async fn main() -> AgentResult<()> {
 
         let mut printer = CliEventPrinter::new();
         match runtime
-            .run_turn_with_handler(session_id.clone(), &input, |event| printer.handle(event))
+            .run_turn(session_id.clone(), &input, |event| printer.handle(event))
             .await
         {
             Ok(_outcome) => {

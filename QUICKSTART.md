@@ -140,7 +140,7 @@ async fn main() -> AgentResult<()> {
     let session_id = runtime.create_session().await;
 
     let (events, outcome) = runtime
-        .run_turn_stream(session_id, "Check disk usage on /")
+        .run_turn_collect(session_id, "Check disk usage on /")
         .await?;
 
     // 4. Print results
@@ -341,7 +341,7 @@ let runtime = AgentBuilder::new(llm)
 
 ## Step 5: Real-Time Event Streaming
 
-Instead of collecting all events and printing at the end, stream them live using `run_turn_with_handler`:
+Instead of collecting all events and printing at the end, stream them live using `run_turn`:
 
 ```rust
 use std::io::{self, Write};
@@ -376,11 +376,11 @@ fn on_event(event: AgentEvent) -> AgentResult<()> {
 
 // Use it:
 let outcome = runtime
-    .run_turn_with_handler(session_id, "Check disk and memory", on_event)
+    .run_turn(session_id, "Check disk and memory", on_event)
     .await?;
 ```
 
-> **Tip:** `run_turn_with_handler` is for real-time streaming (CLI, WebSocket). `run_turn_stream` collects all events into a Vec — good for testing or batch processing.
+> **Tip:** `run_turn` is for real-time streaming (CLI, WebSocket). `run_turn_collect` collects all events into a Vec — good for testing or batch processing.
 
 ---
 
@@ -392,13 +392,13 @@ Sessions persist message history automatically. Just keep calling `run_turn_*` w
 let session_id = runtime.create_session().await;
 
 // Turn 1: Ask about disk
-runtime.run_turn_with_handler(session_id.clone(), "Check disk on /", on_event).await?;
+runtime.run_turn(session_id.clone(), "Check disk on /", on_event).await?;
 
 // Turn 2: Follow-up — the LLM remembers the previous context
-runtime.run_turn_with_handler(session_id.clone(), "What about /var?", on_event).await?;
+runtime.run_turn(session_id.clone(), "What about /var?", on_event).await?;
 
 // Turn 3: Decision making — LLM has full context of both checks
-runtime.run_turn_with_handler(session_id.clone(), "Which one should I worry about?", on_event).await?;
+runtime.run_turn(session_id.clone(), "Which one should I worry about?", on_event).await?;
 ```
 
 The runtime automatically manages the message history (user, assistant, tool calls, tool results) inside the session.
@@ -533,7 +533,7 @@ async fn main() -> AgentResult<()> {
         let input = input.trim();
         if input == "exit" { break; }
 
-        match runtime.run_turn_with_handler(session_id.clone(), input, on_event).await {
+        match runtime.run_turn(session_id.clone(), input, on_event).await {
             Ok(_) => {}
             Err(e) => eprintln!("Error: {}", e),
         }

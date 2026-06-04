@@ -249,7 +249,7 @@ impl AgentRuntime {
         Ok(outcome)
     }
 
-    pub async fn run_turn_with_handler<F>(
+    pub async fn run_turn<F>(
         &self,
         session_id: SessionId,
         user_input: &str,
@@ -297,13 +297,13 @@ impl AgentRuntime {
         Ok(outcome)
     }
 
-    pub async fn run_turn_stream(
+    pub async fn run_turn_collect(
         &self,
         session_id: SessionId,
         user_input: &str,
     ) -> AgentResult<(Vec<RuntimeEvent>, RunOutcome)> {
         let mut events = Vec::new();
-        let outcome = self.run_turn_with_handler(session_id, user_input, |event| {
+        let outcome = self.run_turn(session_id, user_input, |event| {
             events.push(event);
             Ok(())
         })

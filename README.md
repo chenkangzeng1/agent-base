@@ -105,7 +105,7 @@ async fn main() -> AgentResult<()> {
         .build();
 
     let session_id = runtime.create_session();
-    let (events, outcome) = runtime.run_turn_stream(
+    let (events, outcome) = runtime.run_turn_collect(
         session_id,
         "What's the weather in Tokyo?",
     ).await?;

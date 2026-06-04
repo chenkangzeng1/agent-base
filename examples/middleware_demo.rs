@@ -350,7 +350,7 @@ async fn main() -> AgentResult<()> {
         }
 
         match runtime
-            .run_turn_with_handler(session_id.clone(), &input, |event| EventPrinter::handle(event))
+            .run_turn(session_id.clone(), &input, |event| EventPrinter::handle(event))
             .await
         {
             Ok(outcome) => {

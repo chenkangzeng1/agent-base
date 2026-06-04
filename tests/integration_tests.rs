@@ -134,7 +134,7 @@ async fn test_simple_text_reply() {
         .build().unwrap();
 
     let session_id = runtime.create_session().await;
-    let result = runtime.run_turn_stream(session_id.clone(), "Hi").await;
+    let result = runtime.run_turn_collect(session_id.clone(), "Hi").await;
     assert!(result.is_ok(), "Expected ok, got: {result:?}");
     let (_events, outcome) = result.unwrap();
     assert_eq!(outcome, RunOutcome::Completed);
@@ -177,7 +177,7 @@ async fn test_multiple_turns_with_tool() {
         .build().unwrap();
 
     let session_id = runtime.create_session().await;
-    let result = runtime.run_turn_stream(session_id, "Echo hello").await;
+    let result = runtime.run_turn_collect(session_id, "Echo hello").await;
     assert!(result.is_ok(), "Expected ok, got: {result:?}");
 
     assert_eq!(llm.call_count(), 2);
@@ -205,7 +205,7 @@ async fn test_tool_not_found() {
         .build().unwrap();
 
     let session_id = runtime.create_session().await;
-    let result = runtime.run_turn_stream(session_id, "test").await;
+    let result = runtime.run_turn_collect(session_id, "test").await;
     assert!(result.is_ok(), "Tool not found should not crash: {result:?}");
 
     let (events, _outcome) = result.unwrap();
@@ -281,7 +281,7 @@ async fn test_approval_deny_stops_execution() {
         .build().unwrap();
 
     let session_id = runtime.create_session().await;
-    let result = runtime.run_turn_stream(session_id, "test").await;
+    let result = runtime.run_turn_collect(session_id, "test").await;
     let (events, _outcome) = result.expect("Approval denial should be handled gracefully");
 
     let has_awaiting_approval = events
@@ -362,7 +362,7 @@ async fn test_approval_allow_once_executes_tool() {
         .build().unwrap();
 
     let session_id = runtime.create_session().await;
-    let result = runtime.run_turn_stream(session_id, "test").await;
+    let result = runtime.run_turn_collect(session_id, "test").await;
     assert!(result.is_ok(), "Expected ok, got: {result:?}");
     assert_eq!(llm.call_count(), 2);
 }
@@ -382,7 +382,7 @@ async fn test_empty_text_and_no_tool_call_continues() {
         .build().unwrap();
 
     let session_id = runtime.create_session().await;
-    let result = runtime.run_turn_stream(session_id, "test").await;
+    let result = runtime.run_turn_collect(session_id, "test").await;
     assert!(result.is_ok(), "Expected ok, got: {result:?}");
     assert_eq!(llm.call_count(), 2);
 }
@@ -410,7 +410,7 @@ async fn test_tool_parse_error_recovers() {
         .build().unwrap();
 
     let session_id = runtime.create_session().await;
-    let result = runtime.run_turn_stream(session_id, "test").await;
+    let result = runtime.run_turn_collect(session_id, "test").await;
     assert!(result.is_ok(), "Should recover from tool parse error: {result:?}");
 }
 
@@ -470,7 +470,7 @@ async fn test_tool_policy_hooks_are_invoked() {
         .build().unwrap();
 
     let session_id = runtime.create_session().await;
-    let result = runtime.run_turn_stream(session_id, "test").await;
+    let result = runtime.run_turn_collect(session_id, "test").await;
     assert!(result.is_ok(), "Expected ok, got: {result:?}");
 
     assert!(
@@ -520,7 +520,7 @@ async fn test_tool_policy_hook_can_block_execution() {
         .build().unwrap();
 
     let session_id = runtime.create_session().await;
-    let result = runtime.run_turn_stream(session_id, "test").await;
+    let result = runtime.run_turn_collect(session_id, "test").await;
     let (_events, outcome) = result.expect("run should complete");
     assert!(
         matches!(&outcome, RunOutcome::Failed { error } if error.contains("blocked by policy")),
@@ -538,7 +538,7 @@ async fn test_event_collection() {
     let runtime = AgentBuilder::new(llm.clone()).build().unwrap();
 
     let session_id = runtime.create_session().await;
-    let (events, _outcome) = runtime.run_turn_stream(session_id, "test").await.unwrap();
+    let (events, _outcome) = runtime.run_turn_collect(session_id, "test").await.unwrap();
 
     let has_text_delta = events.iter().any(|e| matches!(e, RuntimeEvent::TextDelta { .. }));
     let has_run_finished =
@@ -686,7 +686,7 @@ async fn test_checkpoint_events_emitted() {
         .build().unwrap();
 
     let session_id = runtime.create_session().await;
-    let (events, _outcome) = runtime.run_turn_stream(session_id, "test checkpoint").await.unwrap();
+    let (events, _outcome) = runtime.run_turn_collect(session_id, "test checkpoint").await.unwrap();
 
     let checkpoint_count = events
         .iter()
@@ -730,7 +730,7 @@ async fn test_resume_from_after_user_input_checkpoint() {
 
     let mut checkpoint_opt: Option<agent_base::CheckpointData> = None;
     let _ = runtime
-        .run_turn_with_handler(session_id.clone(), "resume test", |event| {
+        .run_turn(session_id.clone(), "resume test", |event| {
             if let RuntimeEvent::Checkpoint { checkpoint, .. } = &event {
                 if matches!(checkpoint.step, agent_base::CheckpointStep::AfterUserInput) {
                     checkpoint_opt = Some(checkpoint.clone());
@@ -786,7 +786,7 @@ async fn test_resume_from_before_tool_calls_checkpoint() {
 
     let mut checkpoint_opt: Option<agent_base::CheckpointData> = None;
     let _ = runtime
-        .run_turn_with_handler(session_id.clone(), "echo hello", |event| {
+        .run_turn(session_id.clone(), "echo hello", |event| {
             if let RuntimeEvent::Checkpoint { checkpoint, .. } = &event {
                 if matches!(checkpoint.step, agent_base::CheckpointStep::BeforeToolCalls { .. }) {
                     checkpoint_opt = Some(checkpoint.clone());
@@ -865,7 +865,7 @@ async fn test_sub_agent_tool() {
 
     let session_id = parent_runtime.create_session().await;
     let result = parent_runtime
-        .run_turn_stream(session_id.clone(), "delegate this task")
+        .run_turn_collect(session_id.clone(), "delegate this task")
         .await;
     assert!(result.is_ok(), "Sub-agent delegation should succeed: {result:?}");
     assert_eq!(parent_llm.call_count(), 2, "Parent should make 2 LLM calls");
@@ -983,7 +983,7 @@ async fn tool_execution_error_retry_llm_receives_error_and_recovers() {
         .build().unwrap();
 
     let session_id = runtime.create_session().await;
-    let result = runtime.run_turn_stream(session_id.clone(), "do something").await;
+    let result = runtime.run_turn_collect(session_id.clone(), "do something").await;
     assert!(result.is_ok(), "Expected ok: {result:?}");
 
     let (events, outcome) = result.unwrap();
@@ -1026,7 +1026,7 @@ async fn tool_execution_error_stop_on_error_default() {
         .build().unwrap();
 
     let session_id = runtime.create_session().await;
-    let result = runtime.run_turn_stream(session_id, "do something").await;
+    let result = runtime.run_turn_collect(session_id, "do something").await;
     assert!(result.is_ok(), "Expected ok: {result:?}");
 
     let (events, outcome) = result.unwrap();
@@ -1068,7 +1068,7 @@ async fn tool_args_parse_error_fed_back_to_llm_on_retry() {
         .build().unwrap();
 
     let session_id = runtime.create_session().await;
-    let result = runtime.run_turn_stream(session_id.clone(), "test").await;
+    let result = runtime.run_turn_collect(session_id.clone(), "test").await;
     assert!(result.is_ok(), "Expected ok: {result:?}");
 
     let (_events, outcome) = result.unwrap();
@@ -1113,7 +1113,7 @@ async fn consecutive_tool_failures_message_integrity() {
         .build().unwrap();
 
     let session_id = runtime.create_session().await;
-    let result = runtime.run_turn_stream(session_id.clone(), "test").await;
+    let result = runtime.run_turn_collect(session_id.clone(), "test").await;
     assert!(result.is_ok(), "Expected ok: {result:?}");
 
     let session = runtime.session(&session_id).await.unwrap();
@@ -1168,7 +1168,7 @@ async fn approval_deny_with_stop_messages_remain_valid() {
         .build().unwrap();
 
     let session_id = runtime.create_session().await;
-    let result = runtime.run_turn_stream(session_id.clone(), "test").await;
+    let result = runtime.run_turn_collect(session_id.clone(), "test").await;
     assert!(result.is_ok(), "Expected ok: {result:?}");
 
     let (_events, outcome) = result.unwrap();
@@ -1228,7 +1228,7 @@ async fn approval_deny_with_retry_tool_result_still_present() {
         .build().unwrap();
 
     let session_id = runtime.create_session().await;
-    let result = runtime.run_turn_stream(session_id.clone(), "test").await;
+    let result = runtime.run_turn_collect(session_id.clone(), "test").await;
     assert!(result.is_ok(), "Expected ok: {result:?}");
 
     let (_events, outcome) = result.unwrap();
@@ -1272,7 +1272,7 @@ async fn custom_retry_prompt_template_replacements() {
         .build().unwrap();
 
     let session_id = runtime.create_session().await;
-    let result = runtime.run_turn_stream(session_id.clone(), "test").await;
+    let result = runtime.run_turn_collect(session_id.clone(), "test").await;
     assert!(result.is_ok(), "Expected ok: {result:?}");
 
     let session = runtime.session(&session_id).await.unwrap();
@@ -1314,7 +1314,7 @@ async fn run_with_handler_cancelled_emits_run_finished_and_saves() {
     let session_id = runtime.create_session().await;
 
     let result = runtime
-        .run_turn_with_handler(session_id.clone(), "test", |event| {
+        .run_turn(session_id.clone(), "test", |event| {
             if matches!(event, RuntimeEvent::ToolCallStarted { .. }) {
                 return Err(AgentError::Cancelled);
             }
@@ -1353,7 +1353,7 @@ async fn retry_then_empty_llm_response_continues() {
         .build().unwrap();
 
     let session_id = runtime.create_session().await;
-    let result = runtime.run_turn_stream(session_id.clone(), "test").await;
+    let result = runtime.run_turn_collect(session_id.clone(), "test").await;
     assert!(result.is_ok(), "Expected ok: {result:?}");
 
     let (_events, outcome) = result.unwrap();
@@ -1723,7 +1723,7 @@ async fn test_middleware_skip_push_with_follow_up_nudges_and_continues() {
         .build().unwrap();
 
     let session_id = runtime.create_session().await;
-    let result = runtime.run_turn_stream(session_id.clone(), "do something").await;
+    let result = runtime.run_turn_collect(session_id.clone(), "do something").await;
     assert!(result.is_ok(), "Expected ok: {result:?}");
 
     assert!(skip_triggered.load(Ordering::SeqCst), "Nudge should have been triggered");
@@ -1782,7 +1782,7 @@ async fn test_middleware_total_tool_calls_passed_correctly() {
         .build().unwrap();
 
     let session_id = runtime.create_session().await;
-    let result = runtime.run_turn_stream(session_id, "echo hello").await;
+    let result = runtime.run_turn_collect(session_id, "echo hello").await;
     assert!(result.is_ok(), "Expected ok: {result:?}");
 
     let calls_seen: Vec<usize> = seen.lock().unwrap().clone();
@@ -1826,7 +1826,7 @@ async fn test_middleware_skip_push_only_suppresses_text() {
         .build().unwrap();
 
     let session_id = runtime.create_session().await;
-    let result = runtime.run_turn_stream(session_id.clone(), "test").await;
+    let result = runtime.run_turn_collect(session_id.clone(), "test").await;
     assert!(result.is_ok(), "Expected ok: {result:?}");
 
     assert!(suppressed.load(Ordering::SeqCst), "Middleware should have suppressed");
@@ -1852,7 +1852,7 @@ async fn test_middleware_backward_compatible_existing_behavior() {
         .build().unwrap();
 
     let session_id = runtime.create_session().await;
-    let result = runtime.run_turn_stream(session_id.clone(), "Hi").await;
+    let result = runtime.run_turn_collect(session_id.clone(), "Hi").await;
     assert!(result.is_ok(), "Expected ok, got: {result:?}");
     let (_events, outcome) = result.unwrap();
     assert_eq!(outcome, RunOutcome::Completed);
@@ -1946,7 +1946,7 @@ async fn test_async_tool_policy_can_call_async_operations() {
         .unwrap();
 
     let session_id = runtime.create_session().await;
-    let result = runtime.run_turn_stream(session_id, "test").await;
+    let result = runtime.run_turn_collect(session_id, "test").await;
 
     // 验证没有 panic，正常完成
     assert!(result.is_ok(), "Async ToolPolicy should not panic, got: {result:?}");

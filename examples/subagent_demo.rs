@@ -136,7 +136,7 @@ async fn main() -> AgentResult<()> {
     println!("--- Starting execution ---\n");
 
     let (events, _outcome) = parent_runtime
-        .run_turn_stream(session_id, "Please analyze this month's sales performance")
+        .run_turn_collect(session_id, "Please analyze this month's sales performance")
         .await?;
 
     println!();

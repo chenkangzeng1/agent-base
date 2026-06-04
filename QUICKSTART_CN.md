@@ -140,7 +140,7 @@ async fn main() -> AgentResult<()> {
     let session_id = runtime.create_session().await;
 
     let (events, outcome) = runtime
-        .run_turn_stream(session_id, "检查 / 目录的磁盘使用情况")
+        .run_turn_collect(session_id, "检查 / 目录的磁盘使用情况")
         .await?;
 
     // 4. 打印结果
@@ -341,7 +341,7 @@ let runtime = AgentBuilder::new(llm)
 
 ## Step 5：实时事件流
 
-用 `run_turn_with_handler` 可以实时接收每个事件，适合 CLI 和 WebSocket 场景：
+用 `run_turn` 可以实时接收每个事件，适合 CLI 和 WebSocket 场景：
 
 ```rust
 use std::io::{self, Write};
@@ -376,11 +376,11 @@ fn on_event(event: AgentEvent) -> AgentResult<()> {
 
 // 使用方式：
 let outcome = runtime
-    .run_turn_with_handler(session_id, "检查磁盘和内存", on_event)
+    .run_turn(session_id, "检查磁盘和内存", on_event)
     .await?;
 ```
 
-> **提示：** `run_turn_with_handler` 适合实时流式场景（CLI、WebSocket）。`run_turn_stream` 把所有事件收集到 Vec 里——适合测试或批量处理。
+> **提示：** `run_turn` 适合实时流式场景（CLI、WebSocket）。`run_turn_collect` 把所有事件收集到 Vec 里——适合测试或批量处理。
 
 ---
 
@@ -392,13 +392,13 @@ Session 自动保存消息历史。只要用同一个 `session_id` 持续调用 
 let session_id = runtime.create_session().await;
 
 // 第 1 轮：询问磁盘情况
-runtime.run_turn_with_handler(session_id.clone(), "检查 / 的磁盘使用", on_event).await?;
+runtime.run_turn(session_id.clone(), "检查 / 的磁盘使用", on_event).await?;
 
 // 第 2 轮：追问——LLM 记得上一轮的上下文
-runtime.run_turn_with_handler(session_id.clone(), "/var 目录呢？", on_event).await?;
+runtime.run_turn(session_id.clone(), "/var 目录呢？", on_event).await?;
 
 // 第 3 轮：决策——LLM 拥有前两轮的完整上下文
-runtime.run_turn_with_handler(session_id.clone(), "哪个更需要关注？", on_event).await?;
+runtime.run_turn(session_id.clone(), "哪个更需要关注？", on_event).await?;
 ```
 
 Runtime 自动管理 Session 中的消息历史（用户消息、助手回复、工具调用、工具结果）。
@@ -533,7 +533,7 @@ async fn main() -> AgentResult<()> {
         let input = input.trim();
         if input == "exit" { break; }
 
-        match runtime.run_turn_with_handler(session_id.clone(), input, on_event).await {
+        match runtime.run_turn(session_id.clone(), input, on_event).await {
             Ok(_) => {}
             Err(e) => eprintln!("错误: {}", e),
         }

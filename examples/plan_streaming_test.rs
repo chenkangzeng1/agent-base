@@ -424,9 +424,9 @@ async fn test_plan_orchestrator(
     let session_id = runtime.create_session().await;
     println!("{} session created", now_ms(t0));
 
-    // Use run_turn_with_handler for real-time event printing
+    // Use run_turn for real-time event printing
     let _outcome = runtime
-        .run_turn_with_handler(
+        .run_turn(
             session_id.clone(),
             "全面检查服务器健康状况\n\n[可用主机信息]\n- test-host (IP: 121.41.191.236)",
             |event| {
