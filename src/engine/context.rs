@@ -53,7 +53,7 @@ impl ContextWindowManager {
         (cjk_count as f64 / 1.5 + latin_count as f64 / 4.0).ceil() as usize
     }
 
-    fn message_tokens(msg: &ChatMessage) -> usize {
+    pub(crate) fn message_tokens(msg: &ChatMessage) -> usize {
         match msg {
             ChatMessage::System { content } => Self::estimate_tokens(content),
             ChatMessage::User { content, images } => {
@@ -74,11 +74,14 @@ impl ContextWindowManager {
                 }
                 tokens
             }
-            ChatMessage::Assistant { content, reasoning_content: _, tool_calls } => {
+            ChatMessage::Assistant { content, reasoning_content, tool_calls } => {
                 let mut tokens = content
                     .as_deref()
                     .map(|c| Self::estimate_tokens(c))
                     .unwrap_or(0);
+                if let Some(rc) = reasoning_content {
+                    tokens += Self::estimate_tokens(rc);
+                }
                 if let Some(tc) = tool_calls {
                     for t in tc {
                         tokens += Self::estimate_tokens(&t.name);

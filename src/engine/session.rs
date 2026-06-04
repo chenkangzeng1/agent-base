@@ -118,6 +118,87 @@ impl AgentSession {
         ));
     }
 
+    /// Count the number of conversation turns.
+    /// A turn starts with a User message and includes subsequent Assistant/Tool messages.
+    pub fn turn_count(&self) -> usize {
+        self.chat_messages
+            .iter()
+            .filter(|m| matches!(m, ChatMessage::User { .. }))
+            .count()
+    }
+
+    /// Remove the oldest turns from the front until turn count ≤ max_turns.
+    /// Preserves the System message at index 0 if present.
+    /// Keeps `messages` and `chat_messages` in sync.
+    pub fn trim_oldest_turns(&mut self, max_turns: usize) {
+        let current_turns = self.turn_count();
+        if current_turns <= max_turns {
+            return;
+        }
+        let turns_to_remove = current_turns - max_turns;
+
+        // Find User message positions (turn boundaries) in chat_messages
+        let user_positions: Vec<usize> = self
+            .chat_messages
+            .iter()
+            .enumerate()
+            .filter_map(|(i, m)| if matches!(m, ChatMessage::User { .. }) { Some(i) } else { None })
+            .collect();
+
+        if user_positions.len() <= turns_to_remove {
+            return;
+        }
+
+        // Preserve system prefix: count leading System messages
+        let system_prefix = self
+            .chat_messages
+            .iter()
+            .take_while(|m| matches!(m, ChatMessage::System { .. }))
+            .count();
+
+        // Drain from system_prefix up to the start of the (turns_to_remove + 1)-th turn
+        let drain_end = user_positions[turns_to_remove];
+        if system_prefix >= drain_end {
+            return; // nothing to drain after system messages
+        }
+
+        // Count how many messages entries correspond to the drained chat_messages range
+        let mut msg_remove_count = 0;
+        for chat_msg in &self.chat_messages[system_prefix..drain_end] {
+            let has_msg_entry = match chat_msg {
+                ChatMessage::Assistant { tool_calls, content, .. } => {
+                    content.is_some() && tool_calls.as_ref().is_none_or(|tc| tc.is_empty())
+                }
+                _ => true,
+            };
+            if has_msg_entry {
+                msg_remove_count += 1;
+            }
+        }
+
+        // Drain from both lists, preserving the system prefix
+        self.chat_messages.drain(system_prefix..drain_end);
+        let msg_drain = msg_remove_count.min(self.messages.len());
+        self.messages.drain(system_prefix..system_prefix + msg_drain);
+    }
+
+    /// Remove the last message from both `chat_messages` and `messages`.
+    /// Used by the max_message_tokens safety valve to discard oversized messages.
+    pub fn pop_last_message(&mut self) {
+        if let Some(last) = self.chat_messages.pop() {
+            // Only pop from messages if the last chat_message had a corresponding messages entry
+            let has_msg_entry = match &last {
+                ChatMessage::Assistant { tool_calls, content, .. } => {
+                    content.is_some() && tool_calls.as_ref().is_none_or(|tc| tc.is_empty())
+                }
+                _ => true,
+            };
+            if has_msg_entry && !self.messages.is_empty() {
+                self.messages.pop();
+            }
+        }
+    }
+
     pub fn close_dangling_tool_calls(&mut self, error_summary: &str) {
         let assistant_idx = self.chat_messages.iter().rposition(|m| {
             matches!(m, ChatMessage::Assistant { tool_calls: Some(tc), .. } if !tc.is_empty())
@@ -146,5 +227,128 @@ impl AgentSession {
                 self.push_tool_result(id, error_summary);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_session() -> AgentSession {
+        AgentSession::new(SessionId::new(1))
+    }
+
+    #[test]
+    fn test_turn_count_empty() {
+        let s = make_session();
+        assert_eq!(s.turn_count(), 0);
+    }
+
+    #[test]
+    fn test_turn_count_with_system_and_user() {
+        let mut s = make_session();
+        s.push_message(MessageRole::System, "system");
+        assert_eq!(s.turn_count(), 0);
+        s.push_message(MessageRole::User, "hello");
+        assert_eq!(s.turn_count(), 1);
+        s.push_message(MessageRole::Assistant, "hi");
+        assert_eq!(s.turn_count(), 1);
+        s.push_message(MessageRole::User, "bye");
+        assert_eq!(s.turn_count(), 2);
+    }
+
+    #[test]
+    fn test_turn_count_with_tool_calls() {
+        let mut s = make_session();
+        s.push_message(MessageRole::User, "do something");
+        s.push_assistant_tool_calls(&[("id1".into(), "tool".into(), "{}".into())]);
+        s.push_tool_result("id1", "result");
+        s.push_message(MessageRole::Assistant, "done");
+        // One user turn: User -> Assistant(tool_calls) -> Tool -> Assistant(text)
+        assert_eq!(s.turn_count(), 1);
+    }
+
+    #[test]
+    fn test_trim_oldest_turns_noop() {
+        let mut s = make_session();
+        s.push_message(MessageRole::User, "hello");
+        s.push_message(MessageRole::Assistant, "hi");
+        s.trim_oldest_turns(5);
+        assert_eq!(s.turn_count(), 1);
+        assert_eq!(s.chat_messages().len(), 2);
+    }
+
+    #[test]
+    fn test_trim_oldest_turns_removes_old() {
+        let mut s = make_session();
+        s.push_message(MessageRole::System, "sys");
+        // Turn 1
+        s.push_message(MessageRole::User, "u1");
+        s.push_message(MessageRole::Assistant, "a1");
+        // Turn 2
+        s.push_message(MessageRole::User, "u2");
+        s.push_message(MessageRole::Assistant, "a2");
+        // Turn 3
+        s.push_message(MessageRole::User, "u3");
+        s.push_message(MessageRole::Assistant, "a3");
+
+        s.trim_oldest_turns(2);
+        assert_eq!(s.turn_count(), 2);
+        // System message preserved
+        assert!(matches!(s.chat_messages()[0], ChatMessage::System { .. }));
+        // Oldest user message is u2
+        assert!(matches!(s.chat_messages()[1], ChatMessage::User { ref content, .. } if content == "u2"));
+    }
+
+    #[test]
+    fn test_trim_oldest_turns_with_tool_calls() {
+        let mut s = make_session();
+        // Turn 1 with tool call (only in chat_messages, not in messages)
+        s.push_message(MessageRole::User, "u1");
+        s.push_assistant_tool_calls(&[("id1".into(), "t".into(), "{}".into())]);
+        s.push_tool_result("id1", "r1");
+        s.push_message(MessageRole::Assistant, "a1");
+        // Turn 2
+        s.push_message(MessageRole::User, "u2");
+        s.push_message(MessageRole::Assistant, "a2");
+
+        let msg_before = s.messages().len();
+        let chat_before = s.chat_messages().len();
+        s.trim_oldest_turns(1);
+        assert_eq!(s.turn_count(), 1);
+        // chat_messages should have lost 4 entries (User, Assistant(tool), Tool, Assistant(text))
+        assert_eq!(s.chat_messages().len(), chat_before - 4);
+        // messages should have lost 3 entries (User, Tool, Assistant(text)) — not the tool_calls-only Assistant
+        assert_eq!(s.messages().len(), msg_before - 3);
+    }
+
+    #[test]
+    fn test_pop_last_message_text() {
+        let mut s = make_session();
+        s.push_message(MessageRole::User, "hello");
+        s.push_message(MessageRole::Assistant, "hi");
+        assert_eq!(s.chat_messages().len(), 2);
+        s.pop_last_message();
+        assert_eq!(s.chat_messages().len(), 1);
+        assert_eq!(s.messages().len(), 1);
+    }
+
+    #[test]
+    fn test_pop_last_message_tool_calls_only() {
+        let mut s = make_session();
+        s.push_message(MessageRole::User, "do it");
+        s.push_assistant_tool_calls(&[("id1".into(), "t".into(), "{}".into())]);
+        assert_eq!(s.chat_messages().len(), 2);
+        assert_eq!(s.messages().len(), 1); // only User in messages
+        s.pop_last_message();
+        assert_eq!(s.chat_messages().len(), 1);
+        assert_eq!(s.messages().len(), 1); // messages unchanged
+    }
+
+    #[test]
+    fn test_pop_last_message_empty_session() {
+        let mut s = make_session();
+        s.pop_last_message(); // should not panic
+        assert_eq!(s.chat_messages().len(), 0);
     }
 }

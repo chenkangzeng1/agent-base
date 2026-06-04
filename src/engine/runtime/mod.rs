@@ -64,6 +64,21 @@ impl AgentRuntime {
         self.event_bus.subscribe()
     }
 
+    /// Subscribe to runtime events as `RuntimeEvent`.
+    ///
+    /// This is the public API for external consumers (frontends, CLIs) to
+    /// receive events from the agent runtime.
+    pub fn subscribe_runtime_events(&self) -> tokio::sync::broadcast::Receiver<RuntimeEvent> {
+        let (tx, rx) = tokio::sync::broadcast::channel(256);
+        let mut internal_rx = self.event_bus.subscribe();
+        tokio::spawn(async move {
+            while let Ok(event) = internal_rx.recv().await {
+                let _ = tx.send(RuntimeEvent::from(event));
+            }
+        });
+        rx
+    }
+
     pub fn session_manager(&self) -> &SessionManager {
         &self.session_manager
     }

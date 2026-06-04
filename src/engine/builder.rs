@@ -146,6 +146,21 @@ impl AgentBuilder {
         self
     }
 
+    pub fn max_sessions(mut self, max: usize) -> Self {
+        self.config.session.max_sessions = Some(max);
+        self
+    }
+
+    pub fn max_turns_per_session(mut self, max: usize) -> Self {
+        self.config.session.max_turns_per_session = Some(max);
+        self
+    }
+
+    pub fn max_message_tokens(mut self, max: usize) -> Self {
+        self.config.session.max_message_tokens = Some(max);
+        self
+    }
+
     pub fn tool_error_retry_prompt(mut self, prompt: impl Into<String>) -> Self {
         self.config.tool.tool_error_retry_prompt = Some(prompt.into());
         self
@@ -184,6 +199,7 @@ impl AgentBuilder {
         let session_manager = super::runtime::SessionManager::new(
             session_id_generator,
             session_store,
+            self.config.session.clone(),
         );
 
         let llm_engine = super::runtime::LlmEngine::new(

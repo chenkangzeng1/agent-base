@@ -128,6 +128,7 @@ pub use types::{
     ResponseFormat,
     RetryConfig,
     RunOutcome,
+    SessionConfig,
     StepResult,
     StepStatus,
     ToolCallMessage,

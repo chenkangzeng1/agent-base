@@ -108,6 +108,7 @@ pub struct AgentConfig {
     pub execution: ExecutionConfig,
     pub llm: LlmConfig,
     pub tool: ToolConfig,
+    pub session: SessionConfig,
 }
 
 impl Default for AgentConfig {
@@ -120,6 +121,7 @@ impl Default for AgentConfig {
             execution: ExecutionConfig::default(),
             llm: LlmConfig::default(),
             tool: ToolConfig::default(),
+            session: SessionConfig::default(),
         }
     }
 }
@@ -169,6 +171,32 @@ impl Default for ToolConfig {
             tool_timeout_ms: None,
             max_tool_output_chars: None,
             tool_error_retry_prompt: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SessionConfig {
+    /// 最大 session 数量，超过时 LRU 逐出整个 session（从内存卸载，数据保留）
+    /// None = 不限制
+    pub max_sessions: Option<usize>,
+
+    /// 单个 session 最大保留轮数，超过从前面截掉最旧轮次
+    /// None = 不限制
+    pub max_turns_per_session: Option<usize>,
+
+    /// 单条消息 token 上限（安全阀），超过不存入 session 历史
+    /// 阈值应设很高（如 100k），只拦异常情况
+    /// None = 不限制
+    pub max_message_tokens: Option<usize>,
+}
+
+impl Default for SessionConfig {
+    fn default() -> Self {
+        Self {
+            max_sessions: None,
+            max_turns_per_session: None,
+            max_message_tokens: None,
         }
     }
 }
