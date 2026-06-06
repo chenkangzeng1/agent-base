@@ -3,7 +3,7 @@ use tokio::sync::{broadcast, mpsc};
 
 use crate::types::{
     AgentError, AgentEvent, AgentResult, ExecutionPlan, PlanStatus, RecoveryAction,
-    RunOutcome, RuntimeEvent, SessionId, StepStatus, UserEvent,
+    RunOutcome, RuntimeEvent, SessionId, StepResult, StepStatus, UserEvent,
 };
 use crate::tool::ToolContext;
 use crate::engine::plan::{
@@ -13,6 +13,16 @@ use crate::engine::plan::{
 use crate::engine::runtime::event_bus::EventBus;
 use super::AgentRuntime;
 use std::sync::Arc;
+
+/// Control-flow signal returned by `handle_step_failure`.
+enum StepFailureAction {
+    /// Retry the step (loop again without incrementing step_idx).
+    Retry,
+    /// Skip the step and continue to the next.
+    Skip,
+    /// Abort the entire plan.
+    Abort,
+}
 
 impl AgentRuntime {
     /// Execute a pre-built `ExecutionPlan`.
@@ -239,51 +249,19 @@ impl AgentRuntime {
                     on_event,
                 );
 
-                // Step execution — immutable borrow of step, released before mutation below
                 let step = &plan.phases[phase_idx].steps[step_idx];
-                let step_result = if let Some(exec) = &executor {
-                    // Deterministic mode
-                    let should_continue = if let Some(p) = &policy {
-                        p.should_continue(plan, step, &step_outputs)
-                            .await
-                            .unwrap_or(true)
-                    } else {
-                        true
-                    };
-
-                    if !should_continue {
-                        Ok(crate::types::StepResult::success("Skipped", 0))
-                    } else {
-                        let (user_event_tx, _user_event_rx) = mpsc::unbounded_channel::<UserEvent>();
-                        let tool_ctx = ToolContext {
-                            session_id: session_id.clone(),
-                            user_event_tx,
-                            llm_client: Some(self.llm_engine().client.clone()),
-                            session_store: Some(self.session_manager.session_store().clone()),
-                            language: crate::types::Language::En,
-                        };
-                        exec.execute_step(step, &step_outputs, &tool_ctx).await
-                    }
-                } else {
-                    // Agentic mode: each step runs as a full agent turn
-                    let mut step_events = Vec::new();
-                    let outcome = self
-                        .run(session_id.clone(), |event| {
-                            step_events.push(event.clone());
-                            on_event(event)
-                        })
-                        .await;
-
-                    let _ = EventBus::drain_async_events(event_rx, on_event);
-
-                    match outcome {
-                        Ok(RunOutcome::Completed) => Ok(crate::types::StepResult::success("Step completed", 0)),
-                        Ok(RunOutcome::Failed { error }) => Ok(crate::types::StepResult::failure(error, 0)),
-                        Ok(RunOutcome::MaxTurnsExceeded { .. }) => Ok(crate::types::StepResult::failure("Max turns exceeded".to_string(), 0)),
-                        Ok(RunOutcome::Cancelled) => Ok(crate::types::StepResult::failure("Cancelled".to_string(), 0)),
-                        Err(e) => Err(e),
-                    }
-                };
+                let step_result = self
+                    .execute_single_step(
+                        session_id,
+                        step,
+                        &executor,
+                        &policy,
+                        plan,
+                        &step_outputs,
+                        &mut *on_event,
+                        event_rx,
+                    )
+                    .await;
 
                 // Handle result — mutable access via index
                 match step_result {
@@ -326,75 +304,23 @@ impl AgentRuntime {
 
                             step_idx += 1;
                         } else {
-                            let current_retry = retry_counts.get(&step_id).copied().unwrap_or(0);
-                            let action: RecoveryAction = if let Some(r) = &recovery {
-                                r.handle_step_failure(
-                                    &plan.phases[phase_idx].steps[step_idx],
-                                    &error,
-                                    current_retry,
-                                    plan,
-                                    &step_outputs,
-                                )
-                                    .await
-                                    .unwrap_or(RecoveryAction::Abort)
-                            } else {
-                                RecoveryAction::Abort
-                            };
-
-                            match action {
-                                RecoveryAction::Retry => {
-                                    plan.phases[phase_idx].steps[step_idx].status = StepStatus::Pending;
-                                    plan.phases[phase_idx].steps[step_idx].result = None;
-                                    *retry_counts.entry(step_id.clone()).or_insert(0) += 1;
-                                    tracing::debug!(session_id = session_id.id, %step_id, retry = retry_counts[&step_id], "step retry");
-                                    // step_idx is NOT incremented, so this step will be retried
-                                }
-                                RecoveryAction::Skip => {
-                                    plan.phases[phase_idx].steps[step_idx].status = StepStatus::Skipped;
-                                    tracing::debug!(session_id = session_id.id, %step_id, "step skipped");
-
-                                    self.emit_and_drain(
-                                        AgentEvent::PlanStepCompleted {
-                                            session_id: session_id.clone(),
-                                            step_id: step_id.clone(),
-                                            success: false,
-                                            result: Some(format!("Skipped: {}", error)),
-                                            payload: Some(step_payload),
-                                        },
-                                        event_rx,
-                                        on_event,
-                                    );
-
-                                    step_idx += 1;
-                                }
-                                RecoveryAction::Abort => {
-                                    plan.phases[phase_idx].steps[step_idx].status = StepStatus::Failed;
-                                    plan.phases[phase_idx].status = crate::types::PhaseStatus::Failed;
-                                    plan.status = PlanStatus::Failed;
-                                    tracing::warn!(session_id = session_id.id, %step_id, "step abort");
-
-                                    self.emit_and_drain(
-                                        AgentEvent::PlanStepCompleted {
-                                            session_id: session_id.clone(),
-                                            step_id: step_id.clone(),
-                                            success: false,
-                                            result: Some(error.clone()),
-                                            payload: Some(step_payload),
-                                        },
-                                        event_rx,
-                                        on_event,
-                                    );
-
-                                    self.emit_and_drain(
-                                        AgentEvent::PlanCompleted {
-                                            session_id: session_id.clone(),
-                                            plan_id: plan.id.clone(),
-                                            success: false,
-                                        },
-                                        event_rx,
-                                        on_event,
-                                    );
-
+                            match self.handle_step_failure(
+                                session_id,
+                                plan,
+                                phase_idx,
+                                step_idx,
+                                &step_id,
+                                &error,
+                                &step_payload,
+                                &mut retry_counts,
+                                &recovery,
+                                &step_outputs,
+                                event_rx,
+                                on_event,
+                            ).await? {
+                                StepFailureAction::Retry => { /* step_idx not incremented, will retry */ }
+                                StepFailureAction::Skip => { step_idx += 1; }
+                                StepFailureAction::Abort => {
                                     return Ok(RunOutcome::Failed {
                                         error: format!("Step '{}' failed: {}", step_id, error),
                                     });
@@ -403,33 +329,28 @@ impl AgentRuntime {
                         }
                     }
                     Err(e) => {
-                        plan.phases[phase_idx].steps[step_idx].status = StepStatus::Failed;
-                        plan.phases[phase_idx].status = crate::types::PhaseStatus::Failed;
-                        plan.status = PlanStatus::Failed;
-
-                        self.emit_and_drain(
-                            AgentEvent::PlanStepCompleted {
-                                session_id: session_id.clone(),
-                                step_id: step_id.clone(),
-                                success: false,
-                                result: Some(e.to_string()),
-                                payload: Some(step_payload),
-                            },
+                        match self.handle_step_failure(
+                            session_id,
+                            plan,
+                            phase_idx,
+                            step_idx,
+                            &step_id,
+                            &e.to_string(),
+                            &step_payload,
+                            &mut retry_counts,
+                            &recovery,
+                            &step_outputs,
                             event_rx,
-                            on_event,
-                        );
-
-                        self.emit_and_drain(
-                            AgentEvent::PlanCompleted {
-                                session_id: session_id.clone(),
-                                plan_id: plan.id.clone(),
-                                success: false,
-                            },
-                            event_rx,
-                            on_event,
-                        );
-
-                        return Err(e);
+                            &mut *on_event,
+                        ).await? {
+                            StepFailureAction::Retry => { /* step_idx not incremented, will retry */ }
+                            StepFailureAction::Skip => { step_idx += 1; }
+                            StepFailureAction::Abort => {
+                                return Ok(RunOutcome::Failed {
+                                    error: format!("Step '{}' failed: {}", step_id, e),
+                                });
+                            }
+                        }
                     }
                 }
             }
@@ -451,6 +372,165 @@ impl AgentRuntime {
         );
 
         Ok(RunOutcome::Completed)
+    }
+
+    /// Execute a single plan step — deterministic (executor) or agentic mode.
+    async fn execute_single_step<F>(
+        &self,
+        session_id: &SessionId,
+        step: &crate::types::PlanStep,
+        executor: &Option<Arc<dyn StepExecutor>>,
+        policy: &Option<Arc<dyn StepContinuePolicy>>,
+        plan: &ExecutionPlan,
+        step_outputs: &serde_json::Value,
+        on_event: &mut F,
+        event_rx: &mut broadcast::Receiver<AgentEvent>,
+    ) -> AgentResult<StepResult>
+    where
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
+    {
+        if let Some(exec) = executor {
+            let should_continue = if let Some(p) = policy {
+                p.should_continue(plan, step, step_outputs)
+                    .await
+                    .unwrap_or(true)
+            } else {
+                true
+            };
+
+            if !should_continue {
+                return Ok(StepResult::success("Skipped", 0));
+            }
+
+            let (user_event_tx, _user_event_rx) = mpsc::unbounded_channel::<UserEvent>();
+            let tool_ctx = ToolContext {
+                session_id: session_id.clone(),
+                user_event_tx,
+                llm_client: Some(self.llm_engine().client.clone()),
+                session_store: Some(self.session_manager.session_store().clone()),
+                language: crate::types::Language::En,
+            };
+            exec.execute_step(step, step_outputs, &tool_ctx).await
+        } else {
+            let mut step_events = Vec::new();
+            let outcome = self
+                .run(session_id.clone(), |event| {
+                    step_events.push(event.clone());
+                    on_event(event)
+                })
+                .await;
+
+            let _ = EventBus::drain_async_events(event_rx, on_event);
+
+            match outcome {
+                Ok(RunOutcome::Completed) => Ok(StepResult::success("Step completed", 0)),
+                Ok(RunOutcome::Failed { error }) => Ok(StepResult::failure(error, 0)),
+                Ok(RunOutcome::MaxTurnsExceeded { .. }) => {
+                    Ok(StepResult::failure("Max turns exceeded".to_string(), 0))
+                }
+                Ok(RunOutcome::Cancelled) => Ok(StepResult::failure("Cancelled".to_string(), 0)),
+                Err(e) => Err(e),
+            }
+        }
+    }
+
+    /// Handle a failed step — retry, skip, or abort based on recovery strategy.
+    ///
+    /// Returns the chosen action for the caller to adjust loop control flow.
+    async fn handle_step_failure<F>(
+        &self,
+        session_id: &SessionId,
+        plan: &mut ExecutionPlan,
+        phase_idx: usize,
+        step_idx: usize,
+        step_id: &str,
+        error: &str,
+        step_payload: &serde_json::Value,
+        retry_counts: &mut std::collections::HashMap<String, usize>,
+        recovery: &Option<Arc<dyn RecoveryStrategy>>,
+        step_outputs: &serde_json::Value,
+        event_rx: &mut broadcast::Receiver<AgentEvent>,
+        on_event: &mut F,
+    ) -> AgentResult<StepFailureAction>
+    where
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
+    {
+        let current_retry = retry_counts.get(step_id).copied().unwrap_or(0);
+        let action: RecoveryAction = if let Some(r) = recovery {
+            r.handle_step_failure(
+                &plan.phases[phase_idx].steps[step_idx],
+                error,
+                current_retry,
+                plan,
+                step_outputs,
+            )
+            .await
+            .unwrap_or(RecoveryAction::Abort)
+        } else {
+            RecoveryAction::Abort
+        };
+
+        match action {
+            RecoveryAction::Retry => {
+                plan.phases[phase_idx].steps[step_idx].status = StepStatus::Pending;
+                plan.phases[phase_idx].steps[step_idx].result = None;
+                *retry_counts.entry(step_id.to_string()).or_insert(0) += 1;
+                tracing::debug!(
+                    session_id = session_id.id,
+                    %step_id,
+                    retry = retry_counts[step_id],
+                    "step retry"
+                );
+                Ok(StepFailureAction::Retry)
+            }
+            RecoveryAction::Skip => {
+                plan.phases[phase_idx].steps[step_idx].status = StepStatus::Skipped;
+                tracing::debug!(session_id = session_id.id, %step_id, "step skipped");
+
+                self.emit_and_drain(
+                    AgentEvent::PlanStepCompleted {
+                        session_id: session_id.clone(),
+                        step_id: step_id.to_string(),
+                        success: false,
+                        result: Some(format!("Skipped: {}", error)),
+                        payload: Some(step_payload.clone()),
+                    },
+                    event_rx,
+                    on_event,
+                );
+                Ok(StepFailureAction::Skip)
+            }
+            RecoveryAction::Abort => {
+                plan.phases[phase_idx].steps[step_idx].status = StepStatus::Failed;
+                plan.phases[phase_idx].status = crate::types::PhaseStatus::Failed;
+                plan.status = PlanStatus::Failed;
+                tracing::warn!(session_id = session_id.id, %step_id, "step abort");
+
+                self.emit_and_drain(
+                    AgentEvent::PlanStepCompleted {
+                        session_id: session_id.clone(),
+                        step_id: step_id.to_string(),
+                        success: false,
+                        result: Some(error.to_string()),
+                        payload: Some(step_payload.clone()),
+                    },
+                    event_rx,
+                    on_event,
+                );
+
+                self.emit_and_drain(
+                    AgentEvent::PlanCompleted {
+                        session_id: session_id.clone(),
+                        plan_id: plan.id.clone(),
+                        success: false,
+                    },
+                    event_rx,
+                    on_event,
+                );
+
+                Ok(StepFailureAction::Abort)
+            }
+        }
     }
 
     /// Check if all dependencies of a step (found by id across all phases) are met.

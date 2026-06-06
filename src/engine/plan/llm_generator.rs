@@ -101,6 +101,24 @@ impl LlmPlanGenerator {
         format!("plan-{}-{}", ts, seq)
     }
 
+    /// Strip markdown code-block wrappers (```json ... ``` or ``` ... ```)
+    /// that many LLMs wrap their JSON output in.
+    fn strip_markdown_code_block(text: &str) -> &str {
+        let trimmed = text.trim();
+        if trimmed.starts_with("```") {
+            // Find end of first line (the opening fence)
+            if let Some(start) = trimmed.find('\n') {
+                let body = &trimmed[start + 1..];
+                // Remove closing fence if present
+                if let Some(end) = body.rfind("```") {
+                    return body[..end].trim();
+                }
+                return body.trim();
+            }
+        }
+        trimmed
+    }
+
     /// Extract the actual content from an LLM response.
     ///
     /// Handles different provider response formats:
@@ -109,11 +127,18 @@ impl LlmPlanGenerator {
     /// - Google Gemini: `candidates[0].content.parts[0].text`
     /// - Direct JSON with "steps" at top level
     fn extract_plan_json(response: &Value) -> Value {
+        // Helper: try parsing text as JSON, stripping markdown code blocks if needed.
+        let try_parse = |text: &str| -> Option<Value> {
+            serde_json::from_str::<Value>(text)
+                .ok()
+                .or_else(|| serde_json::from_str::<Value>(Self::strip_markdown_code_block(text)).ok())
+        };
+
         // 1. OpenAI format: choices[0].message.content
         if let Some(choices) = response.get("choices").and_then(|v| v.as_array()) {
             if let Some(first) = choices.first() {
                 if let Some(content) = first.get("message").and_then(|m| m.get("content")).and_then(|v| v.as_str()) {
-                    if let Ok(parsed) = serde_json::from_str::<Value>(content) {
+                    if let Some(parsed) = try_parse(content) {
                         return parsed;
                     }
                 }
@@ -125,7 +150,7 @@ impl LlmPlanGenerator {
             for block in content {
                 if block.get("type").and_then(|v| v.as_str()) == Some("text") {
                     if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
-                        if let Ok(parsed) = serde_json::from_str::<Value>(text) {
+                        if let Some(parsed) = try_parse(text) {
                             return parsed;
                         }
                     }
@@ -139,7 +164,7 @@ impl LlmPlanGenerator {
                 if let Some(parts) = first.get("content").and_then(|c| c.get("parts")).and_then(|v| v.as_array()) {
                     for part in parts {
                         if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
-                            if let Ok(parsed) = serde_json::from_str::<Value>(text) {
+                            if let Some(parsed) = try_parse(text) {
                                 return parsed;
                             }
                         }
@@ -344,10 +369,11 @@ impl LlmPlanGenerator {
 
         // If parser didn't extract steps from streaming, try parsing the full response
         let steps = if parser.accumulated().is_empty() {
-            let plan_json = if full_text.trim().starts_with('{') {
-                serde_json::from_str::<Value>(&full_text)
+            let stripped = Self::strip_markdown_code_block(&full_text);
+            let plan_json = if stripped.starts_with('{') {
+                serde_json::from_str::<Value>(stripped)
                     .map_err(|_| AgentError::plan_generation(
-                        format!("Failed to parse LLM response as JSON: {}", full_text.chars().take(200).collect::<String>())
+                        format!("Failed to parse LLM response as JSON: {}", stripped.chars().take(200).collect::<String>())
                     ))?
             } else {
                 // Response might be wrapped in API format
