@@ -334,6 +334,7 @@ impl Tool for PlanExecTool {
         let mut plan = plan_data.plan;
         let objective = plan.objective.clone();
         let plan_metadata = plan_data.metadata.clone();
+        let mut step_outputs = serde_json::json!({});
         let mut execution_summary = if is_zh {
             format!("计划 '{}' 的执行结果:\n", objective)
         } else {
@@ -345,54 +346,73 @@ impl Tool for PlanExecTool {
         let mut _completed_count = 0usize;
         let mut global_step_index = 0usize;
 
-        'phase_loop: for phase in plan.phases.iter_mut() {
-            phase.status = crate::types::PhaseStatus::Running;
+        'phase_loop: for phase_idx in 0..plan.phases.len() {
+            plan.phases[phase_idx].status = crate::types::PhaseStatus::Running;
 
-            for step in phase.steps.iter_mut() {
-                if step.status != StepStatus::Pending {
+            for step_idx in 0..plan.phases[phase_idx].steps.len() {
+                if plan.phases[phase_idx].steps[step_idx].status != StepStatus::Pending {
                     global_step_index += 1;
                     continue;
                 }
 
+                let step_id = plan.phases[phase_idx].steps[step_idx].id.clone();
+                let step_desc = plan.phases[phase_idx].steps[step_idx].description.clone();
+                let step_payload = plan.phases[phase_idx].steps[step_idx].payload.clone();
+
                 log::info!(
                     "PlanExecTool: executing step {} ({})",
-                    step.id,
-                    step.description
+                    step_id,
+                    step_desc
                 );
 
-                step.status = StepStatus::Running;
+                plan.phases[phase_idx].steps[step_idx].status = StepStatus::Running;
 
                 let _ = self.event_bus.as_ref().expect("EventBus must be injected by AgentBuilder::build()").emit(AgentEvent::PlanStepStarted {
                     session_id: ctx.session_id.clone(),
-                    step_id: step.id.clone(),
-                    step_description: step.description.clone(),
-                    payload: Some(step.payload.clone()),
+                    step_id: step_id.clone(),
+                    step_description: step_desc.clone(),
+                    payload: Some(step_payload.clone()),
                 });
 
                 execution_summary.push_str(&if is_zh {
-                    format!("步骤 {}: {}\n", global_step_index + 1, step.description)
+                    format!("步骤 {}: {}\n", global_step_index + 1, step_desc)
                 } else {
-                    format!("Step {}: {}\n", global_step_index + 1, step.description)
+                    format!("Step {}: {}\n", global_step_index + 1, step_desc)
                 });
 
                 match self
                     .step_executor
-                    .execute_step(step, &plan_metadata, ctx)
+                    .execute_step(&plan.phases[phase_idx].steps[step_idx], &plan_metadata, ctx)
                     .await
                 {
                     Ok(result) => {
                         let step_success = result.success;
                         log::info!(
                             "PlanExecTool: step {} completed with success={}",
-                            step.id,
+                            step_id,
                             step_success
                         );
-                        step.status = if step_success {
+                        plan.phases[phase_idx].steps[step_idx].status = if step_success {
                             StepStatus::Completed
                         } else {
                             StepStatus::Failed
                         };
-                        step.result = Some(result.clone());
+                        plan.phases[phase_idx].steps[step_idx].result = Some(result.clone());
+
+                        // Accumulate step output into step_outputs
+                        if let serde_json::Value::Object(ref mut map) = step_outputs {
+                            if step_success {
+                                let output_val = result.output.as_deref()
+                                    .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                                    .unwrap_or_else(|| serde_json::json!(result.output));
+                                map.insert(step_id.clone(), output_val);
+                            } else {
+                                map.insert(step_id.clone(), serde_json::json!({
+                                    "error": result.output.as_deref().unwrap_or(""),
+                                    "success": false
+                                }));
+                            }
+                        }
 
                         execution_summary.push_str(&if is_zh {
                             format!(
@@ -408,10 +428,10 @@ impl Tool for PlanExecTool {
 
                         let _ = self.event_bus.as_ref().expect("EventBus must be injected by AgentBuilder::build()").emit(AgentEvent::PlanStepCompleted {
                             session_id: ctx.session_id.clone(),
-                            step_id: step.id.clone(),
+                            step_id: step_id.clone(),
                             success: step_success,
                             result: result.output.clone(),
-                            payload: Some(step.payload.clone()),
+                            payload: Some(step_payload.clone()),
                         });
 
                         if step_success {
@@ -428,9 +448,11 @@ impl Tool for PlanExecTool {
                             match self
                                 .recovery
                                 .handle_step_failure(
-                                    step,
+                                    &plan.phases[phase_idx].steps[step_idx],
                                     result.output.as_deref().unwrap_or(""),
                                     0,
+                                    &plan,
+                                    &step_outputs,
                                 )
                                 .await
                             {
@@ -453,7 +475,7 @@ impl Tool for PlanExecTool {
                                                 "  [Skip] System suggests skipping this step (plan marked as not fully successful)\n"
                                             },
                                         );
-                                        step.status = StepStatus::Skipped;
+                                        plan.phases[phase_idx].steps[step_idx].status = StepStatus::Skipped;
                                         overall_success = false;
                                     }
                                     crate::types::RecoveryAction::Abort => {
@@ -465,28 +487,28 @@ impl Tool for PlanExecTool {
                                             },
                                         );
                                         overall_success = false;
-                                        failed_step_name = Some(step.description.clone());
-                                        phase.status = crate::types::PhaseStatus::Failed;
+                                        failed_step_name = Some(step_desc.clone());
+                                        plan.phases[phase_idx].status = crate::types::PhaseStatus::Failed;
                                         break 'phase_loop;
                                     }
                                 },
                                 Err(_e) => {
                                     overall_success = false;
-                                    failed_step_name = Some(step.description.clone());
-                                    phase.status = crate::types::PhaseStatus::Failed;
+                                    failed_step_name = Some(step_desc.clone());
+                                    plan.phases[phase_idx].status = crate::types::PhaseStatus::Failed;
                                     break 'phase_loop;
                                 }
                             }
                         }
 
                         step_results.push(json!({
-                            "step": step.description,
+                            "step": step_desc,
                             "success": step_success,
                             "output": result.output,
                         }));
                     }
                     Err(e) => {
-                        step.status = StepStatus::Failed;
+                        plan.phases[phase_idx].steps[step_idx].status = StepStatus::Failed;
                         execution_summary.push_str(&if is_zh {
                             format!("  执行错误: {e}\n")
                         } else {
@@ -495,15 +517,15 @@ impl Tool for PlanExecTool {
 
                         let _ = self.event_bus.as_ref().expect("EventBus must be injected by AgentBuilder::build()").emit(AgentEvent::PlanStepCompleted {
                             session_id: ctx.session_id.clone(),
-                            step_id: step.id.clone(),
+                            step_id: step_id.clone(),
                             success: false,
                             result: Some(e.to_string()),
-                            payload: Some(step.payload.clone()),
+                            payload: Some(step_payload.clone()),
                         });
 
                         overall_success = false;
-                        failed_step_name = Some(step.description.clone());
-                        phase.status = crate::types::PhaseStatus::Failed;
+                        failed_step_name = Some(step_desc.clone());
+                        plan.phases[phase_idx].status = crate::types::PhaseStatus::Failed;
                         break 'phase_loop;
                     }
                 }
@@ -512,8 +534,8 @@ impl Tool for PlanExecTool {
             }
 
             // Phase completed or already marked failed
-            if phase.status == crate::types::PhaseStatus::Running {
-                phase.status = if phase.has_failed() {
+            if plan.phases[phase_idx].status == crate::types::PhaseStatus::Running {
+                plan.phases[phase_idx].status = if plan.phases[phase_idx].has_failed() {
                     crate::types::PhaseStatus::Failed
                 } else {
                     crate::types::PhaseStatus::Completed

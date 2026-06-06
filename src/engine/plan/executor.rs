@@ -61,7 +61,7 @@ impl StepExecutor for ToolCallingStepExecutor {
     async fn execute_step(
         &self,
         step: &PlanStep,
-        _plan_context: &Value,
+        _step_outputs: &Value,
         ctx: &ToolContext,
     ) -> AgentResult<StepResult> {
         let start = std::time::Instant::now();

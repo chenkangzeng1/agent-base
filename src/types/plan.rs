@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlanPhase {
@@ -168,6 +168,18 @@ impl ExecutionPlan {
         }
     }
 
+    /// Semantic alias for `with_single_phase`.
+    ///
+    /// Users don't need to know about `PlanPhase` — this method makes it
+    /// clear that you're creating a plan from a flat list of steps.
+    pub fn of_steps(
+        id: impl Into<String>,
+        objective: impl Into<String>,
+        steps: Vec<PlanStep>,
+    ) -> Self {
+        Self::with_single_phase(id, objective, steps)
+    }
+
     // ── Flat step access (cross-phase) ─────────────────────────────
 
     /// All steps across all phases, in order.
@@ -256,6 +268,32 @@ impl PlanStep {
             status: StepStatus::Pending,
             result: None,
         }
+    }
+
+    /// Construct a tool-call step.
+    ///
+    /// The payload format aligns with `ToolCallingStepExecutor`:
+    /// `{"tool_name": "...", "args": {...}}`
+    pub fn tool_call(
+        id: impl Into<String>,
+        description: impl Into<String>,
+        tool_name: impl Into<String>,
+        args: Value,
+    ) -> Self {
+        Self::new(
+            id,
+            description,
+            json!({"tool_name": tool_name.into(), "args": args}),
+        )
+    }
+
+    /// Construct a step with a custom payload (full flexibility).
+    pub fn with_payload(
+        id: impl Into<String>,
+        description: impl Into<String>,
+        payload: Value,
+    ) -> Self {
+        Self::new(id, description, payload)
     }
 
     pub fn with_dependencies(mut self, dependencies: Vec<String>) -> Self {

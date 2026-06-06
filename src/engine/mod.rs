@@ -19,8 +19,9 @@ pub(crate) use runtime::EventBus;
 pub use context::ContextWindowManager;
 pub use middleware::{Middleware, PostLlmCtx, PreLlmCtx, UserMessageCtx};
 pub use plan::{
-    AbortOnFailure, AlwaysContinue, InMemoryPlanStore, PlanGenerator, PlanStore,
-    RecoveryStrategy, StepContinuePolicy, StepExecutor, StreamingJsonParser,
+    AbortOnFailure, AlwaysContinue, CustomRecovery, InMemoryPlanStore, LlmPlanGenerator,
+    PlanConfig, PlanGenerator, PlanStore, Recovery, RecoveryStrategy, RetryOnFailure,
+    SkipOnFailure, StepContinuePolicy, StepExecutor, StreamingJsonParser,
     ToolCallingStepExecutor,
 };
 pub use crate::types::{PlanStatus, StepStatus};

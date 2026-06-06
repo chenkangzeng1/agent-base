@@ -3,9 +3,9 @@ use std::sync::Mutex;
 
 use agent_base::{
     AbortOnFailure, AgentBuilder, AgentResult, AlwaysContinue, ExecutionPlan,
-    InMemoryPlanStore, LlmCapabilities, LlmClient, PlanGenerator, PlanStep, PlanStore,
-    ResponseFormat, RuntimeEvent, StepExecutor, StepResult, StreamChunk, Tool, ToolContext,
-    ToolControlFlow, ToolOutput, ChatMessage, RecoveryStrategy, StepContinuePolicy,
+    InMemoryPlanStore, LlmCapabilities, LlmClient, PlanConfig, PlanGenerator, PlanStep,
+    PlanStore, Recovery, ResponseFormat, RuntimeEvent, StepExecutor, StepResult,
+    StreamChunk, Tool, ToolContext, ToolControlFlow, ToolOutput, ChatMessage,
 };
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -78,7 +78,7 @@ impl LlmClient for MockLlmClient {
         _tools: &[Value],
         _reasoning: Option<&agent_base::ReasoningConfig>,
         _response_format: Option<&ResponseFormat>,
-    ) -> AgentResult<Pin<Box<dyn futures_core::Stream<Item = AgentResult<StreamChunk>> + Send>>> {
+    ) -> AgentResult<std::pin::Pin<Box<dyn futures_core::Stream<Item = AgentResult<StreamChunk>> + Send>>> {
         let mut count = self.call_count.lock().unwrap();
         *count += 1;
         let mut responses = self.responses.lock().unwrap();
@@ -113,20 +113,12 @@ impl PlanGenerator for SimplePlanGenerator {
         _context: &str,
         _tools: &[Value],
     ) -> AgentResult<ExecutionPlan> {
-        let plan = ExecutionPlan::with_single_phase(
+        let plan = ExecutionPlan::of_steps(
             "demo-plan",
             objective,
             vec![
-                PlanStep::new(
-                    "step-1",
-                    "Greet the user",
-                    json!({"type": "tool_call", "tool_name": "greet", "args": {"name": "User"}}),
-                ),
-                PlanStep::new(
-                    "step-2",
-                    "Confirm completion",
-                    json!({"type": "tool_call", "tool_name": "greet", "args": {"name": "Team"}}),
-                ),
+                PlanStep::tool_call("step-1", "Greet the user", "greet", json!({"name": "User"})),
+                PlanStep::tool_call("step-2", "Confirm completion", "greet", json!({"name": "Team"})),
             ],
         );
 
@@ -141,7 +133,7 @@ impl StepExecutor for SimpleStepExecutor {
     async fn execute_step(
         &self,
         step: &PlanStep,
-        _plan_context: &Value,
+        _step_outputs: &Value,
         _ctx: &ToolContext,
     ) -> AgentResult<StepResult> {
         println!("  Executing step: {} - {}", step.id, step.description);
@@ -149,11 +141,9 @@ impl StepExecutor for SimpleStepExecutor {
     }
 }
 
-use std::pin::Pin;
-
 #[tokio::main]
 async fn main() -> AgentResult<()> {
-    println!("=== Plan-and-Execute Demo ===\n");
+    println!("=== Plan-and-Execute Demo (New API) ===\n");
 
     let llm = Arc::new(MockLlmClient::new(vec![
         vec![StreamChunk::Text("Greeting User...".to_string()), StreamChunk::Stop],
@@ -162,7 +152,7 @@ async fn main() -> AgentResult<()> {
 
     let runtime = AgentBuilder::new(llm.clone())
         .register_tool(GreetTool)
-        .build().unwrap();
+        .build()?;
 
     let generator = Arc::new(SimplePlanGenerator);
     let executor = Arc::new(SimpleStepExecutor);
@@ -170,17 +160,18 @@ async fn main() -> AgentResult<()> {
 
     let session_id = runtime.create_session().await;
 
-    println!("Generating and executing plan (deterministic mode)...\n");
+    // ── New API: run_plan_with_generator ─────────────────────────────
+    println!("1. Generating and executing plan with run_plan_with_generator...\n");
 
     let result = runtime
-        .run_plan_deterministic(
-            session_id,
+        .run_plan_with_generator(
+            session_id.clone(),
             "Greet the user and team",
             generator,
-            executor,
-            Some(Arc::new(AlwaysContinue)),
-            Some(Arc::new(AbortOnFailure)),
-            Some(plan_store.clone()),
+            PlanConfig::new()
+                .executor(executor.clone())
+                .recovery(Recovery::abort())
+                .store(plan_store.clone()),
             |event| match event {
                 RuntimeEvent::PlanGenerated { plan, .. } => {
                     println!("[PlanGenerated] id={}, objective={}", plan.id, plan.objective);
@@ -212,6 +203,45 @@ async fn main() -> AgentResult<()> {
 
     println!("\nResult: {:?}", result);
 
+    // ── New API: run_plan with pre-built plan ────────────────────────
+    println!("\n2. Executing pre-built plan with run_plan...\n");
+
+    let plan = ExecutionPlan::of_steps(
+        "manual-plan",
+        "Greet everyone manually",
+        vec![
+            PlanStep::tool_call("s1", "Greet Alice", "greet", json!({"name": "Alice"})),
+            PlanStep::tool_call("s2", "Greet Bob", "greet", json!({"name": "Bob"})),
+        ],
+    );
+
+    let result = runtime
+        .run_plan(
+            session_id.clone(),
+            plan,
+            PlanConfig::new()
+                .executor(executor.clone())
+                .recovery(Recovery::skip()),
+            |event| {
+                if let RuntimeEvent::PlanStepCompleted { step_id, success, .. } = event {
+                    println!("  [{}] {}", if success { "✓" } else { "✗" }, step_id);
+                }
+                Ok(())
+            },
+        )
+        .await?;
+
+    println!("\nResult: {:?}", result);
+
+    // ── Recovery strategies ──────────────────────────────────────────
+    println!("\n3. Recovery strategies demo...\n");
+
+    println!("  Recovery::abort()  = AbortOnFailure");
+    println!("  Recovery::skip()   = SkipOnFailure");
+    println!("  Recovery::retry(3) = RetryOnFailure {{ max_retries: 3 }}");
+    println!("  Recovery::custom(|step, err, count, plan, step_outputs| {{ ... }}) = CustomRecovery");
+
+    // ── Check stored plan ────────────────────────────────────────────
     let stored = plan_store.load_plan("demo-plan").await?;
     if let Some(data) = stored {
         println!("\nStored plan status: {:?}", data.plan.status);

@@ -379,7 +379,7 @@ impl StepExecutor for StubExecutor {
     async fn execute_step(
         &self,
         step: &PlanStep,
-        _plan_context: &Value,
+        _step_outputs: &Value,
         _ctx: &ToolContext,
     ) -> AgentResult<StepResult> {
         Ok(StepResult::success(format!("stub: {}", step.id), 0))

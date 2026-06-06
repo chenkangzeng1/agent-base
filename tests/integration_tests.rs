@@ -5,10 +5,10 @@ use std::sync::Mutex;
 use agent_base::{
     AbortOnFailure, AgentBuilder, AgentError, AgentResult, ApprovalDecision, ApprovalHandler,
     ApprovalRequest, ChatMessage, ExecutionPlan, InMemoryPlanStore, LlmCapabilities, LlmClient,
-    PlanGenerator, PlanStatus, PlanStep, PlanStore, RecoveryAction, ResponseFormat, RetryOnError,
-    RiskLevel, RunOutcome, RuntimeEvent, StepExecutor, StepResult, StepStatus, StreamChunk, Tool,
-    ToolContext, ToolControlFlow, ToolOutput, ToolPolicy, AlwaysContinue, StepContinuePolicy,
-    RecoveryStrategy,
+    PlanConfig, PlanGenerator, PlanStatus, PlanStep, PlanStore, RecoveryAction, ResponseFormat,
+    RetryOnError, RiskLevel, RunOutcome, RuntimeEvent, StepExecutor, StepResult, StepStatus,
+    StreamChunk, Tool, ToolContext, ToolControlFlow, ToolOutput, ToolPolicy, AlwaysContinue,
+    StepContinuePolicy, RecoveryStrategy,
 };
 use async_trait::async_trait;
 use futures_core::Stream;
@@ -1416,7 +1416,7 @@ impl StepExecutor for MockStepExecutor {
     async fn execute_step(
         &self,
         step: &PlanStep,
-        _plan_context: &Value,
+        _step_outputs: &Value,
         _ctx: &ToolContext,
     ) -> AgentResult<StepResult> {
         let mut results = self.execution_results.lock().unwrap();
@@ -1437,6 +1437,8 @@ impl RecoveryStrategy for MockRecoveryStrategy {
         _step: &PlanStep,
         _error: &str,
         _retry_count: usize,
+        _plan: &ExecutionPlan,
+        _step_outputs: &Value,
     ) -> AgentResult<RecoveryAction> {
         Ok(RecoveryAction::Abort)
     }
@@ -1461,14 +1463,14 @@ async fn test_plan_execution_success() {
 
     let session_id = runtime.create_session().await;
     let result = runtime
-        .run_plan_deterministic(
+        .run_plan_with_generator(
             session_id,
             "Test objective",
             generator,
-            executor,
-            Some(Arc::new(AlwaysContinue)),
-            Some(Arc::new(MockRecoveryStrategy)),
-            Some(plan_store.clone()),
+            PlanConfig::new()
+                .executor(executor)
+                .recovery(Arc::new(MockRecoveryStrategy))
+                .store(plan_store.clone()),
             |_| Ok(()),
         )
         .await;
@@ -1505,14 +1507,14 @@ async fn test_plan_execution_failure_aborts() {
 
     let session_id = runtime.create_session().await;
     let result = runtime
-        .run_plan_deterministic(
+        .run_plan_with_generator(
             session_id,
             "Test objective",
             generator,
-            executor,
-            Some(Arc::new(AlwaysContinue)),
-            Some(Arc::new(MockRecoveryStrategy)),
-            Some(plan_store.clone()),
+            PlanConfig::new()
+                .executor(executor)
+                .recovery(Arc::new(MockRecoveryStrategy))
+                .store(plan_store.clone()),
             |_| Ok(()),
         )
         .await;
@@ -1544,14 +1546,14 @@ async fn test_plan_events_emitted() {
     let session_id = runtime.create_session().await;
     let mut events = Vec::new();
     let result = runtime
-        .run_plan_deterministic(
+        .run_plan_with_generator(
             session_id,
             "Test objective",
             generator,
-            executor,
-            Some(Arc::new(AlwaysContinue)),
-            Some(Arc::new(MockRecoveryStrategy)),
-            Some(plan_store),
+            PlanConfig::new()
+                .executor(executor)
+                .recovery(Arc::new(MockRecoveryStrategy))
+                .store(plan_store),
             |event| {
                 events.push(event);
                 Ok(())

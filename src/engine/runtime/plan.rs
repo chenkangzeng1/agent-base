@@ -7,7 +7,7 @@ use crate::types::{
 };
 use crate::tool::ToolContext;
 use crate::engine::plan::{
-    AlwaysContinue, AbortOnFailure, PlanGenerator, PlanStore, RecoveryStrategy,
+    AlwaysContinue, AbortOnFailure, PlanConfig, PlanGenerator, PlanStore, RecoveryStrategy,
     StepContinuePolicy, StepExecutor,
 };
 use crate::engine::runtime::event_bus::EventBus;
@@ -15,10 +15,149 @@ use super::AgentRuntime;
 use std::sync::Arc;
 
 impl AgentRuntime {
+    /// Execute a pre-built `ExecutionPlan`.
+    ///
+    /// - `config.executor = Some` → deterministic mode (steps executed by the executor)
+    /// - `config.executor = None` → agentic mode (each step becomes an agent turn)
+    pub async fn run_plan<F>(
+        &self,
+        session_id: SessionId,
+        plan: ExecutionPlan,
+        config: PlanConfig,
+        mut on_event: F,
+    ) -> AgentResult<RunOutcome>
+    where
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
+    {
+        tracing::info!(session_id = session_id.id, plan_id = %plan.id, "run_plan start");
+
+        let mut plan = plan;
+
+        // Empty plan check
+        if plan.total_steps() == 0 {
+            tracing::warn!(plan_id = %plan.id, "plan has no steps, returning completed");
+            plan.status = PlanStatus::Completed;
+            if let Some(store) = &config.plan_store {
+                let _ = store.save_plan(&plan, json!({})).await;
+            }
+            return Ok(RunOutcome::Completed);
+        }
+
+        let mut event_rx = self.subscribe_events();
+
+        self.emit_and_drain(
+            AgentEvent::PlanGenerated {
+                session_id: session_id.clone(),
+                plan: plan.clone(),
+            },
+            &mut event_rx,
+            &mut on_event,
+        );
+
+        if let Some(store) = &config.plan_store {
+            store
+                .save_plan(&plan, json!({}))
+                .await
+                .map_err(|e| AgentError::plan_storage(e.to_string()))?;
+        }
+
+        plan.status = PlanStatus::Executing;
+
+        let result = self
+            .run_plan_steps(
+                &session_id,
+                &mut plan,
+                config.executor,
+                Some(config.continue_policy),
+                Some(config.recovery),
+                &mut event_rx,
+                &mut on_event,
+            )
+            .await;
+
+        if let Some(store) = &config.plan_store {
+            let _ = store.save_plan(&plan, json!({})).await;
+        }
+
+        result
+    }
+
+    /// Generate a plan from an objective using the provided generator, then execute it.
+    ///
+    /// Convenience combination of `PlanGenerator::generate_plan` + `run_plan`.
+    pub async fn run_plan_with_generator<F>(
+        &self,
+        session_id: SessionId,
+        objective: &str,
+        generator: Arc<dyn PlanGenerator>,
+        config: PlanConfig,
+        mut on_event: F,
+    ) -> AgentResult<RunOutcome>
+    where
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
+    {
+        tracing::info!(session_id = session_id.id, %objective, "run_plan_with_generator start");
+
+        let tool_definitions = self.tool_engine.definitions();
+        let mut event_rx = self.subscribe_events();
+
+        let mut plan = generator
+            .generate_plan(objective, "", &tool_definitions)
+            .await
+            .map_err(|e| AgentError::plan_generation(e.to_string()))?;
+
+        // Empty plan check
+        if plan.total_steps() == 0 {
+            tracing::warn!(plan_id = %plan.id, "generated plan has no steps, returning completed");
+            plan.status = PlanStatus::Completed;
+            if let Some(store) = &config.plan_store {
+                let _ = store.save_plan(&plan, json!({})).await;
+            }
+            return Ok(RunOutcome::Completed);
+        }
+
+        self.emit_and_drain(
+            AgentEvent::PlanGenerated {
+                session_id: session_id.clone(),
+                plan: plan.clone(),
+            },
+            &mut event_rx,
+            &mut on_event,
+        );
+
+        if let Some(store) = &config.plan_store {
+            store
+                .save_plan(&plan, json!({}))
+                .await
+                .map_err(|e| AgentError::plan_storage(e.to_string()))?;
+        }
+
+        plan.status = PlanStatus::Executing;
+
+        let result = self
+            .run_plan_steps(
+                &session_id,
+                &mut plan,
+                config.executor,
+                Some(config.continue_policy),
+                Some(config.recovery),
+                &mut event_rx,
+                &mut on_event,
+            )
+            .await;
+
+        if let Some(store) = &config.plan_store {
+            let _ = store.save_plan(&plan, json!({})).await;
+        }
+
+        result
+    }
+
     /// Run a plan in **agentic** mode: each step becomes an agent turn.
     ///
     /// The agent receives step instructions as user input and decides autonomously
     /// which tools to call. No `StepExecutor` is needed.
+    #[deprecated(since = "0.5.0", note = "Use `run_plan` with `PlanConfig::new()` (no executor) instead")]
     pub async fn run_plan_agentic<F>(
         &self,
         session_id: SessionId,
@@ -81,6 +220,7 @@ impl AgentRuntime {
     ///
     /// Use this when you want the plan to be executed without LLM turn
     /// overhead (e.g. predetermined SSH commands).
+    #[deprecated(since = "0.5.0", note = "Use `run_plan` with `PlanConfig::new().executor(e)` instead")]
     #[allow(clippy::too_many_arguments)]
     pub async fn run_plan_deterministic<F>(
         &self,
@@ -165,6 +305,11 @@ impl AgentRuntime {
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
+        // step_outputs accumulates step outputs, keyed by step_id.
+        let mut step_outputs = json!({});
+        // Track retry count per step (keyed by step_id).
+        let mut retry_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+
         for phase_idx in 0..plan.phases.len() {
             plan.phases[phase_idx].status = crate::types::PhaseStatus::Running;
 
@@ -177,12 +322,17 @@ impl AgentRuntime {
                     && !Self::check_dependencies_met(plan, &step_id)
                 {
                     plan.phases[phase_idx].steps[step_idx].status = StepStatus::Skipped;
+                    // Record skipped step in step_outputs
+                    if let serde_json::Value::Object(ref mut map) = step_outputs {
+                        map.insert(step_id.clone(), json!({"skipped": true}));
+                    }
                     step_idx += 1;
                     continue;
                 }
 
                 plan.phases[phase_idx].steps[step_idx].status = StepStatus::Running;
                 let step_desc = plan.phases[phase_idx].steps[step_idx].description.clone();
+                let step_payload = plan.phases[phase_idx].steps[step_idx].payload.clone();
 
                 tracing::debug!(session_id = session_id.id, %step_id, "step running");
 
@@ -191,7 +341,7 @@ impl AgentRuntime {
                         session_id: session_id.clone(),
                         step_id: step_id.clone(),
                         step_description: step_desc.clone(),
-                        payload: None,
+                        payload: Some(step_payload.clone()),
                     },
                     event_rx,
                     on_event,
@@ -202,7 +352,7 @@ impl AgentRuntime {
                 let step_result = if let Some(exec) = &executor {
                     // Deterministic mode
                     let should_continue = if let Some(p) = &policy {
-                        p.should_continue(plan, step)
+                        p.should_continue(plan, step, &step_outputs)
                             .await
                             .unwrap_or(true)
                     } else {
@@ -212,11 +362,6 @@ impl AgentRuntime {
                     if !should_continue {
                         Ok(crate::types::StepResult::success("Skipped", 0))
                     } else {
-                        // Deterministic mode: create a ToolContext for the step executor.
-                        // Note: UserEvents emitted by the step's tool are not forwarded to
-                        // the external callback here — deterministic mode executes pre-planned
-                        // steps without real-time monitoring. If UserEvent forwarding is needed,
-                        // consume `user_event_rx` and map to `on_event` in a select loop.
                         let (user_event_tx, _user_event_rx) = mpsc::unbounded_channel::<UserEvent>();
                         let tool_ctx = ToolContext {
                             session_id: session_id.clone(),
@@ -225,10 +370,10 @@ impl AgentRuntime {
                             session_store: Some(self.session_manager.session_store().clone()),
                             language: crate::types::Language::En,
                         };
-                        exec.execute_step(step, &plan.context, &tool_ctx).await
+                        exec.execute_step(step, &step_outputs, &tool_ctx).await
                     }
                 } else {
-                    // Agentic mode: run as a full agent turn
+                    // Agentic mode: each step runs as a full agent turn
                     let mut step_events = Vec::new();
                     let outcome = self
                         .run(session_id.clone(), |event| {
@@ -253,6 +398,19 @@ impl AgentRuntime {
                     Ok(result) => {
                         let error = result.error.clone().unwrap_or_default();
                         let success = result.success;
+
+                        // Accumulate step output into step_outputs
+                        if let serde_json::Value::Object(ref mut map) = step_outputs {
+                            if success {
+                                let output_val = result.output.as_deref()
+                                    .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+                                    .unwrap_or_else(|| json!(result.output));
+                                map.insert(step_id.clone(), output_val);
+                            } else {
+                                map.insert(step_id.clone(), json!({"error": error, "success": false}));
+                            }
+                        }
+
                         plan.phases[phase_idx].steps[step_idx].result = Some(result);
 
                         if success {
@@ -268,7 +426,7 @@ impl AgentRuntime {
                                     step_id: step_id.clone(),
                                     success: true,
                                     result: output,
-                                    payload: None,
+                                    payload: Some(step_payload),
                                 },
                                 event_rx,
                                 on_event,
@@ -276,8 +434,15 @@ impl AgentRuntime {
 
                             step_idx += 1;
                         } else {
+                            let current_retry = retry_counts.get(&step_id).copied().unwrap_or(0);
                             let action: RecoveryAction = if let Some(r) = &recovery {
-                                r.handle_step_failure(&plan.phases[phase_idx].steps[step_idx], &error, 0)
+                                r.handle_step_failure(
+                                    &plan.phases[phase_idx].steps[step_idx],
+                                    &error,
+                                    current_retry,
+                                    plan,
+                                    &step_outputs,
+                                )
                                     .await
                                     .unwrap_or(RecoveryAction::Abort)
                             } else {
@@ -288,7 +453,8 @@ impl AgentRuntime {
                                 RecoveryAction::Retry => {
                                     plan.phases[phase_idx].steps[step_idx].status = StepStatus::Pending;
                                     plan.phases[phase_idx].steps[step_idx].result = None;
-                                    tracing::debug!(session_id = session_id.id, %step_id, "step retry");
+                                    *retry_counts.entry(step_id.clone()).or_insert(0) += 1;
+                                    tracing::debug!(session_id = session_id.id, %step_id, retry = retry_counts[&step_id], "step retry");
                                     // step_idx is NOT incremented, so this step will be retried
                                 }
                                 RecoveryAction::Skip => {
@@ -301,7 +467,7 @@ impl AgentRuntime {
                                             step_id: step_id.clone(),
                                             success: false,
                                             result: Some(format!("Skipped: {}", error)),
-                                            payload: None,
+                                            payload: Some(step_payload),
                                         },
                                         event_rx,
                                         on_event,
@@ -321,7 +487,7 @@ impl AgentRuntime {
                                             step_id: step_id.clone(),
                                             success: false,
                                             result: Some(error.clone()),
-                                            payload: None,
+                                            payload: Some(step_payload),
                                         },
                                         event_rx,
                                         on_event,
@@ -355,7 +521,7 @@ impl AgentRuntime {
                                 step_id: step_id.clone(),
                                 success: false,
                                 result: Some(e.to_string()),
-                                payload: None,
+                                payload: Some(step_payload),
                             },
                             event_rx,
                             on_event,

@@ -43,7 +43,7 @@ pub trait StepExecutor: Send + Sync {
     async fn execute_step(
         &self,
         step: &PlanStep,
-        plan_context: &Value,
+        step_outputs: &Value,
         ctx: &ToolContext,
     ) -> AgentResult<StepResult>;
 }
@@ -55,6 +55,7 @@ pub trait StepContinuePolicy: Send + Sync {
         &self,
         plan: &ExecutionPlan,
         current_step: &PlanStep,
+        step_outputs: &Value,
     ) -> AgentResult<bool>;
 }
 
@@ -66,5 +67,7 @@ pub trait RecoveryStrategy: Send + Sync {
         step: &PlanStep,
         error: &str,
         retry_count: usize,
+        plan: &ExecutionPlan,
+        step_outputs: &Value,
     ) -> AgentResult<crate::types::RecoveryAction>;
 }
