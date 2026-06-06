@@ -100,6 +100,62 @@ impl LlmPlanGenerator {
         format!("plan-{}-{}", ts, seq)
     }
 
+    /// Extract the actual content from an LLM response.
+    ///
+    /// Handles different provider response formats:
+    /// - OpenAI/compatible: `choices[0].message.content` (string)
+    /// - Anthropic: `content[0].text` (array of content blocks)
+    /// - Google Gemini: `candidates[0].content.parts[0].text`
+    /// - Direct JSON with "steps" at top level
+    fn extract_plan_json(response: &Value) -> Value {
+        // 1. OpenAI format: choices[0].message.content
+        if let Some(choices) = response.get("choices").and_then(|v| v.as_array()) {
+            if let Some(first) = choices.first() {
+                if let Some(content) = first.get("message").and_then(|m| m.get("content")).and_then(|v| v.as_str()) {
+                    if let Ok(parsed) = serde_json::from_str::<Value>(content) {
+                        return parsed;
+                    }
+                }
+            }
+        }
+
+        // 2. Anthropic format: content[0].text
+        if let Some(content) = response.get("content").and_then(|v| v.as_array()) {
+            for block in content {
+                if block.get("type").and_then(|v| v.as_str()) == Some("text") {
+                    if let Some(text) = block.get("text").and_then(|v| v.as_str()) {
+                        if let Ok(parsed) = serde_json::from_str::<Value>(text) {
+                            return parsed;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Google Gemini format: candidates[0].content.parts[0].text
+        if let Some(candidates) = response.get("candidates").and_then(|v| v.as_array()) {
+            if let Some(first) = candidates.first() {
+                if let Some(parts) = first.get("content").and_then(|c| c.get("parts")).and_then(|v| v.as_array()) {
+                    for part in parts {
+                        if let Some(text) = part.get("text").and_then(|v| v.as_str()) {
+                            if let Ok(parsed) = serde_json::from_str::<Value>(text) {
+                                return parsed;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. Direct format: "steps" at top level
+        if response.get("steps").is_some() {
+            return response.clone();
+        }
+
+        // Fallback: return as-is
+        response.clone()
+    }
+
     /// Parse the LLM response into a list of PlanSteps.
     fn parse_steps(response: &Value) -> AgentResult<Vec<PlanStep>> {
         let steps_array = response
@@ -196,8 +252,12 @@ impl PlanGenerator for LlmPlanGenerator {
             .await
             .map_err(|e| AgentError::plan_generation(e.to_string()))?;
 
+        tracing::debug!(response = %response, "LlmPlanGenerator: raw LLM response");
+
+        let plan_json = Self::extract_plan_json(&response);
+
         // Try to parse the response. If it fails, retry once with the error message.
-        let steps = match Self::parse_steps(&response) {
+        let steps = match Self::parse_steps(&plan_json) {
             Ok(steps) => steps,
             Err(parse_err) => {
                 tracing::warn!("First parse attempt failed: {}, retrying", parse_err);
@@ -216,7 +276,8 @@ impl PlanGenerator for LlmPlanGenerator {
                     .await
                     .map_err(|e| AgentError::plan_generation(e.to_string()))?;
 
-                Self::parse_steps(&retry_response)?
+                let retry_json = Self::extract_plan_json(&retry_response);
+                Self::parse_steps(&retry_json)?
             }
         };
 
