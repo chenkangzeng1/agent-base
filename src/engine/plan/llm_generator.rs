@@ -7,17 +7,12 @@ use crate::types::{AgentError, AgentResult, ChatMessage, ExecutionPlan, PlanStep
 use super::traits::PlanGenerator;
 use super::streaming_parser::StreamingJsonParser;
 
-/// Default system prompt for plan generation.
-const DEFAULT_PLAN_SYSTEM_PROMPT: &str = r#"You are a task planner. Given an objective and available tools, break it down into sequential steps.
+/// Default system prompt for plan generation (agentic-friendly).
+const DEFAULT_PLAN_SYSTEM_PROMPT: &str = r#"You are a task planner. Given an objective, break it down into sequential steps.
 
 Output a JSON object with a "steps" array. Each step has:
 - "id": unique string identifier (e.g. "step-1", "step-2")
-- "description": what this step does
-- "tool_name": (optional) name of the tool to call
-- "args": (optional) arguments for the tool
-
-If a step has "tool_name", it will be executed as a direct tool call.
-If a step does not have "tool_name", it will be executed as an LLM-driven agent turn.
+- "description": what this step should accomplish
 
 Keep steps atomic and ordered. Do not exceed {max_steps} steps."#;
 
@@ -36,7 +31,7 @@ Keep steps atomic and ordered. Do not exceed {max_steps} steps."#;
 ///     "Check server health and fix issues",
 ///     Arc::new(generator),
 ///     PlanConfig::new()
-///         .executor(runtime.create_step_executor())
+///         .with_executor(runtime.create_step_executor())
 ///         .recovery(Recovery::retry(2)),
 ///     |event| { println!("{:?}", event); Ok(()) },
 /// ).await?;
@@ -252,15 +247,25 @@ impl LlmPlanGenerator {
             desc
         };
 
-        let user_message = format!(
-            "Objective: {}{}\n\nGenerate a plan as a JSON object with a \"steps\" array. Each step should use \"tool_name\" and \"args\" to call a tool.",
-            objective,
-            if context.is_empty() {
-                String::new()
-            } else {
-                format!("\nContext: {}", context)
-            }
-        );
+        let ctx_suffix = if context.is_empty() {
+            String::new()
+        } else {
+            format!("\nContext: {}", context)
+        };
+
+        let user_message = if tools.is_empty() {
+            // Agentic mode: LLM only generates descriptions, no tool selection
+            format!(
+                "Objective: {}{}\n\nGenerate a plan as a JSON object with a \"steps\" array. Each step should have \"id\" and \"description\". Do NOT specify tools or arguments. The execution engine will determine the best tools to use at runtime.",
+                objective, ctx_suffix
+            )
+        } else {
+            // Deterministic mode: LLM generates plans with tool_name and args
+            format!(
+                "Objective: {}{}\n\nGenerate a plan as a JSON object with a \"steps\" array. Each step should use \"tool_name\" and \"args\" to call a tool.",
+                objective, ctx_suffix
+            )
+        };
 
         vec![
             ChatMessage::system(system_prompt),

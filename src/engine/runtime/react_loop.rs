@@ -62,8 +62,8 @@ impl AgentRuntime {
         tool_calls: Vec<(String, String, String)>,
         available_tools: &[String],
         turn_count: u32,
-        total_tool_calls: usize,
     ) -> AgentResult<PostLlmMwResult> {
+        let total_tool_calls = self.session_or_err(session_id).await?.total_tool_calls;
         let mut ctx = PostLlmCtx {
             session_id: session_id.clone(),
             full_text,
@@ -164,7 +164,6 @@ impl AgentRuntime {
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
         let max_turns = self.config.execution.max_turns.unwrap_or(super::DEFAULT_MAX_TURNS);
-        let mut total_tool_calls: usize = 0;
 
         tracing::debug!(session_id = session_id.id, max_turns, "run turn loop start");
 
@@ -255,7 +254,6 @@ impl AgentRuntime {
                             tool_calls_parsed,
                             &available_tools,
                             turn_count,
-                            total_tool_calls,
                         )
                         .await?;
 
@@ -292,7 +290,10 @@ impl AgentRuntime {
 
                         match self.handle_tool_calls(session_id, &result.tool_calls, event_rx, on_event).await {
                             Ok(ToolCallResult::Continue) => {
-                                total_tool_calls += result.tool_calls.len();
+                                let n = result.tool_calls.len();
+                                self.with_session_mut(session_id, |session| {
+                                    session.total_tool_calls += n;
+                                }).await?;
                                 self.emit_event(AgentEvent::Checkpoint {
                                     session_id: session_id.clone(),
                                     checkpoint: CheckpointData {
@@ -308,7 +309,10 @@ impl AgentRuntime {
                                 continue;
                             }
                             Ok(ToolCallResult::Break) => {
-                                total_tool_calls += result.tool_calls.len();
+                                let n = result.tool_calls.len();
+                                self.with_session_mut(session_id, |session| {
+                                    session.total_tool_calls += n;
+                                }).await?;
                                 self.emit_event(AgentEvent::RunFinished { session_id: session_id.clone() });
                                 EventBus::drain_async_events(event_rx, on_event)?;
                                 return Ok((RunOutcome::Completed, turn_count));

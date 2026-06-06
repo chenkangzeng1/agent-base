@@ -184,10 +184,12 @@ impl Recovery {
 /// Builder pattern with sensible defaults:
 /// - `executor = None` → agentic mode (each step becomes an agent turn)
 /// - `executor = Some(e)` → deterministic mode (steps executed by `e`)
+/// - Runtime adaptive: steps with `tool_name` in payload use executor if available,
+///   otherwise fall back to agentic mode
 /// - `continue_policy` defaults to `AlwaysContinue`
 /// - `recovery` defaults to `AbortOnFailure`
 pub struct PlanConfig {
-    pub executor: Option<Arc<dyn StepExecutor>>,
+    pub(crate) executor: Option<Arc<dyn StepExecutor>>,
     pub continue_policy: Arc<dyn StepContinuePolicy>,
     pub recovery: Arc<dyn RecoveryStrategy>,
     pub plan_store: Option<Arc<dyn PlanStore>>,
@@ -204,9 +206,14 @@ impl PlanConfig {
     }
 
     /// Set the step executor (enables deterministic mode).
-    pub fn executor(mut self, e: Arc<dyn StepExecutor>) -> Self {
+    pub fn with_executor(mut self, e: Arc<dyn StepExecutor>) -> Self {
         self.executor = Some(e);
         self
+    }
+
+    /// Get the step executor (if set).
+    pub fn executor(&self) -> Option<&Arc<dyn StepExecutor>> {
+        self.executor.as_ref()
     }
 
     /// Set the continue policy.

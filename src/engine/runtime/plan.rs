@@ -2,7 +2,7 @@ use serde_json::json;
 use tokio::sync::{broadcast, mpsc};
 
 use crate::types::{
-    AgentError, AgentEvent, AgentResult, ExecutionPlan, PlanStatus, RecoveryAction,
+    AgentError, AgentEvent, AgentResult, ExecutionPlan, MessageRole, PlanStatus, RecoveryAction,
     RunOutcome, RuntimeEvent, SessionId, StepResult, StepStatus, UserEvent,
 };
 use crate::tool::ToolContext;
@@ -27,8 +27,9 @@ enum StepFailureAction {
 impl AgentRuntime {
     /// Execute a pre-built `ExecutionPlan`.
     ///
-    /// - `config.executor = Some` → deterministic mode (steps executed by the executor)
-    /// - `config.executor = None` → agentic mode (each step becomes an agent turn)
+    /// Runtime adaptive execution:
+    /// - Steps with `tool_name` in payload + executor available → deterministic mode
+    /// - Otherwise → agentic mode (each step becomes an agent turn)
     pub async fn run_plan<F>(
         &self,
         session_id: SessionId,
@@ -77,7 +78,7 @@ impl AgentRuntime {
             .run_plan_steps(
                 &session_id,
                 &mut plan,
-                config.executor,
+                config.executor().cloned(),
                 Some(config.continue_policy),
                 Some(config.recovery),
                 &mut event_rx,
@@ -169,7 +170,7 @@ impl AgentRuntime {
             .run_plan_steps(
                 &session_id,
                 &mut plan,
-                config.executor,
+                config.executor().cloned(),
                 Some(config.continue_policy),
                 Some(config.recovery),
                 &mut event_rx,
@@ -192,8 +193,8 @@ impl AgentRuntime {
     /// Uses index-based iteration to avoid borrow-checker conflicts when
     /// reading `plan` (for dependency checks) while mutating phases/steps.
     ///
-    /// - If `executor` is `None` → agentic mode (step becomes agent turn).
-    /// - If `executor` is `Some` → deterministic mode (step goes to executor).
+    /// Runtime adaptive: steps with `tool_name` in payload use the executor
+    /// (if available) for deterministic execution; otherwise agentic mode.
     async fn run_plan_steps<F>(
         &self,
         session_id: &SessionId,
@@ -374,7 +375,11 @@ impl AgentRuntime {
         Ok(RunOutcome::Completed)
     }
 
-    /// Execute a single plan step — deterministic (executor) or agentic mode.
+    /// Execute a single plan step — runtime adaptive.
+    ///
+    /// If the step has `tool_name` in its payload AND an executor is available,
+    /// uses deterministic mode (direct tool call). Otherwise falls back to
+    /// agentic mode (LLM-driven agent turn).
     async fn execute_single_step<F>(
         &self,
         session_id: &SessionId,
@@ -389,7 +394,10 @@ impl AgentRuntime {
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
-        if let Some(exec) = executor {
+        // Runtime adaptive: deterministic if executor available AND step has tool_name
+        let has_tool_name = step.payload.get("tool_name").and_then(|v| v.as_str()).is_some();
+
+        if let (Some(exec), true) = (executor.as_ref(), has_tool_name) {
             let should_continue = if let Some(p) = policy {
                 p.should_continue(plan, step, step_outputs)
                     .await
@@ -412,6 +420,11 @@ impl AgentRuntime {
             };
             exec.execute_step(step, step_outputs, &tool_ctx).await
         } else {
+            // Agentic mode: inject step description as user message, then run ReAct loop
+            self.with_session_mut(session_id, |session| {
+                session.push_message(MessageRole::User, &step.description);
+            }).await?;
+
             let mut step_events = Vec::new();
             let outcome = self
                 .run(session_id.clone(), |event| {

@@ -1469,7 +1469,7 @@ async fn test_plan_execution_success() {
             "Test objective",
             generator,
             PlanConfig::new()
-                .executor(executor)
+                .with_executor(executor)
                 .recovery(Arc::new(MockRecoveryStrategy))
                 .store(plan_store.clone()),
             |_| Ok(()),
@@ -1513,7 +1513,7 @@ async fn test_plan_execution_failure_aborts() {
             "Test objective",
             generator,
             PlanConfig::new()
-                .executor(executor)
+                .with_executor(executor)
                 .recovery(Arc::new(MockRecoveryStrategy))
                 .store(plan_store.clone()),
             |_| Ok(()),
@@ -1552,7 +1552,7 @@ async fn test_plan_events_emitted() {
             "Test objective",
             generator,
             PlanConfig::new()
-                .executor(executor)
+                .with_executor(executor)
                 .recovery(Arc::new(MockRecoveryStrategy))
                 .store(plan_store),
             |event| {

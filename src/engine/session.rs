@@ -16,6 +16,9 @@ pub struct AgentSession {
     /// This is the source of truth for the conversation state.
     chat_messages: Vec<ChatMessage>,
     always_allowed_actions: HashSet<String>,
+    /// Total number of tool calls made in this session (across all turns).
+    /// Used by middleware for decisions like "first_turn_only" enforcement.
+    pub total_tool_calls: usize,
 }
 
 impl AgentSession {
@@ -25,6 +28,7 @@ impl AgentSession {
             messages: Vec::new(),
             chat_messages: Vec::new(),
             always_allowed_actions: HashSet::new(),
+            total_tool_calls: 0,
         }
     }
 

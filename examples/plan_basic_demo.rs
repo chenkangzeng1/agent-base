@@ -242,7 +242,7 @@ async fn main() -> AgentResult<()> {
             session_id.clone(),
             manual_plan,
             PlanConfig::new()
-                .executor(executor.clone())
+                .with_executor(executor.clone())
                 .recovery(Recovery::skip())
                 .store(plan_store.clone()),
             |event| { print_event(&event); Ok(()) },
@@ -268,7 +268,7 @@ async fn main() -> AgentResult<()> {
             "问候整个团队",
             generator,
             PlanConfig::new()
-                .executor(executor.clone())
+                .with_executor(executor.clone())
                 .recovery(Recovery::abort())
                 .store(plan_store.clone()),
             |event| { print_event(&event); Ok(()) },
@@ -320,7 +320,7 @@ async fn main() -> AgentResult<()> {
             session_id.clone(),
             plan,
             PlanConfig::new()
-                .executor(executor.clone())
+                .with_executor(executor.clone())
                 .recovery(Recovery::abort())
                 .store(plan_store.clone()),
             |event| { print_event(&event); Ok(()) },

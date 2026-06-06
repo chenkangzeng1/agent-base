@@ -304,18 +304,29 @@ async fn main() -> AgentResult<()> {
     let session_id = runtime.create_session().await;
     let plan_store = Arc::new(InMemoryPlanStore::new());
     let step_executor = Arc::new(runtime.create_step_executor());
-    let tool_defs = runtime.tools_mut().definitions();
+    let tool_defs: Vec<Value> = runtime.tools_mut().definitions();
 
     let objective = "检查服务器健康状况: 依次检查磁盘、内存、nginx 进程状态, 如果 nginx 不在运行则重启 nginx";
 
     // ======================================================================
-    // 场景 A: run_plan_with_generator —— 一步完成
+    // 场景 A（推荐）: Agentic 模式 —— 计划只含描述，执行时 LLM 决定工具
     // ======================================================================
     println!("┌────────────────────────────────────────────────────────────┐");
-    println!("│ 场景 A: run_plan_with_generator —— 自动生成并执行          │");
+    println!("│ 场景 A（推荐）: Agentic 模式 —— 计划只管「做什么」       │");
     println!("│                                                            │");
-    println!("│ 特点: 最简洁，生成和执行一步完成，适合自动化场景           │");
+    println!("│ 核心: LLM 只生成步骤描述，不指定工具。执行时每步调 LLM，  │");
+    println!("│      由 LLM 根据当前上下文动态选择最合适的工具和参数。     │");
+    println!("│ 优势: 简单灵活、容错性强，工具变化不影响计划质量           │");
+    println!("│ 配置: 自定义 system prompt + PlanConfig::new()（无 executor）│");
     println!("└────────────────────────────────────────────────────────────\n");
+
+    const AGENTIC_SYSTEM_PROMPT: &str = r#"You are a task planner. Given an objective, break it down into sequential steps.
+Each step has:
+- "id": unique string identifier
+- "description": what this step should accomplish
+
+Do NOT specify tools or arguments. The execution engine will determine the best tools to use at runtime.
+Keep steps atomic and ordered. Do not exceed {max_steps} steps."#;
 
     let mut timer_a = Timer::new();
 
@@ -323,9 +334,11 @@ async fn main() -> AgentResult<()> {
         .run_plan_with_generator(
             session_id.clone(),
             objective,
-            Arc::new(LlmPlanGenerator::new(llm_client.clone()).with_max_steps(5)),
+            Arc::new(LlmPlanGenerator::new(llm_client.clone())
+                .with_system_prompt(AGENTIC_SYSTEM_PROMPT)
+                .with_max_steps(5)),
             PlanConfig::new()
-                .executor(step_executor.clone())
+                // 注意: 不设置 executor，框架自动使用 Agentic 模式
                 .recovery(Recovery::abort())
                 .store(plan_store.clone()),
             |event| {
@@ -335,19 +348,52 @@ async fn main() -> AgentResult<()> {
         )
         .await?;
 
-    timer_a.mark("完成");
-    timer_a.summary("场景 A: 一步完成");
+    timer_a.mark("Agentic 模式完成");
+    timer_a.summary("场景 A: Agentic（推荐）");
 
     // ======================================================================
-    // 场景 B: generate_plan → 审查 → run_plan —— 解耦
+    // 场景 B（高级）: Deterministic 模式 —— 计划指定工具，执行直接调用
     // ======================================================================
     println!("\n┌────────────────────────────────────────────────────────────┐");
-    println!("│ 场景 B: generate_plan → 审查修改 → run_plan —— 解耦       │");
+    println!("│ 场景 B（高级）: Deterministic 模式 —— 计划指定具体工具   │");
+    println!("│                                                            │");
+    println!("│ 核心: LLM 生成计划时指定每步的 tool_name 和 args，执行时  │");
+    println!("│      直接调工具，零 LLM 开销。                             │");
+    println!("│ 优势: 速度快、成本低，适合高频任务和固定 SOP              │");
+    println!("│ 配置: 默认 system prompt + PlanConfig::new().with_executor(...) │");
+    println!("└────────────────────────────────────────────────────────────\n");
+
+    let mut timer_b = Timer::new();
+
+    runtime
+        .run_plan_with_generator(
+            session_id.clone(),
+            objective,
+            Arc::new(LlmPlanGenerator::new(llm_client.clone()).with_max_steps(5)),
+            PlanConfig::new()
+                .with_executor(step_executor.clone())
+                .recovery(Recovery::abort())
+                .store(plan_store.clone()),
+            |event| {
+                print_event(&event);
+                Ok(())
+            },
+        )
+        .await?;
+
+    timer_b.mark("Deterministic 模式完成");
+    timer_b.summary("场景 B: Deterministic（高级）");
+
+    // ======================================================================
+    // 场景 C: generate_plan → 审查修改 → run_plan —— 解耦生成与执行
+    // ======================================================================
+    println!("\n┌────────────────────────────────────────────────────────────┐");
+    println!("│ 场景 C: generate_plan → 审查修改 → run_plan —— 解耦     │");
     println!("│                                                            │");
     println!("│ 特点: 生成后可人工审查、修改、保存，再决定是否执行         │");
     println!("└────────────────────────────────────────────────────────────\n");
 
-    let mut timer_b = Timer::new();
+    let mut timer_c = Timer::new();
 
     // 步骤 1: 生成计划
     let generator = LlmPlanGenerator::new(llm_client.clone()).with_max_steps(5);
@@ -356,7 +402,7 @@ async fn main() -> AgentResult<()> {
         .await
         .map_err(|e| AgentError::plan_generation(e.to_string()))?;
 
-    timer_b.mark("LLM 生成计划");
+    timer_c.mark("LLM 生成计划");
 
     println!("📋 原始计划 ({} 步):", plan.total_steps());
     for step in plan.all_steps() {
@@ -379,7 +425,7 @@ async fn main() -> AgentResult<()> {
     plan_store.save_plan(&plan, json!({"source": "llm_generated", "modified": true})).await?;
     println!("📋 修改后计划 ({} 步)，已保存到 plan_store\n", plan.total_steps());
 
-    timer_b.mark("审查修改");
+    timer_c.mark("审查修改");
 
     // 步骤 3: 执行
     runtime
@@ -387,26 +433,26 @@ async fn main() -> AgentResult<()> {
             session_id.clone(),
             plan,
             PlanConfig::new()
-                .executor(step_executor.clone())
+                .with_executor(step_executor.clone())
                 .recovery(Recovery::abort())
                 .store(plan_store.clone()),
             |event| { print_event(&event); Ok(()) },
         )
         .await?;
 
-    timer_b.mark("执行计划");
-    timer_b.summary("场景 B: 解耦生成+执行");
+    timer_c.mark("执行计划");
+    timer_c.summary("场景 C: 解耦生成+执行");
 
     // ======================================================================
-    // 场景 C: 手动创建计划 → run_plan —— 基准对比
+    // 场景 D: 手动创建计划 → run_plan —— 基准对比
     // ======================================================================
     println!("\n┌────────────────────────────────────────────────────────────┐");
-    println!("│ 场景 C: 手动创建计划 → run_plan —— 确定性执行             │");
+    println!("│ 场景 D: 手动创建计划 → run_plan —— 零 LLM 开销          │");
     println!("│                                                            │");
-    println!("│ 特点: 无 LLM 开销，完全可控，适合固定 SOP                  │");
+    println!("│ 特点: 不用 LLM 生成，完全手动指定步骤，适合固定 SOP        │");
     println!("└────────────────────────────────────────────────────────────\n");
 
-    let mut timer_c = Timer::new();
+    let mut timer_d = Timer::new();
 
     let manual_plan = ExecutionPlan::of_steps(
         "manual-check",
@@ -423,15 +469,15 @@ async fn main() -> AgentResult<()> {
             session_id.clone(),
             manual_plan,
             PlanConfig::new()
-                .executor(step_executor)
+                .with_executor(step_executor)
                 .recovery(Recovery::skip())
                 .store(plan_store.clone()),
             |event| { print_event(&event); Ok(()) },
         )
         .await?;
 
-    timer_c.mark("执行完成");
-    timer_c.summary("场景 C: 手动计划");
+    timer_d.mark("执行完成");
+    timer_d.summary("场景 D: 手动计划");
 
     // ======================================================================
     // PlanStore 查询

@@ -14,11 +14,10 @@
 
 use std::io::{self, Write};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use agent_base::{
     AgentBuilder, AgentError, AgentResult, ApprovalDecision, ApprovalHandler,
-    ApprovalRequest, Middleware, OpenAiClient, PostLlmCtx, RiskLevel, RuntimeEvent, Tool,
+    ApprovalRequest, OpenAiClient, RiskLevel, RuntimeEvent, Tool,
     ToolContext, ToolControlFlow, ToolOutput, ToolPolicy,
 };
 use async_trait::async_trait;
@@ -235,55 +234,6 @@ impl ApprovalHandler for CliApproval {
 }
 
 // ============================================================================
-// Middleware: anti-hallucination nudge
-// ============================================================================
-
-/// When the LLM has tools available but doesn't call them — merely describing
-/// what it could do — force it to actually invoke the tool.
-struct ToolEnforcement {
-    max_nudges: usize,
-    nudge_count: AtomicUsize,
-}
-
-impl ToolEnforcement {
-    fn new(max_nudges: usize) -> Self {
-        Self {
-            max_nudges,
-            nudge_count: AtomicUsize::new(0),
-        }
-    }
-}
-
-#[async_trait]
-impl Middleware for ToolEnforcement {
-    async fn on_post_llm(&self, ctx: &mut PostLlmCtx) -> AgentResult<()> {
-        if ctx.available_tools.is_empty()
-            || ctx.is_tool_call
-            || ctx.full_text.is_empty()
-            || ctx.total_tool_calls > 0
-        {
-            return Ok(());
-        }
-
-        let count = self.nudge_count.fetch_add(1, Ordering::SeqCst);
-        if count >= self.max_nudges {
-            return Ok(());
-        }
-
-        println!(
-            "\n[Middleware] LLM didn't call a tool, nudging (attempt {})...",
-            count + 1
-        );
-
-        ctx.skip_push = true;
-        ctx.follow_up_message = Some(
-            "You have tools available. Please call a tool directly to fetch data instead of just describing what you would do.".into(),
-        );
-        Ok(())
-    }
-}
-
-// ============================================================================
 // Event printing
 // ============================================================================
 
@@ -405,7 +355,6 @@ async fn main() -> AgentResult<()> {
         .register_tool(RestartServiceTool)
         .tool_policy(Arc::new(HealthCheckPolicy))
         .approval_handler(Arc::new(CliApproval))
-        .middleware(ToolEnforcement::new(3))
         .build()?;
 
     let mut session_id = runtime.create_session().await;
@@ -438,9 +387,16 @@ async fn main() -> AgentResult<()> {
             .map_err(|e| AgentError::internal(format!("flush failed: {e}")))?;
 
         let mut input = String::new();
-        io::stdin()
-            .read_line(&mut input)
-            .map_err(|e| AgentError::internal(format!("read stdin failed: {e}")))?;
+        match io::stdin().read_line(&mut input) {
+            Ok(0) => {
+                println!("Goodbye!");
+                break;
+            }
+            Ok(_) => {}
+            Err(e) => {
+                return Err(AgentError::internal(format!("read stdin failed: {e}")));
+            }
+        }
         let input = input.trim().to_string();
 
         if input.is_empty() {
