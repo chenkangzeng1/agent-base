@@ -7,7 +7,7 @@ use crate::types::{
 };
 use crate::tool::ToolContext;
 use crate::engine::plan::{
-    AlwaysContinue, AbortOnFailure, PlanConfig, PlanGenerator, PlanStore, RecoveryStrategy,
+    PlanConfig, PlanGenerator, RecoveryStrategy,
     StepContinuePolicy, StepExecutor,
 };
 use crate::engine::runtime::event_bus::EventBus;
@@ -101,10 +101,31 @@ impl AgentRuntime {
         let tool_definitions = self.tool_engine.definitions();
         let mut event_rx = self.subscribe_events();
 
-        let mut plan = generator
-            .generate_plan(objective, "", &tool_definitions)
-            .await
-            .map_err(|e| AgentError::plan_generation(e.to_string()))?;
+        // Create channel for streaming plan generation events
+        let (plan_event_tx, mut plan_event_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        // Run generation and event consumption concurrently.
+        // This ensures on_event is called in real-time as steps are parsed,
+        // not batched after generation completes.
+        let generate_fut = generator.generate_plan(objective, "", &tool_definitions, Some(plan_event_tx));
+
+        tokio::pin!(generate_fut);
+
+        let mut plan = loop {
+            tokio::select! {
+                result = &mut generate_fut => {
+                    break result.map_err(|e| AgentError::plan_generation(e.to_string()))?;
+                }
+                Some(event) = plan_event_rx.recv() => {
+                    let _ = on_event(Self::stamp_session_id(event, &session_id, ""));
+                }
+            }
+        };
+
+        // Drain any remaining events after generation completes
+        while let Ok(event) = plan_event_rx.try_recv() {
+            let _ = on_event(Self::stamp_session_id(event, &session_id, ""));
+        }
 
         // Empty plan check
         if plan.total_steps() == 0 {
@@ -147,135 +168,6 @@ impl AgentRuntime {
             .await;
 
         if let Some(store) = &config.plan_store {
-            let _ = store.save_plan(&plan, json!({})).await;
-        }
-
-        result
-    }
-
-    /// Run a plan in **agentic** mode: each step becomes an agent turn.
-    ///
-    /// The agent receives step instructions as user input and decides autonomously
-    /// which tools to call. No `StepExecutor` is needed.
-    #[deprecated(since = "0.5.0", note = "Use `run_plan` with `PlanConfig::new()` (no executor) instead")]
-    pub async fn run_plan_agentic<F>(
-        &self,
-        session_id: SessionId,
-        objective: &str,
-        generator: Arc<dyn PlanGenerator>,
-        plan_store: Option<Arc<dyn PlanStore>>,
-        mut on_event: F,
-    ) -> AgentResult<RunOutcome>
-    where
-        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
-    {
-        tracing::info!(session_id = session_id.id, %objective, "run plan agentic start");
-        let tool_definitions = self.tool_engine.definitions();
-        let mut event_rx = self.subscribe_events();
-
-        let mut plan = generator
-            .generate_plan(objective, "", &tool_definitions)
-            .await
-            .map_err(|e| AgentError::plan_generation(e.to_string()))?;
-
-        self.emit_and_drain(
-            AgentEvent::PlanGenerated {
-                session_id: session_id.clone(),
-                plan: plan.clone(),
-            },
-            &mut event_rx,
-            &mut on_event,
-        );
-
-        if let Some(store) = &plan_store {
-            store
-                .save_plan(&plan, json!({}))
-                .await
-                .map_err(|e| AgentError::plan_storage(e.to_string()))?;
-        }
-
-        plan.status = PlanStatus::Executing;
-
-        let result = self
-            .run_plan_steps(
-                &session_id,
-                &mut plan,
-                None::<Arc<dyn StepExecutor>>,
-                None::<Arc<dyn StepContinuePolicy>>,
-                None::<Arc<dyn RecoveryStrategy>>,
-                &mut event_rx,
-                &mut on_event,
-            )
-            .await;
-
-        if let Some(store) = &plan_store {
-            let _ = store.save_plan(&plan, json!({})).await;
-        }
-
-        result
-    }
-
-    /// Run a plan in **deterministic** mode: each step is executed directly
-    /// through the provided `StepExecutor`.
-    ///
-    /// Use this when you want the plan to be executed without LLM turn
-    /// overhead (e.g. predetermined SSH commands).
-    #[deprecated(since = "0.5.0", note = "Use `run_plan` with `PlanConfig::new().executor(e)` instead")]
-    #[allow(clippy::too_many_arguments)]
-    pub async fn run_plan_deterministic<F>(
-        &self,
-        session_id: SessionId,
-        objective: &str,
-        generator: Arc<dyn PlanGenerator>,
-        executor: Arc<dyn StepExecutor>,
-        policy: Option<Arc<dyn StepContinuePolicy>>,
-        recovery: Option<Arc<dyn RecoveryStrategy>>,
-        plan_store: Option<Arc<dyn PlanStore>>,
-        mut on_event: F,
-    ) -> AgentResult<RunOutcome>
-    where
-        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
-    {
-        tracing::info!(session_id = session_id.id, %objective, "run plan deterministic start");
-        let tool_definitions = self.tool_engine.definitions();
-        let mut event_rx = self.subscribe_events();
-
-        let mut plan = generator
-            .generate_plan(objective, "", &tool_definitions)
-            .await
-            .map_err(|e| AgentError::plan_generation(e.to_string()))?;
-
-        self.emit_and_drain(
-            AgentEvent::PlanGenerated {
-                session_id: session_id.clone(),
-                plan: plan.clone(),
-            },
-            &mut event_rx,
-            &mut on_event,
-        );
-
-        if let Some(store) = &plan_store {
-            store
-                .save_plan(&plan, json!({}))
-                .await
-                .map_err(|e| AgentError::plan_storage(e.to_string()))?;
-        }
-
-        plan.status = PlanStatus::Executing;
-
-        let result = self
-            .run_plan_steps(
-                &session_id,
-                &mut plan,
-                Some(executor),
-                policy.or_else(|| Some(Arc::new(AlwaysContinue))),
-                recovery.or_else(|| Some(Arc::new(AbortOnFailure))),
-                &mut event_rx,
-                &mut on_event,
-            )
-            .await;
-
-        if let Some(store) = &plan_store {
             let _ = store.save_plan(&plan, json!({})).await;
         }
 
@@ -594,5 +486,32 @@ impl AgentRuntime {
     {
         self.emit_event(event);
         let _ = EventBus::drain_async_events(event_rx, on_event);
+    }
+
+    /// Stamp real session_id and plan_id onto plan generation events.
+    ///
+    /// `LlmPlanGenerator` emits events with dummy session/plan ids because
+    /// it doesn't know them. This helper replaces them with the real values.
+    fn stamp_session_id(event: RuntimeEvent, session_id: &SessionId, plan_id: &str) -> RuntimeEvent {
+        match event {
+            RuntimeEvent::PlanGenerating { .. } => RuntimeEvent::PlanGenerating {
+                session_id: session_id.clone(),
+                plan_id: plan_id.to_string(),
+            },
+            RuntimeEvent::PlanStepParsed { step_index, step_id, step_description, .. } => {
+                RuntimeEvent::PlanStepParsed {
+                    session_id: session_id.clone(),
+                    plan_id: plan_id.to_string(),
+                    step_index,
+                    step_id,
+                    step_description,
+                }
+            }
+            RuntimeEvent::ThoughtDelta { text, .. } => RuntimeEvent::ThoughtDelta {
+                session_id: session_id.clone(),
+                text,
+            },
+            other => other,
+        }
     }
 }

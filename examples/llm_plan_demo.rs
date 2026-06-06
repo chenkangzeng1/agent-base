@@ -5,7 +5,7 @@
 //!   2. 定义业务工具（磁盘检查、内存检查、进程检查、服务重启）
 //!   3. 用 LlmPlanGenerator 让 LLM 根据目标自动生成执行计划
 //!   4. 用 ToolCallingStepExecutor 逐个执行计划步骤
-//!   5. 事件回调打印进度
+//!   5. 事件回调打印进度，包含各阶段耗时统计
 //!   6. 对比：手动创建计划和自动生成计划
 //!
 //! 运行方式：
@@ -13,6 +13,7 @@
 //!   cargo run --example llm_plan_demo
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use agent_base::{
     AgentBuilder, AgentError, AgentResult, ExecutionPlan, InMemoryPlanStore,
@@ -23,6 +24,84 @@ use agent_base::{
 use async_trait::async_trait;
 use dotenvy::dotenv;
 use serde_json::{json, Value};
+
+// ============================================================================
+// 计时工具
+// ============================================================================
+
+/// 用于追踪各阶段耗时，最后汇总输出
+struct Timer {
+    start: Instant,
+    /// 记录各阶段耗时 (label, duration_ms)
+    phases: Vec<(&'static str, u128)>,
+    /// 当前阶段的开始时间
+    phase_start: Instant,
+    /// 若 LLM 生成计划重试了一次，记录次数
+    retry_count: u32,
+}
+
+impl Timer {
+    fn new() -> Self {
+        let now = Instant::now();
+        Self {
+            start: now,
+            phases: Vec::new(),
+            phase_start: now,
+            retry_count: 0,
+        }
+    }
+
+    /// 结束当前阶段并记录耗时
+    fn mark(&mut self, label: &'static str) {
+        let elapsed = self.phase_start.elapsed().as_millis();
+        self.phases.push((label, elapsed));
+        self.phase_start = Instant::now();
+    }
+
+    /// 输出所有阶段耗时汇总，并给出正常性判断
+    fn summary(&self, run_label: &str) {
+        let total = self.start.elapsed().as_millis();
+        println!("\n  ┌─ 耗时统计: {}", run_label);
+        for (label, ms) in &self.phases {
+            let status = match *label {
+                // LLM 调用: 通常 3-15s 算正常
+                l if l.contains("LLM") || l.contains("生成") => {
+                    if *ms < 2_000 { "⚠️  过快 (可能取的缓存结果)".into() }
+                    else if *ms < 3_000 { "⚡ 较快".into() }
+                    else if *ms < 10_000 { "✅ 正常".into() }
+                    else if *ms < 20_000 { "⏳ 偏慢 (模型响应较慢)".into() }
+                    else { "🐢 过慢 (网络或模型负载高)".into() }
+                }
+                // 工具执行: 模拟工具应在毫秒级完成
+                l if l.contains("执行") => {
+                    if *ms < 50 { "✅ 正常 (模拟工具)".into() }
+                    else if *ms < 500 { "✅ 正常".into() }
+                    else { "⚠️  偏慢".into() }
+                }
+                _ => String::new(),
+            };
+            println!("  │  {}: {:>6}ms  {}", label, ms, status);
+        }
+        println!("  │  ─────────────────────");
+        println!("  │  🕐 合计:      {:>6}ms", total);
+
+        // 总体判断
+        let overall = if total > 60_000 {
+            "❌ 超时 (>60s)，检查网络或模型状态"
+        } else if total > 30_000 {
+            "⚠️  偏慢 (>30s)，模型响应可能较慢"
+        } else if total > 10_000 {
+            "⏳ 可接受 (10~30s)"
+        } else {
+            "✅ 正常 (<10s)"
+        };
+        println!("  │  📊 总体评估: {}", overall);
+        if self.retry_count > 0 {
+            println!("  │  🔄 LLM 重试次数: {} 次", self.retry_count);
+        }
+        println!("  └─");
+    }
+}
 
 // ============================================================================
 // 业务工具定义
@@ -126,7 +205,7 @@ impl Tool for CheckProcessTool {
 
     async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
         let name = args["name"].as_str().unwrap_or("unknown");
-        // 模拟: 除 sshd 外, nginx 是停的
+        // 模拟: nginx 停的，sshd 是运行的
         let (running, pid) = match name {
             "nginx"  => (false, 0),
             "sshd"   => (true,  1024),
@@ -207,7 +286,6 @@ impl ToolPolicy for ServerCheckPolicy {
                 raw: None,
             })
         } else {
-            // 读操作自动放行
             None
         }
     }
@@ -261,8 +339,8 @@ async fn main() -> AgentResult<()> {
         .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
 
     println!("=== LlmPlanGenerator Demo ===\n");
-    println!("Model : {model}");
-    println!("Base  : {base_url}\n");
+    println!("Model  : {model}");
+    println!("Base   : {base_url}\n");
 
     // 2. 创建 LLM 客户端
     let llm_client = Arc::new(OpenAiClient::new(api_key, model.clone(), Some(base_url)));
@@ -288,16 +366,23 @@ async fn main() -> AgentResult<()> {
     println!("└─────────────────────────────────────────────────────┘\n");
 
     let generator = Arc::new(LlmPlanGenerator::new(llm_client.clone())
-        .with_max_steps(5)                    // 最多生成 5 个步骤
+        .with_max_steps(5)
     );
 
-    // create_step_executor 创建的 executor 通过 ToolRegistry 调用已注册的工具
     let step_executor = Arc::new(runtime.create_step_executor());
 
     println!("目标: 检查服务器健康状况, 如果 nginx 不在运行则重启\n");
-    println!("--- LLM 正在生成计划... ---\n");
 
-    let result = runtime
+    let mut timer = Timer::new();
+
+    // PlanGenerating 事件 → 开始计时
+    // PlanGenerated 事件 → 计时 LLM 生成耗时
+    // 第一个 PlanStepStarted → 开始记录执行阶段
+    // PlanCompleted → 执行阶段结束
+    let mut generation_done = false;
+    let mut execution_started = false;
+
+    let _result = runtime
         .run_plan_with_generator(
             session_id.clone(),
             "检查服务器健康状况: 依次检查磁盘、内存、nginx 进程状态, 如果 nginx 不在运行则重启 nginx",
@@ -308,11 +393,15 @@ async fn main() -> AgentResult<()> {
                 .store(plan_store.clone()),
             |event| {
                 match event {
-                    RuntimeEvent::PlanGenerating { plan_id, .. } => {
-                        println!("🤖 LLM 正在生成计划 [{}] ...", plan_id);
+                    RuntimeEvent::PlanGenerating { .. } => {
+                        println!("🤖 LLM 正在生成计划...");
                         Ok(())
                     }
                     RuntimeEvent::PlanGenerated { plan, .. } => {
+                        if !generation_done {
+                            timer.mark("LLM 生成计划");
+                            generation_done = true;
+                        }
                         println!("\n📋 计划已生成:");
                         println!("   id       : {}", plan.id);
                         println!("   objective: {}", plan.objective);
@@ -327,6 +416,10 @@ async fn main() -> AgentResult<()> {
                         Ok(())
                     }
                     RuntimeEvent::PlanStepStarted { step_id, step_description, .. } => {
+                        if !execution_started {
+                            timer.mark("执行计划");
+                            execution_started = true;
+                        }
                         println!("▶️  开始执行: {} - {}", step_id, step_description);
                         Ok(())
                     }
@@ -337,6 +430,9 @@ async fn main() -> AgentResult<()> {
                         Ok(())
                     }
                     RuntimeEvent::PlanCompleted { success, .. } => {
+                        if execution_started {
+                            timer.mark("计划执行");
+                        }
                         if success { println!("\n🎉 所有步骤执行成功!\n"); }
                         else       { println!("\n⚠️  计划执行未完全成功\n"); }
                         Ok(())
@@ -360,12 +456,12 @@ async fn main() -> AgentResult<()> {
         )
         .await?;
 
-    println!("结果: {:?}\n", result);
+    timer.summary("方式一: LLM 自动生成+执行");
 
     // ======================================================================
     // 方式二: 手动创建计划 → run_plan（对比）
     // ======================================================================
-    println!("┌─────────────────────────────────────────────────────┐");
+    println!("\n\n┌─────────────────────────────────────────────────────┐");
     println!("│ 方式二: 手动创建计划 + run_plan（对比）             │");
     println!("└─────────────────────────────────────────────────────┘\n");
 
@@ -373,25 +469,32 @@ async fn main() -> AgentResult<()> {
         "manual-check",
         "手动检查磁盘和内存",
         vec![
-            PlanStep::tool_call("s1", "检查磁盘 /",  "check_disk",    json!({"path": "/"})),
+            PlanStep::tool_call("s1", "检查磁盘 /",   "check_disk",    json!({"path": "/"})),
             PlanStep::tool_call("s2", "检查磁盘 /home", "check_disk", json!({"path": "/home"})),
-            PlanStep::tool_call("s3", "检查内存",      "check_memory", json!({})),
+            PlanStep::tool_call("s3", "检查内存",       "check_memory", json!({})),
         ],
     );
 
     println!("目标: {}\n", manual_plan.objective);
 
-    let result = runtime
+    let mut timer2 = Timer::new();
+    let mut manual_execution_started = false;
+
+    let _result = runtime
         .run_plan(
             session_id.clone(),
             manual_plan,
             PlanConfig::new()
                 .executor(step_executor)
-                .recovery(Recovery::skip())    // 对比: 跳过失败步骤
+                .recovery(Recovery::skip())
                 .store(plan_store.clone()),
             |event| {
                 match event {
                     RuntimeEvent::PlanStepStarted { step_id, .. } => {
+                        if !manual_execution_started {
+                            timer2.mark("执行 3 个步骤");
+                            manual_execution_started = true;
+                        }
                         println!("▶️  {}", step_id);
                         Ok(())
                     }
@@ -400,13 +503,19 @@ async fn main() -> AgentResult<()> {
                         println!("{}   {} → {}", icon, step_id, result.unwrap_or_default());
                         Ok(())
                     }
+                    RuntimeEvent::PlanCompleted { .. } => {
+                        if manual_execution_started {
+                            timer2.mark("计划执行");
+                        }
+                        Ok(())
+                    }
                     _ => Ok(())
                 }
             },
         )
         .await?;
 
-    println!("\n结果: {:?}", result);
+    timer2.summary("方式二: 手动创建+执行");
 
     // ======================================================================
     // 检查存储的计划
@@ -415,6 +524,18 @@ async fn main() -> AgentResult<()> {
     if let Some(data) = stored {
         println!("\n📦 plan_store 中 'manual-check' 的状态: {:?}", data.plan.status);
     }
+
+    // ======================================================================
+    // 总结对比
+    // ======================================================================
+    println!("\n\n┌─────────────────────────────────────────────────────┐");
+    println!("│ 对比总结                                             │");
+    println!("└─────────────────────────────────────────────────────┘\n");
+    println!("  方式一 (LLM 自动): 节省人工编写步骤的时间，但 LLM 生成计划需要额外耗时");
+    println!("  方式二 (手动):     步骤直接执行，没有生成开销，适合固定流程的场景");
+    println!("\n  建议:");
+    println!("    - 任务多变、步骤不固定 → 用 LlmPlanGenerator 自动生成");
+    println!("    - 流程固定、需要快速执行 → 手动创建 Plan 直接 run_plan");
 
     println!("\n=== Demo 完成 ===");
     Ok(())

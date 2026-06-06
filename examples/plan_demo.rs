@@ -112,6 +112,7 @@ impl PlanGenerator for SimplePlanGenerator {
         objective: &str,
         _context: &str,
         _tools: &[Value],
+        _on_event: Option<tokio::sync::mpsc::UnboundedSender<RuntimeEvent>>,
     ) -> AgentResult<ExecutionPlan> {
         let plan = ExecutionPlan::of_steps(
             "demo-plan",

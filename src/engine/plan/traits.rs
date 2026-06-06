@@ -1,12 +1,17 @@
 use async_trait::async_trait;
 use serde_json::Value;
+use tokio::sync::mpsc;
 
 use crate::tool::ToolContext;
-use crate::types::{AgentResult, ExecutionPlan, PlanStep, StepResult};
+use crate::types::{AgentResult, ExecutionPlan, PlanStep, RuntimeEvent, StepResult};
 
 /// Generates an `ExecutionPlan` from a high-level objective.
 ///
 /// The generator may use LLM prompting, rule engines, or templates.
+///
+/// `on_event` is an optional channel for emitting progress events during
+/// plan generation (e.g. `PlanGenerating`, `PlanStepParsed`, `ThoughtDelta`).
+/// Implementors that don't support streaming can ignore it.
 #[async_trait]
 pub trait PlanGenerator: Send + Sync {
     async fn generate_plan(
@@ -14,25 +19,8 @@ pub trait PlanGenerator: Send + Sync {
         objective: &str,
         context: &str,
         tools: &[Value],
+        on_event: Option<mpsc::UnboundedSender<RuntimeEvent>>,
     ) -> AgentResult<ExecutionPlan>;
-
-    async fn generate_plan_streaming(
-        &self,
-        objective: &str,
-        context: &str,
-        tools: &[Value],
-        on_generating: Box<dyn Fn() + Send>,
-        on_step_parsed: Box<dyn Fn(usize, String, String) + Send>,
-        _on_thought: Box<dyn Fn(String) + Send>,
-    ) -> AgentResult<ExecutionPlan> {
-        // Default implementation falls back to non-streaming
-        let plan = self.generate_plan(objective, context, tools).await?;
-        on_generating();
-        for (i, step) in plan.all_steps().enumerate() {
-            on_step_parsed(i, step.id.clone(), step.description.clone());
-        }
-        Ok(plan)
-    }
 }
 
 /// Executes a single `PlanStep` and returns its result.

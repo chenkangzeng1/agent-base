@@ -5,7 +5,7 @@ use serde_json::{json, Value};
 
 use crate::engine::{EventBus, PlanGenerator, PlanStore, StepExecutor};
 use crate::tool::{Tool, ToolContext, ToolControlFlow, ToolOutput};
-use crate::types::{AgentError, AgentEvent, AgentResult, PlanStatus, StepStatus};
+use crate::types::{AgentError, AgentEvent, AgentResult, PlanStatus, RuntimeEvent, StepStatus};
 
 use log;
 
@@ -99,55 +99,18 @@ impl Tool for PlanOrchestrator {
             format!("plan-{timestamp}-{count}")
         };
 
-        let eb = self.event_bus.clone();
-        let session_id_g = ctx.session_id.clone();
-        let plan_id_g = plan_id.clone();
-        let on_generating = Box::new(move || {
-            if let Some(bus) = &eb {
-                bus.emit(AgentEvent::PlanGenerating {
-                    session_id: session_id_g.clone(),
-                    plan_id: plan_id_g.clone(),
-                });
-            }
-        });
-
-        let eb = self.event_bus.clone();
-        let session_id_s = ctx.session_id.clone();
-        let plan_id_s = plan_id.clone();
-        let on_step_parsed = Box::new(move |index: usize, step_id: String, description: String| {
-            if let Some(bus) = &eb {
-                bus.emit(AgentEvent::PlanStepParsed {
-                    session_id: session_id_s.clone(),
-                    plan_id: plan_id_s.clone(),
-                    step_index: index,
-                    step_id,
-                    step_description: description,
-                });
-            }
-        });
-
-        let eb = self.event_bus.clone();
-        let session_id_t = ctx.session_id.clone();
-        let on_thought = Box::new(move |text: String| {
-            if let Some(bus) = &eb {
-                bus.emit(AgentEvent::ThoughtDelta {
-                    session_id: session_id_t.clone(),
-                    text,
-                });
-            }
-        });
-
         let tools = vec![];
+
+        // Create channel for streaming plan generation events
+        let (plan_event_tx, mut plan_event_rx) = tokio::sync::mpsc::unbounded_channel();
 
         match self
             .plan_generator
-            .generate_plan_streaming(
+            .generate_plan(
                 &objective,
                 &context,
                 &tools,
-                on_generating,
-                on_step_parsed,
-                on_thought,
+                Some(plan_event_tx),
             )
             .await
         {
@@ -155,6 +118,33 @@ impl Tool for PlanOrchestrator {
                 plan.id = plan_id.clone();
                 plan.objective = objective.clone();
                 plan.status = crate::types::PlanStatus::AwaitingConfirmation;
+
+                // Drain plan generation events and emit to EventBus
+                if let Some(bus) = &self.event_bus {
+                    while let Ok(event) = plan_event_rx.try_recv() {
+                        let agent_event = match event {
+                            RuntimeEvent::PlanGenerating { .. } => AgentEvent::PlanGenerating {
+                                session_id: ctx.session_id.clone(),
+                                plan_id: plan_id.clone(),
+                            },
+                            RuntimeEvent::PlanStepParsed { step_index, step_id, step_description, .. } => {
+                                AgentEvent::PlanStepParsed {
+                                    session_id: ctx.session_id.clone(),
+                                    plan_id: plan_id.clone(),
+                                    step_index,
+                                    step_id,
+                                    step_description,
+                                }
+                            }
+                            RuntimeEvent::ThoughtDelta { text, .. } => AgentEvent::ThoughtDelta {
+                                session_id: ctx.session_id.clone(),
+                                text,
+                            },
+                            _ => continue,
+                        };
+                        bus.emit(agent_event);
+                    }
+                }
 
                 self.plan_store
                     .save_plan(&plan, json!({"session_id": ctx.session_id.to_string()}))

@@ -240,6 +240,7 @@ impl PlanGenerator for LlmPlanGenerator {
         objective: &str,
         context: &str,
         _tools: &[Value],
+        on_event: Option<tokio::sync::mpsc::UnboundedSender<agent_base::RuntimeEvent>>,
     ) -> AgentResult<ExecutionPlan> {
         let prompt = build_plan_prompt(objective, context);
         let messages = vec![ChatMessage::user(&prompt)];
@@ -255,48 +256,6 @@ impl PlanGenerator for LlmPlanGenerator {
             .await?;
 
         let mut full_text = String::new();
-        while let Some(chunk) = stream.next().await {
-            match chunk? {
-                StreamChunk::Text(t) => full_text.push_str(&t),
-                StreamChunk::Stop => break,
-                _ => {}
-            }
-        }
-
-        let (obj_opt, steps) = parse_jsonl_response(&full_text);
-        let objective_str = obj_opt.unwrap_or_else(|| objective.to_string());
-
-        if steps.is_empty() {
-            return Err(agent_base::AgentError::plan_generation(
-                "no valid steps".to_string(),
-            ));
-        }
-
-        Ok(lines_to_plan(objective_str, steps))
-    }
-
-    async fn generate_plan_streaming(
-        &self,
-        objective: &str,
-        context: &str,
-        _tools: &[Value],
-        on_generating: Box<dyn Fn() + Send>,
-        on_step_parsed: Box<dyn Fn(usize, String, String) + Send>,
-        _on_thought: Box<dyn Fn(String) + Send>,
-    ) -> AgentResult<ExecutionPlan> {
-        let prompt = build_plan_prompt(objective, context);
-        let messages = vec![ChatMessage::user(&prompt)];
-        let reasoning = ReasoningConfig {
-            enabled: Some(self.enable_thinking),
-            budget_tokens: if self.enable_thinking { Some(128) } else { None },
-            effort: None,
-        };
-
-        let mut stream = self
-            .client
-            .chat_stream(&messages, &[], Some(&reasoning), None)
-            .await?;
-
         let mut line_buf = String::new();
         let mut first_chunk = true;
         let mut step_index = 0usize;
@@ -308,8 +267,14 @@ impl PlanGenerator for LlmPlanGenerator {
                 StreamChunk::Text(text) => {
                     if first_chunk {
                         first_chunk = false;
-                        on_generating();
+                        if let Some(tx) = &on_event {
+                            let _ = tx.send(agent_base::RuntimeEvent::PlanGenerating {
+                                session_id: agent_base::SessionId::new(0),
+                                plan_id: String::new(),
+                            });
+                        }
                     }
+                    full_text.push_str(&text);
                     line_buf.push_str(&text);
 
                     while let Some(pos) = line_buf.find('\n') {
@@ -328,11 +293,15 @@ impl PlanGenerator for LlmPlanGenerator {
                             } else if let Ok(step) =
                                 serde_json::from_str::<PlanStepLine>(&line)
                             {
-                                on_step_parsed(
-                                    step_index,
-                                    step.id.clone(),
-                                    step.description.clone(),
-                                );
+                                if let Some(tx) = &on_event {
+                                    let _ = tx.send(agent_base::RuntimeEvent::PlanStepParsed {
+                                        session_id: agent_base::SessionId::new(0),
+                                        plan_id: String::new(),
+                                        step_index,
+                                        step_id: step.id.clone(),
+                                        step_description: step.description.clone(),
+                                    });
+                                }
                                 step_index += 1;
                                 all_steps.push(step);
                             }
@@ -355,7 +324,15 @@ impl PlanGenerator for LlmPlanGenerator {
                 }
             }
             if let Ok(step) = serde_json::from_str::<PlanStepLine>(&line) {
-                on_step_parsed(step_index, step.id.clone(), step.description.clone());
+                if let Some(tx) = &on_event {
+                    let _ = tx.send(agent_base::RuntimeEvent::PlanStepParsed {
+                        session_id: agent_base::SessionId::new(0),
+                        plan_id: String::new(),
+                        step_index,
+                        step_id: step.id.clone(),
+                        step_description: step.description.clone(),
+                    });
+                }
                 all_steps.push(step);
             }
         }

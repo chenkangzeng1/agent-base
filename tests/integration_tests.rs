@@ -1405,6 +1405,7 @@ impl PlanGenerator for MockPlanGenerator {
         objective: &str,
         _context: &str,
         _tools: &[Value],
+        _on_event: Option<tokio::sync::mpsc::UnboundedSender<agent_base::RuntimeEvent>>,
     ) -> AgentResult<ExecutionPlan> {
         let plan = ExecutionPlan::with_single_phase("test-plan-1", objective, self.steps.clone());
         Ok(plan)

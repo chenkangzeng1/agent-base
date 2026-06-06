@@ -1,8 +1,9 @@
 use async_trait::async_trait;
 use serde_json::{json, Value};
+use tokio::sync::mpsc;
 
 use crate::llm::LlmClient;
-use crate::types::{AgentError, AgentResult, ChatMessage, ExecutionPlan, PlanStep, ResponseFormat};
+use crate::types::{AgentError, AgentResult, ChatMessage, ExecutionPlan, PlanStep, ResponseFormat, RuntimeEvent, SessionId};
 use super::traits::PlanGenerator;
 use super::streaming_parser::StreamingJsonParser;
 
@@ -198,14 +199,9 @@ impl LlmPlanGenerator {
     }
 }
 
-#[async_trait]
-impl PlanGenerator for LlmPlanGenerator {
-    async fn generate_plan(
-        &self,
-        objective: &str,
-        context: &str,
-        tools: &[Value],
-    ) -> AgentResult<ExecutionPlan> {
+impl LlmPlanGenerator {
+    /// Build the messages for plan generation.
+    fn build_messages(&self, objective: &str, context: &str, tools: &[Value]) -> Vec<ChatMessage> {
         let system_prompt = self.effective_system_prompt();
 
         let tools_desc = if tools.is_empty() {
@@ -241,10 +237,25 @@ impl PlanGenerator for LlmPlanGenerator {
             }
         );
 
-        let messages = vec![
+        vec![
             ChatMessage::system(system_prompt),
             ChatMessage::user(format!("{}{}", user_message, tools_desc)),
-        ];
+        ]
+    }
+
+    /// Truncate steps to max_steps if needed.
+    fn truncate_steps(&self, steps: Vec<PlanStep>) -> Vec<PlanStep> {
+        if steps.len() > self.max_steps {
+            tracing::warn!("Plan has {} steps, truncating to {}", steps.len(), self.max_steps);
+            steps.into_iter().take(self.max_steps).collect()
+        } else {
+            steps
+        }
+    }
+
+    /// Generate plan without streaming (uses chat).
+    async fn generate_non_streaming(&self, objective: &str, context: &str, tools: &[Value]) -> AgentResult<ExecutionPlan> {
+        let messages = self.build_messages(objective, context, tools);
 
         let response = self
             .llm_client
@@ -256,94 +267,38 @@ impl PlanGenerator for LlmPlanGenerator {
 
         let plan_json = Self::extract_plan_json(&response);
 
-        // Try to parse the response. If it fails, retry once with the error message.
         let steps = match Self::parse_steps(&plan_json) {
             Ok(steps) => steps,
             Err(parse_err) => {
                 tracing::warn!("First parse attempt failed: {}, retrying", parse_err);
-
-                let retry_messages = vec![
-                    ChatMessage::system(self.effective_system_prompt()),
-                    ChatMessage::user(format!(
-                        "{}{}\n\nYour previous response was invalid: {}\n\nPlease respond with a valid JSON object containing a \"steps\" array.",
-                        user_message, tools_desc, parse_err
-                    )),
-                ];
-
+                let retry_messages = self.build_messages(objective, context, tools);
+                // Inject error info into the user message
+                let mut retry_messages = retry_messages;
+                if let Some(ChatMessage::User { content, .. }) = retry_messages.last_mut() {
+                    *content = format!("{}\n\nYour previous response was invalid: {}\n\nPlease respond with a valid JSON object containing a \"steps\" array.", content, parse_err);
+                }
                 let retry_response = self
                     .llm_client
                     .chat(&retry_messages, &[], None, self.response_format().as_ref())
                     .await
                     .map_err(|e| AgentError::plan_generation(e.to_string()))?;
-
                 let retry_json = Self::extract_plan_json(&retry_response);
                 Self::parse_steps(&retry_json)?
             }
         };
 
-        // Truncate if over max_steps
-        let steps = if steps.len() > self.max_steps {
-            tracing::warn!(
-                "Plan has {} steps, truncating to {}",
-                steps.len(),
-                self.max_steps
-            );
-            steps.into_iter().take(self.max_steps).collect()
-        } else {
-            steps
-        };
-
-        Ok(ExecutionPlan::with_single_phase(Self::next_plan_id(), objective, steps))
+        Ok(ExecutionPlan::with_single_phase(Self::next_plan_id(), objective, self.truncate_steps(steps)))
     }
 
-    async fn generate_plan_streaming(
+    /// Generate plan with streaming (uses chat_stream), emitting events via channel.
+    async fn generate_streaming(
         &self,
         objective: &str,
         context: &str,
         tools: &[Value],
-        on_generating: Box<dyn Fn() + Send>,
-        on_step_parsed: Box<dyn Fn(usize, String, String) + Send>,
-        on_thought: Box<dyn Fn(String) + Send>,
+        event_tx: &mpsc::UnboundedSender<RuntimeEvent>,
     ) -> AgentResult<ExecutionPlan> {
-        let system_prompt = self.effective_system_prompt();
-
-        let tools_desc = if tools.is_empty() {
-            String::new()
-        } else {
-            let mut desc = String::from("\nAvailable tools:");
-            for t in tools {
-                if let Some(func) = t.get("function") {
-                    let name = func.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
-                    let description = func.get("description").and_then(|v| v.as_str()).unwrap_or("");
-                    desc.push_str(&format!("\n- {}: {}", name, description));
-                    if let Some(params) = func.get("parameters").and_then(|v| v.get("properties")) {
-                        if let Some(obj) = params.as_object() {
-                            for (param_name, param_val) in obj {
-                                let param_type = param_val.get("type").and_then(|v| v.as_str()).unwrap_or("any");
-                                desc.push_str(&format!("\n    {} ({}): {}", param_name, param_type,
-                                    param_val.get("description").and_then(|v| v.as_str()).unwrap_or("")));
-                            }
-                        }
-                    }
-                }
-            }
-            desc
-        };
-
-        let user_message = format!(
-            "Objective: {}{}\n\nGenerate a plan as a JSON object with a \"steps\" array. Each step should use \"tool_name\" and \"args\" to call a tool.",
-            objective,
-            if context.is_empty() {
-                String::new()
-            } else {
-                format!("\nContext: {}", context)
-            }
-        );
-
-        let messages = vec![
-            ChatMessage::system(system_prompt),
-            ChatMessage::user(format!("{}{}", user_message, tools_desc)),
-        ];
+        let messages = self.build_messages(objective, context, tools);
 
         let mut stream = self
             .llm_client
@@ -351,7 +306,10 @@ impl PlanGenerator for LlmPlanGenerator {
             .await
             .map_err(|e| AgentError::plan_generation(e.to_string()))?;
 
-        on_generating();
+        let _ = event_tx.send(RuntimeEvent::PlanGenerating {
+            session_id: SessionId::new(0),
+            plan_id: String::new(),
+        });
 
         let mut parser = StreamingJsonParser::<PlanStep>::new().with_key("steps");
         let mut full_text = String::new();
@@ -362,13 +320,21 @@ impl PlanGenerator for LlmPlanGenerator {
             match chunk {
                 crate::llm::StreamChunk::Text(text) => {
                     full_text.push_str(&text);
-                    on_thought(text.clone());
+                    let _ = event_tx.send(RuntimeEvent::ThoughtDelta {
+                        session_id: SessionId::new(0),
+                        text: text.clone(),
+                    });
 
-                    // Try to parse steps from accumulated text
                     let new_steps = parser.process_chunk(&text);
                     for step in new_steps {
                         let idx = parser.accumulated().len() - 1;
-                        on_step_parsed(idx, step.id.clone(), step.description.clone());
+                        let _ = event_tx.send(RuntimeEvent::PlanStepParsed {
+                            session_id: SessionId::new(0),
+                            plan_id: String::new(),
+                            step_index: idx,
+                            step_id: step.id.clone(),
+                            step_description: step.description.clone(),
+                        });
                     }
                 }
                 crate::llm::StreamChunk::Stop => break,
@@ -378,27 +344,41 @@ impl PlanGenerator for LlmPlanGenerator {
 
         // If parser didn't extract steps from streaming, try parsing the full response
         let steps = if parser.accumulated().is_empty() {
-            let response: Value = serde_json::from_str(&full_text)
-                .map_err(|_| AgentError::plan_generation(
-                    format!("Failed to parse LLM response as JSON: {}", full_text.chars().take(200).collect::<String>())
-                ))?;
-            Self::parse_steps(&response)?
+            let plan_json = if full_text.trim().starts_with('{') {
+                serde_json::from_str::<Value>(&full_text)
+                    .map_err(|_| AgentError::plan_generation(
+                        format!("Failed to parse LLM response as JSON: {}", full_text.chars().take(200).collect::<String>())
+                    ))?
+            } else {
+                // Response might be wrapped in API format
+                let raw: Value = serde_json::from_str(&full_text)
+                    .map_err(|_| AgentError::plan_generation(
+                        format!("Failed to parse LLM response as JSON: {}", full_text.chars().take(200).collect::<String>())
+                    ))?;
+                Self::extract_plan_json(&raw)
+            };
+            Self::parse_steps(&plan_json)?
         } else {
             parser.accumulated().to_vec()
         };
 
-        // Truncate if over max_steps
-        let steps = if steps.len() > self.max_steps {
-            tracing::warn!(
-                "Plan has {} steps, truncating to {}",
-                steps.len(),
-                self.max_steps
-            );
-            steps.into_iter().take(self.max_steps).collect()
-        } else {
-            steps
-        };
+        Ok(ExecutionPlan::with_single_phase(Self::next_plan_id(), objective, self.truncate_steps(steps)))
+    }
+}
 
-        Ok(ExecutionPlan::with_single_phase(Self::next_plan_id(), objective, steps))
+#[async_trait]
+impl PlanGenerator for LlmPlanGenerator {
+    async fn generate_plan(
+        &self,
+        objective: &str,
+        context: &str,
+        tools: &[Value],
+        on_event: Option<mpsc::UnboundedSender<RuntimeEvent>>,
+    ) -> AgentResult<ExecutionPlan> {
+        if let Some(tx) = &on_event {
+            self.generate_streaming(objective, context, tools, tx).await
+        } else {
+            self.generate_non_streaming(objective, context, tools).await
+        }
     }
 }
