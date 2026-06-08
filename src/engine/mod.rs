@@ -20,7 +20,7 @@ pub use context::ContextWindowManager;
 pub use middleware::{Middleware, PostLlmCtx, PreLlmCtx, UserMessageCtx};
 pub use plan::{
     AbortOnFailure, AlwaysContinue, CustomRecovery, InMemoryPlanStore, LlmPlanGenerator,
-    PlanConfig, PlanGenerator, PlanStore, Recovery, RecoveryStrategy, RetryOnFailure,
+    PlanConfig, PlanGenerator, PlanOptions, PlanStore, Recovery, RecoveryStrategy, RetryOnFailure,
     SkipOnFailure, StepContinuePolicy, StepExecutor, StreamingJsonParser,
     ToolCallingStepExecutor,
 };

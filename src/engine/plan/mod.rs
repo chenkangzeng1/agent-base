@@ -6,7 +6,7 @@ mod streaming_parser;
 
 pub use traits::{PlanGenerator, StepContinuePolicy, StepExecutor, RecoveryStrategy};
 pub use executor::ToolCallingStepExecutor;
-pub use llm_generator::LlmPlanGenerator;
+pub use llm_generator::{LlmPlanGenerator, PlanOptions};
 pub use store::{InMemoryPlanStore, PlanStore};
 pub use streaming_parser::StreamingJsonParser;
 

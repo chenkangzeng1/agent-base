@@ -22,6 +22,7 @@ pub use engine::{
     PlanConfig,
     PlanExecTool,
     PlanGenerator,
+    PlanOptions,
     PlanOrchestrator,
     PlanStore,
     Recovery,

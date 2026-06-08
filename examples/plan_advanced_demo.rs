@@ -16,7 +16,7 @@ use std::time::Instant;
 
 use agent_base::{
     AgentBuilder, AgentError, AgentResult, ExecutionPlan, InMemoryPlanStore,
-    LlmPlanGenerator, OpenAiClient, PlanConfig, PlanGenerator, PlanStep, PlanStore,
+    LlmPlanGenerator, OpenAiClient, PlanConfig, PlanGenerator, PlanOptions, PlanStep, PlanStore,
     Recovery, RuntimeEvent, Tool, ToolContext, ToolControlFlow, ToolOutput,
     ApprovalRequest, ToolPolicy, RiskLevel, ApprovalHandler, ApprovalDecision,
 };
@@ -444,15 +444,60 @@ Keep steps atomic and ordered. Do not exceed {max_steps} steps."#;
     timer_c.summary("场景 C: 解耦生成+执行");
 
     // ======================================================================
-    // 场景 D: 手动创建计划 → run_plan —— 基准对比
+    // 场景 D: generate_plan_with_options —— 运行时覆盖 max_steps
     // ======================================================================
     println!("\n┌────────────────────────────────────────────────────────────┐");
-    println!("│ 场景 D: 手动创建计划 → run_plan —— 零 LLM 开销          │");
+    println!("│ 场景 D: generate_plan_with_options —— 运行时覆盖配置     │");
+    println!("│                                                            │");
+    println!("│ 特点: 同一个 generator，运行时可临时覆盖 max_steps 等参数 │");
+    println!("│ 优势: 适合多 plan 场景，每个 plan 可以有不同的步数限制     │");
+    println!("└────────────────────────────────────────────────────────────\n");
+
+    let mut timer_d = Timer::new();
+
+    // 创建一个默认 max_steps=10 的 generator
+    let generator = LlmPlanGenerator::new(llm_client.clone())
+        .with_max_steps(10);
+
+    // 使用 generate_plan_with_options 临时覆盖为 3 步
+    let options = PlanOptions { max_steps: Some(3) };
+    let plan = generator
+        .generate_plan_with_options(objective, "", &tool_defs, options, None)
+        .await
+        .map_err(|e| AgentError::plan_generation(e.to_string()))?;
+
+    timer_d.mark("生成计划 (max_steps=3)");
+
+    println!("📋 计划 ({} 步，运行时指定 max_steps=3):", plan.total_steps());
+    for step in plan.all_steps() {
+        println!("   - {}: {}", step.id, step.description);
+    }
+
+    // 执行这个精简计划
+    runtime
+        .run_plan(
+            session_id.clone(),
+            plan,
+            PlanConfig::new()
+                .recovery(Recovery::abort())
+                .store(plan_store.clone()),
+            |event| { print_event(&event); Ok(()) },
+        )
+        .await?;
+
+    timer_d.mark("执行计划");
+    timer_d.summary("场景 D: 运行时覆盖");
+
+    // ======================================================================
+    // 场景 E: 手动创建计划 → run_plan —— 基准对比
+    // ======================================================================
+    println!("\n┌────────────────────────────────────────────────────────────┐");
+    println!("│ 场景 E: 手动创建计划 → run_plan —— 零 LLM 开销          │");
     println!("│                                                            │");
     println!("│ 特点: 不用 LLM 生成，完全手动指定步骤，适合固定 SOP        │");
     println!("└────────────────────────────────────────────────────────────\n");
 
-    let mut timer_d = Timer::new();
+    let mut timer_e = Timer::new();
 
     let manual_plan = ExecutionPlan::of_steps(
         "manual-check",
@@ -476,8 +521,8 @@ Keep steps atomic and ordered. Do not exceed {max_steps} steps."#;
         )
         .await?;
 
-    timer_d.mark("执行完成");
-    timer_d.summary("场景 D: 手动计划");
+    timer_e.mark("执行完成");
+    timer_e.summary("场景 E: 手动计划");
 
     // ======================================================================
     // PlanStore 查询
