@@ -323,13 +323,7 @@ async fn main() -> AgentResult<()> {
     // 注意：新的 API 设计中，框架会自动在 prompt 末尾追加步数约束
     // 用户只需关注业务逻辑，不需要写 {max_steps} 占位符
     // 框架会自动检测语言并追加相应语言的约束
-    const AGENTIC_SYSTEM_PROMPT: &str = r#"You are a task planner. Given an objective, break it down into sequential steps.
-Each step has:
-- "id": unique string identifier
-- "description": what this step should accomplish
-
-Do NOT specify tools or arguments. The execution engine will determine the best tools to use at runtime.
-Keep steps atomic and ordered."#;
+    const AGENTIC_SYSTEM_PROMPT: &str = r#"You are a task planner. Given an objective, break it down into sequential steps."#;
 
     let mut timer_a = Timer::new();
 
