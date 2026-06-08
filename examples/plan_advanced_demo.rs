@@ -320,16 +320,21 @@ async fn main() -> AgentResult<()> {
     println!("│ 配置: 自定义 system prompt + PlanConfig::new()（无 executor）│");
     println!("└────────────────────────────────────────────────────────────\n");
 
+    // 注意：新的 API 设计中，框架会自动在 prompt 末尾追加步数约束
+    // 用户只需关注业务逻辑，不需要写 {max_steps} 占位符
+    // 框架会自动检测语言并追加相应语言的约束
     const AGENTIC_SYSTEM_PROMPT: &str = r#"You are a task planner. Given an objective, break it down into sequential steps.
 Each step has:
 - "id": unique string identifier
 - "description": what this step should accomplish
 
 Do NOT specify tools or arguments. The execution engine will determine the best tools to use at runtime.
-Keep steps atomic and ordered. Do not exceed {max_steps} steps."#;
+Keep steps atomic and ordered."#;
 
     let mut timer_a = Timer::new();
 
+    // 示例：使用自定义 prompt（不包含 {max_steps} 占位符）
+    // 框架会自动在末尾追加："Note: Generate at most 5 steps."
     runtime
         .run_plan_with_generator(
             session_id.clone(),
@@ -365,6 +370,12 @@ Keep steps atomic and ordered. Do not exceed {max_steps} steps."#;
 
     let mut timer_b = Timer::new();
 
+    // 示例：使用默认 prompt（不包含 {max_steps} 占位符）
+    // 框架会自动在 prompt 末尾追加步数约束
+    // 实际发送给 LLM 的 prompt 会是：
+    // "You are a task planner...Keep steps atomic and ordered.
+    //
+    // Note: Generate at most 5 steps."
     runtime
         .run_plan_with_generator(
             session_id.clone(),
