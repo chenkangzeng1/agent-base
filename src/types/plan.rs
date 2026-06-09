@@ -122,11 +122,70 @@ pub struct StepResult {
     pub duration_ms: u64,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RecoveryAction {
+    /// Retry the failed step as-is.
     Retry,
+
+
+    /// Replace the failed step with an alternative step that achieves the same goal.
+    /// `root_step_id` tracks the original step for retry/alternative budget accounting.
+    Alternative {
+        step: PlanStep,
+        root_step_id: String,
+    },
+
+    /// Replan: replace the current step and subsequent steps with a new sequence.
+    /// `clear_future_phases` controls whether pending steps in later phases are also cleared.
+    Replan {
+        steps: Vec<PlanStep>,
+        clear_future_phases: bool,
+    },
+
+    /// Skip the failed step and continue with the next one.
     Skip,
+
+    /// Abort the entire plan.
     Abort,
+}
+
+impl PartialEq for RecoveryAction {
+    fn eq(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+}
+
+/// Full context provided to [`AdaptiveRecoveryStrategy`](crate::engine::AdaptiveRecoveryStrategy)
+/// for making recovery decisions.
+#[derive(Debug, Clone)]
+pub struct RecoveryContext {
+    /// Current session ID (business strategies may query session history).
+    pub session_id: super::SessionId,
+    /// The step that failed.
+    pub failed_step: PlanStep,
+    /// Original step ID for tracking the alternative chain's recovery budget.
+    /// Equals `failed_step.id` on first failure.
+    pub root_step_id: String,
+    /// Error message from the failed execution.
+    pub error: String,
+    /// Number of retries already attempted for this step (root).
+    pub retry_count: usize,
+    /// Number of alternative steps already attempted for this step (root).
+    pub alternative_count: usize,
+    /// Number of replans already performed for this plan.
+    pub replan_count: usize,
+    /// Framework-configured maximum retry count.
+    pub max_retries: usize,
+    /// Framework-configured maximum alternative count.
+    pub max_alternatives: usize,
+    /// Framework-configured maximum replan count.
+    pub max_replans: usize,
+    /// The full execution plan (including completed step statuses).
+    pub plan: ExecutionPlan,
+    /// Accumulated outputs from completed steps (keyed by step_id).
+    pub step_outputs: Value,
+    /// Available tool definitions for the agent.
+    pub available_tools: Vec<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

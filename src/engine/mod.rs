@@ -1,5 +1,6 @@
 mod approval;
 mod builder;
+mod circuit_breaker;
 mod context;
 mod middleware;
 mod pipeline;
@@ -15,13 +16,15 @@ mod tool_enforcement;
 
 pub use approval::{AllowAllApprovalHandler, ApprovalHandler, DenyAllApprovalHandler};
 pub use builder::AgentBuilder;
+pub use circuit_breaker::{CircuitBreaker, CircuitState};
 pub(crate) use runtime::EventBus;
 pub use context::ContextWindowManager;
 pub use middleware::{Middleware, PostLlmCtx, PreLlmCtx, UserMessageCtx};
 pub use plan::{
-    AbortOnFailure, AlwaysContinue, CustomRecovery, InMemoryPlanStore, LlmPlanGenerator,
-    PlanConfig, PlanGenerator, PlanOptions, PlanStore, Recovery, RecoveryStrategy, RetryOnFailure,
-    SkipOnFailure, StepContinuePolicy, StepExecutor, StreamingJsonParser,
+    AbortOnFailure, AdaptiveRecoveryStrategy, AlwaysContinue, CustomRecovery,
+    InMemoryPlanStore, LlmAdaptiveRecovery, LlmPlanGenerator,
+    PlanConfig, PlanGenerator, PlanOptions, PlanStore, Recovery, RecoveryPolicy, RecoveryStrategy,
+    RetryOnFailure, SkipOnFailure, StepContinuePolicy, StepExecutor, StreamingJsonParser,
     ToolCallingStepExecutor,
 };
 pub use crate::types::{PlanStatus, StepStatus};

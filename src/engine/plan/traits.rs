@@ -59,3 +59,36 @@ pub trait RecoveryStrategy: Send + Sync {
         step_outputs: &Value,
     ) -> AgentResult<crate::types::RecoveryAction>;
 }
+
+/// Adaptive recovery strategy — provides intelligent recovery decisions
+/// when steps fail repeatedly.
+///
+/// Unlike [`RecoveryStrategy`] which handles simple Retry/Skip/Abort decisions,
+/// `AdaptiveRecoveryStrategy` can generate alternative steps or replan the
+/// remaining execution.
+///
+/// The framework's execution loop handles progressive recovery orchestration:
+/// 1. **Level 0**: Framework-level retries (`max_retries`)
+/// 2. **Level 1/2**: This strategy (`max_alternatives` / `max_replans`)
+/// 3. **Level 3**: Fallback to [`RecoveryStrategy`] as final safety net
+///
+/// The strategy can read quota information from [`RecoveryContext`](crate::types::RecoveryContext)
+/// for soft decision-making, but the framework's `max_*` limits are hard guarantees
+/// that the strategy cannot exceed.
+#[async_trait]
+pub trait AdaptiveRecoveryStrategy: Send + Sync {
+    /// Attempt to recover from a failed step.
+    ///
+    /// Should return one of:
+    /// - `RecoveryAction::Alternative { step, root_step_id }` — try a different approach
+    /// - `RecoveryAction::Replan { steps, clear_future_phases }` — replan remaining work
+    /// - `RecoveryAction::Skip` — skip the failed step
+    /// - `RecoveryAction::Abort` — give up on the plan
+    ///
+    /// Note: should NOT return `RecoveryAction::Retry` — entering this method
+    /// means retries are already exhausted; returning Retry is treated as Abort.
+    async fn recover(
+        &self,
+        ctx: &crate::types::RecoveryContext,
+    ) -> AgentResult<crate::types::RecoveryAction>;
+}

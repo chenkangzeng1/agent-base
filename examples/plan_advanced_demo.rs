@@ -323,7 +323,7 @@ async fn main() -> AgentResult<()> {
     // 注意：新的 API 设计中，框架会自动在 prompt 末尾追加步数约束
     // 用户只需关注业务逻辑，不需要写 {max_steps} 占位符
     // 框架会自动检测语言并追加相应语言的约束
-    const AGENTIC_SYSTEM_PROMPT: &str = r#"You are a task planner. Given an objective, break it down into sequential steps."#;
+    const PLAN_GENERATOR_PROMPT: &str = r#"You are a task planner. Given an objective, break it down into sequential steps."#;
 
     let mut timer_a = Timer::new();
 
@@ -334,7 +334,7 @@ async fn main() -> AgentResult<()> {
             session_id.clone(),
             objective,
             Arc::new(LlmPlanGenerator::new(llm_client.clone())
-                .with_system_prompt(AGENTIC_SYSTEM_PROMPT)
+                .with_system_prompt(PLAN_GENERATOR_PROMPT)
                 .with_max_steps(5)),
             PlanConfig::new()
                 // 注意: 不设置 executor，框架自动使用 Agentic 模式

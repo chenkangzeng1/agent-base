@@ -90,6 +90,36 @@ pub(crate) enum AgentEvent {
         step_description: String,
         payload: Option<Value>,
     },
+    // --- Adaptive recovery events ---
+    StepRetry {
+        session_id: SessionId,
+        step_id: String,
+        retry_count: usize,
+        backoff_ms: u64,
+    },
+    StepAlternativeTrying {
+        session_id: SessionId,
+        original_step_id: String,
+        alternative_step_id: String,
+        alternative_count: usize,
+    },
+    PlanReplanning {
+        session_id: SessionId,
+        plan_id: String,
+        replan_count: usize,
+    },
+    PlanReplanned {
+        session_id: SessionId,
+        plan_id: String,
+        new_steps: usize,
+    },
+    PlanRecoveryExhausted {
+        session_id: SessionId,
+        step_id: String,
+        retries: usize,
+        alternatives: usize,
+        replans: usize,
+    },
 }
 
 // ---------------------------------------------------------------------------
@@ -140,6 +170,12 @@ pub enum RuntimeEvent {
     PlanStepWaitingConfirmation { session_id: SessionId, step_id: String, step_description: String, payload: Option<Value> },
     PlanCompleted { session_id: SessionId, plan_id: String, success: bool },
     PlanFailed { session_id: SessionId, plan_id: String, error: String },
+    // --- Adaptive recovery events ---
+    StepRetry { session_id: SessionId, step_id: String, retry_count: usize, backoff_ms: u64 },
+    StepAlternativeTrying { session_id: SessionId, original_step_id: String, alternative_step_id: String, alternative_count: usize },
+    PlanReplanning { session_id: SessionId, plan_id: String, replan_count: usize },
+    PlanReplanned { session_id: SessionId, plan_id: String, new_steps: usize },
+    PlanRecoveryExhausted { session_id: SessionId, step_id: String, retries: usize, alternatives: usize, replans: usize },
     // --- User-space events ---
     /// A user-space event produced by a tool.
     UserEvent { session_id: SessionId, event: UserEvent },
@@ -164,6 +200,11 @@ impl RuntimeEvent {
             RuntimeEvent::PlanStepWaitingConfirmation { session_id, .. } => session_id,
             RuntimeEvent::PlanCompleted { session_id, .. } => session_id,
             RuntimeEvent::PlanFailed { session_id, .. } => session_id,
+            RuntimeEvent::StepRetry { session_id, .. } => session_id,
+            RuntimeEvent::StepAlternativeTrying { session_id, .. } => session_id,
+            RuntimeEvent::PlanReplanning { session_id, .. } => session_id,
+            RuntimeEvent::PlanReplanned { session_id, .. } => session_id,
+            RuntimeEvent::PlanRecoveryExhausted { session_id, .. } => session_id,
             RuntimeEvent::UserEvent { session_id, .. } => session_id,
         }
     }
@@ -188,6 +229,11 @@ impl From<AgentEvent> for RuntimeEvent {
             AgentEvent::PlanStepParsed { session_id, plan_id, step_index, step_id, step_description } => RuntimeEvent::PlanStepParsed { session_id, plan_id, step_index, step_id, step_description },
             AgentEvent::PlanFailed { session_id, plan_id, error } => RuntimeEvent::PlanFailed { session_id, plan_id, error },
             AgentEvent::PlanStepWaitingConfirmation { session_id, step_id, step_description, payload } => RuntimeEvent::PlanStepWaitingConfirmation { session_id, step_id, step_description, payload },
+            AgentEvent::StepRetry { session_id, step_id, retry_count, backoff_ms } => RuntimeEvent::StepRetry { session_id, step_id, retry_count, backoff_ms },
+            AgentEvent::StepAlternativeTrying { session_id, original_step_id, alternative_step_id, alternative_count } => RuntimeEvent::StepAlternativeTrying { session_id, original_step_id, alternative_step_id, alternative_count },
+            AgentEvent::PlanReplanning { session_id, plan_id, replan_count } => RuntimeEvent::PlanReplanning { session_id, plan_id, replan_count },
+            AgentEvent::PlanReplanned { session_id, plan_id, new_steps } => RuntimeEvent::PlanReplanned { session_id, plan_id, new_steps },
+            AgentEvent::PlanRecoveryExhausted { session_id, step_id, retries, alternatives, replans } => RuntimeEvent::PlanRecoveryExhausted { session_id, step_id, retries, alternatives, replans },
         }
     }
 }

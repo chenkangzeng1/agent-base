@@ -4,6 +4,8 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use crate::engine::{EventBus, PlanGenerator, PlanStore, StepExecutor};
+use crate::engine::plan::RecoveryPolicy;
+use crate::engine::circuit_breaker::CircuitBreaker;
 use crate::tool::{Tool, ToolContext, ToolControlFlow, ToolOutput};
 use crate::types::{AgentError, AgentEvent, AgentResult, PlanStatus, RuntimeEvent, StepStatus};
 
@@ -227,12 +229,17 @@ impl Tool for PlanOrchestrator {
 /// Steps are executed by the configured StepExecutor. If the StepExecutor is
 /// ToolCallingStepExecutor, each step's payload should contain `tool_name` and
 /// `args`, and the target tool itself handles any confirmation flow internally.
+///
+/// Optionally supports adaptive recovery via `RecoveryPolicy` and fault isolation
+/// via `CircuitBreaker` (held as `Weak` to avoid preventing cleanup).
 #[derive(Clone)]
 pub struct PlanExecTool {
     step_executor: Arc<dyn StepExecutor>,
     plan_store: Arc<dyn PlanStore>,
     recovery: Arc<dyn crate::engine::RecoveryStrategy>,
     event_bus: Option<EventBus>,
+    recovery_policy: Option<Arc<RecoveryPolicy>>,
+    circuit_breaker: Option<std::sync::Weak<CircuitBreaker>>,
 }
 
 impl PlanExecTool {
@@ -246,12 +253,26 @@ impl PlanExecTool {
             plan_store,
             recovery,
             event_bus: None,
+            recovery_policy: None,
+            circuit_breaker: None,
         }
     }
 
     /// Inject the internal event bus. Called by `AgentBuilder::build()`.
     pub(crate) fn set_event_bus(&mut self, event_bus: EventBus) {
         self.event_bus = Some(event_bus);
+    }
+
+    /// Set an adaptive recovery policy for error-kind-aware decisions.
+    pub fn with_recovery_policy(mut self, policy: Arc<RecoveryPolicy>) -> Self {
+        self.recovery_policy = Some(policy);
+        self
+    }
+
+    /// Set a circuit breaker (via `Weak` reference) for fault isolation.
+    pub fn with_circuit_breaker(mut self, cb: std::sync::Weak<CircuitBreaker>) -> Self {
+        self.circuit_breaker = Some(cb);
+        self
     }
 }
 
@@ -370,6 +391,26 @@ impl Tool for PlanExecTool {
                     format!("Step {}: {}\n", global_step_index + 1, step_desc)
                 });
 
+                // Circuit breaker check — skip step if circuit is open
+                if let Some(weak_cb) = &self.circuit_breaker
+                    && let Some(cb) = weak_cb.upgrade()
+                    && !cb.is_available()
+                {
+                    log::warn!(
+                        "PlanExecTool: circuit breaker open, skipping step {}",
+                        step_id
+                    );
+                    plan.phases[phase_idx].steps[step_idx].status = StepStatus::Skipped;
+                    execution_summary.push_str(&if is_zh {
+                        "  [跳过] 熔断器开启，跳过该步骤\n"
+                    } else {
+                        "  [Skipped] Circuit breaker open, skipping step\n"
+                    });
+                    overall_success = false;
+                    global_step_index += 1;
+                    continue;
+                }
+
                 match self
                     .step_executor
                     .execute_step(&plan.phases[phase_idx].steps[step_idx], &plan_metadata, ctx)
@@ -382,6 +423,18 @@ impl Tool for PlanExecTool {
                             step_id,
                             step_success
                         );
+
+                        // Record circuit breaker outcome
+                        if let Some(weak_cb) = &self.circuit_breaker
+                            && let Some(cb) = weak_cb.upgrade()
+                        {
+                            if step_success {
+                                cb.record_success();
+                            } else {
+                                cb.record_failure();
+                            }
+                        }
+
                         plan.phases[phase_idx].steps[step_idx].status = if step_success {
                             StepStatus::Completed
                         } else {
@@ -481,6 +534,13 @@ impl Tool for PlanExecTool {
                                         plan.phases[phase_idx].status = crate::types::PhaseStatus::Failed;
                                         break 'phase_loop;
                                     }
+                                    // Alternative/Replan not handled in PlanExecTool path
+                                    _ => {
+                                        overall_success = false;
+                                        failed_step_name = Some(step_desc.clone());
+                                        plan.phases[phase_idx].status = crate::types::PhaseStatus::Failed;
+                                        break 'phase_loop;
+                                    }
                                 },
                                 Err(_e) => {
                                     overall_success = false;
@@ -498,6 +558,13 @@ impl Tool for PlanExecTool {
                         }));
                     }
                     Err(e) => {
+                        // Record circuit breaker failure
+                        if let Some(weak_cb) = &self.circuit_breaker
+                            && let Some(cb) = weak_cb.upgrade()
+                        {
+                            cb.record_failure();
+                        }
+
                         plan.phases[phase_idx].steps[step_idx].status = StepStatus::Failed;
                         execution_summary.push_str(&if is_zh {
                             format!("  执行错误: {e}\n")
@@ -513,10 +580,52 @@ impl Tool for PlanExecTool {
                             payload: Some(step_payload.clone()),
                         });
 
-                        overall_success = false;
-                        failed_step_name = Some(step_desc.clone());
-                        plan.phases[phase_idx].status = crate::types::PhaseStatus::Failed;
-                        break 'phase_loop;
+                        // Use RecoveryPolicy for error-kind-aware decision when available
+                        if let Some(ref policy) = self.recovery_policy {
+                            let action = policy.with_context(&e, 0);
+                            match action {
+                                crate::types::RecoveryAction::Retry => {
+                                    execution_summary.push_str(
+                                        if is_zh {
+                                            "  [重试] 系统建议重试该步骤（基于错误类型）\n"
+                                        } else {
+                                            "  [Retry] System suggests retrying this step (error-kind based)\n"
+                                        },
+                                    );
+                                    overall_success = false;
+                                    // Don't break — continue to next step (retry would need loop restructuring)
+                                }
+                                crate::types::RecoveryAction::Skip => {
+                                    execution_summary.push_str(
+                                        if is_zh {
+                                            "  [跳过] 系统建议跳过该步骤\n"
+                                        } else {
+                                            "  [Skip] System suggests skipping this step\n"
+                                        },
+                                    );
+                                    plan.phases[phase_idx].steps[step_idx].status = StepStatus::Skipped;
+                                    overall_success = false;
+                                }
+                                crate::types::RecoveryAction::Abort => {
+                                    overall_success = false;
+                                    failed_step_name = Some(step_desc.clone());
+                                    plan.phases[phase_idx].status = crate::types::PhaseStatus::Failed;
+                                    break 'phase_loop;
+                                }
+                                // Alternative/Replan not handled in PlanExecTool path
+                                _ => {
+                                    overall_success = false;
+                                    failed_step_name = Some(step_desc.clone());
+                                    plan.phases[phase_idx].status = crate::types::PhaseStatus::Failed;
+                                    break 'phase_loop;
+                                }
+                            }
+                        } else {
+                            overall_success = false;
+                            failed_step_name = Some(step_desc.clone());
+                            plan.phases[phase_idx].status = crate::types::PhaseStatus::Failed;
+                            break 'phase_loop;
+                        }
                     }
                 }
 

@@ -152,6 +152,159 @@ impl AgentError {
     pub fn is_resource_unavailable(&self) -> bool {
         matches!(self, Self::ResourceUnavailable(_))
     }
+
+    /// Classify this error into an `ErrorKind` for recovery decisions.
+    pub fn kind(&self) -> ErrorKind {
+        match self {
+            Self::ToolExecution { name, .. } => ErrorKind::ToolCallFailed {
+                tool_name: name.clone(),
+            },
+            Self::ToolNotFound { .. } => ErrorKind::ToolNotFound,
+            Self::ToolArgsInvalid { .. } => ErrorKind::ToolArgsInvalid,
+            Self::ToolTimeout => ErrorKind::ToolTimeout,
+            Self::ServiceUnavailable(_) => ErrorKind::ModelOverloaded,
+            Self::RateLimitExceeded => ErrorKind::RateLimited,
+            // Llm, LlmApi, LlmStream → overloaded (transient LLM failures)
+            Self::Llm(_) | Self::LlmApi { .. } | Self::LlmStream(_) => ErrorKind::ModelOverloaded,
+            // Everything else → internal
+            _ => ErrorKind::Internal,
+        }
+    }
+}
+
+/// Classifies an `AgentError` into a broad category for recovery decisions.
+///
+/// Unlike `AgentError` which carries full context (messages, nested errors, etc.),
+/// `ErrorKind` is a lightweight discriminant that lets `RecoveryPolicy` and other
+/// decision-makers branch without pattern-matching on every `AgentError` variant.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ErrorKind {
+    /// A tool call failed during execution.
+    ToolCallFailed { tool_name: String },
+    /// The requested tool was not found in the registry.
+    ToolNotFound,
+    /// Tool arguments were invalid.
+    ToolArgsInvalid,
+    /// Tool execution timed out.
+    ToolTimeout,
+    /// The model/LLM service is overloaded (e.g. 529, 503).
+    ModelOverloaded,
+    /// Rate limit was exceeded.
+    RateLimited,
+    /// Catch-all for errors that don't fit a specific category.
+    Internal,
+}
+
+impl std::fmt::Display for ErrorKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ToolCallFailed { tool_name } => write!(f, "tool call failed: {tool_name}"),
+            Self::ToolNotFound => write!(f, "tool not found"),
+            Self::ToolArgsInvalid => write!(f, "tool args invalid"),
+            Self::ToolTimeout => write!(f, "tool timeout"),
+            Self::ModelOverloaded => write!(f, "model overloaded"),
+            Self::RateLimited => write!(f, "rate limited"),
+            Self::Internal => write!(f, "internal error"),
+        }
+    }
 }
 
 pub type AgentResult<T> = Result<T, AgentError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kind_tool_execution() {
+        let err = AgentError::ToolExecution {
+            name: "my_tool".to_string(),
+            source: Box::new(AgentError::internal("boom")),
+        };
+        assert_eq!(
+            err.kind(),
+            ErrorKind::ToolCallFailed {
+                tool_name: "my_tool".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn kind_tool_not_found() {
+        let err = AgentError::tool_not_found("missing");
+        assert_eq!(err.kind(), ErrorKind::ToolNotFound);
+    }
+
+    #[test]
+    fn kind_tool_args_invalid() {
+        let err = AgentError::ToolArgsInvalid {
+            name: "t".to_string(),
+            raw: "bad".to_string(),
+        };
+        assert_eq!(err.kind(), ErrorKind::ToolArgsInvalid);
+    }
+
+    #[test]
+    fn kind_tool_timeout() {
+        let err = AgentError::tool_timeout();
+        assert_eq!(err.kind(), ErrorKind::ToolTimeout);
+    }
+
+    #[test]
+    fn kind_service_unavailable() {
+        let err = AgentError::service_unavailable("overloaded");
+        assert_eq!(err.kind(), ErrorKind::ModelOverloaded);
+    }
+
+    #[test]
+    fn kind_rate_limit() {
+        let err = AgentError::rate_limit_exceeded();
+        assert_eq!(err.kind(), ErrorKind::RateLimited);
+    }
+
+    #[test]
+    fn kind_llm_maps_to_overloaded() {
+        let err = AgentError::llm("connection refused");
+        assert_eq!(err.kind(), ErrorKind::ModelOverloaded);
+    }
+
+    #[test]
+    fn kind_llm_api_maps_to_overloaded() {
+        let err = AgentError::LlmApi {
+            message: "529".to_string(),
+        };
+        assert_eq!(err.kind(), ErrorKind::ModelOverloaded);
+    }
+
+    #[test]
+    fn kind_llm_stream_maps_to_overloaded() {
+        let err = AgentError::LlmStream("stream broken".to_string());
+        assert_eq!(err.kind(), ErrorKind::ModelOverloaded);
+    }
+
+    #[test]
+    fn kind_internal_fallback() {
+        let err = AgentError::internal("something");
+        assert_eq!(err.kind(), ErrorKind::Internal);
+
+        let err = AgentError::Cancelled;
+        assert_eq!(err.kind(), ErrorKind::Internal);
+
+        let err = AgentError::plan("bad plan");
+        assert_eq!(err.kind(), ErrorKind::Internal);
+    }
+
+    #[test]
+    fn error_kind_display() {
+        assert_eq!(
+            ErrorKind::ToolCallFailed {
+                tool_name: "t".to_string()
+            }
+            .to_string(),
+            "tool call failed: t"
+        );
+        assert_eq!(ErrorKind::ToolNotFound.to_string(), "tool not found");
+        assert_eq!(ErrorKind::ModelOverloaded.to_string(), "model overloaded");
+        assert_eq!(ErrorKind::RateLimited.to_string(), "rate limited");
+    }
+}

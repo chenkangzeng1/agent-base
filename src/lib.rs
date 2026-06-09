@@ -9,15 +9,19 @@ pub mod config_manager;
 // ---------------------------------------------------------------------------
 pub use engine::{
     AbortOnFailure,
+    AdaptiveRecoveryStrategy,
     AgentBuilder,
     AgentRuntime,
     AgentSession,
     AlwaysContinue,
     AlternativeAction,
+    CircuitBreaker,
+    CircuitState,
     CustomRecovery,
     DefaultPipeline,
     InMemoryPlanStore,
     InMemorySessionStore,
+    LlmAdaptiveRecovery,
     LlmPlanGenerator,
     PlanConfig,
     PlanExecTool,
@@ -26,6 +30,7 @@ pub use engine::{
     PlanOrchestrator,
     PlanStore,
     Recovery,
+    RecoveryPolicy,
     RecoveryStrategy,
     ReflectionResult,
     ReflexionContext,
@@ -110,7 +115,7 @@ pub use types::{RuntimeEvent, UserEvent};
 // ---------------------------------------------------------------------------
 // Errors
 // ---------------------------------------------------------------------------
-pub use types::{AgentError, AgentResult};
+pub use types::{AgentError, AgentResult, ErrorKind};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -132,6 +137,7 @@ pub use types::{
     PlanStep,
     PlanStoreData,
     RecoveryAction,
+    RecoveryContext,
     ResponseFormat,
     RetryConfig,
     RunOutcome,
