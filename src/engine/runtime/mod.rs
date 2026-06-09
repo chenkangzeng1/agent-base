@@ -103,6 +103,13 @@ impl AgentRuntime {
         crate::engine::ToolCallingStepExecutor::new(registry).with_pipeline(pipeline)
     }
 
+    /// Inject the internal EventBus and PlanRunner into framework tools in the given registry.
+    /// Call this after replacing tools in the registry (e.g., in `build_tools`).
+    pub fn inject_framework_deps(&self, tools: &crate::tool::ToolRegistry) {
+        self.runner.tool_engine.inject_event_bus_into(tools);
+        tools.inject_plan_runner(&self.runner);
+    }
+
     pub fn config(&self) -> &AgentConfig {
         &self.runner.config
     }

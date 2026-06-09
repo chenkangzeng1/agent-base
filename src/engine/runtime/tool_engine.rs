@@ -51,6 +51,11 @@ impl ToolEngine {
         self.tools.read().await.definitions()
     }
 
+    /// Inject EventBus into framework tools in an external ToolRegistry.
+    pub fn inject_event_bus_into(&self, tools: &crate::tool::ToolRegistry) {
+        tools.inject_event_bus(&self.event_bus);
+    }
+
     /// Get the inner pipeline (policy hooks only, no timeout/truncation).
     ///
     /// Used by [`AgentRuntime::create_step_executor`] to construct a per-call

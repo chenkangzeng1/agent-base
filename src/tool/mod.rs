@@ -187,7 +187,7 @@ impl ToolRegistry {
     }
 
     /// Inject the internal `EventBus` into framework-provided tools.
-    pub(crate) fn inject_event_bus(&self, event_bus: &crate::engine::EventBus) {
+    pub fn inject_event_bus(&self, event_bus: &crate::engine::EventBus) {
         for tool in self.tools.values() {
             if let Some(fw) = tool.as_framework_tool() {
                 fw.set_event_bus(event_bus.clone());
@@ -196,7 +196,7 @@ impl ToolRegistry {
     }
 
     /// Inject the `PlanRunner` into framework-provided tools (via `Weak` to avoid circular Arc).
-    pub(crate) fn inject_plan_runner(&self, runner: &Arc<crate::engine::PlanRunner>) {
+    pub fn inject_plan_runner(&self, runner: &Arc<crate::engine::PlanRunner>) {
         for tool in self.tools.values() {
             if let Some(fw) = tool.as_framework_tool() {
                 fw.set_plan_runner(runner);
