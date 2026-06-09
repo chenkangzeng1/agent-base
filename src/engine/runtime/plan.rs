@@ -91,6 +91,7 @@ impl PlanRunner {
                 &config,
                 &mut event_rx,
                 &mut on_event,
+                None,
             )
             .await;
 
@@ -177,6 +178,7 @@ impl PlanRunner {
                 &config,
                 &mut event_rx,
                 &mut on_event,
+                None,
             )
             .await;
 
@@ -195,6 +197,7 @@ impl PlanRunner {
         config: &PlanConfig,
         event_rx: &mut broadcast::Receiver<AgentEvent>,
         on_event: &mut F,
+        parent_user_event_tx: Option<tokio::sync::mpsc::UnboundedSender<crate::types::UserEvent>>,
     ) -> AgentResult<RunOutcome>
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
@@ -261,6 +264,7 @@ impl PlanRunner {
                         &step_outputs,
                         &mut *on_event,
                         event_rx,
+                        &parent_user_event_tx,
                     )
                     .await;
 
@@ -660,6 +664,7 @@ impl PlanRunner {
         step_outputs: &serde_json::Value,
         on_event: &mut F,
         event_rx: &mut broadcast::Receiver<AgentEvent>,
+        parent_user_event_tx: &Option<tokio::sync::mpsc::UnboundedSender<crate::types::UserEvent>>,
     ) -> AgentResult<StepResult>
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
@@ -679,7 +684,8 @@ impl PlanRunner {
                 return Ok(StepResult::success("Skipped", 0));
             }
 
-            let (user_event_tx, _user_event_rx) = mpsc::unbounded_channel::<crate::types::UserEvent>();
+            let (fallback_tx, _fallback_rx) = mpsc::unbounded_channel::<crate::types::UserEvent>();
+            let user_event_tx = parent_user_event_tx.clone().unwrap_or(fallback_tx);
             let tool_ctx = ToolContext {
                 session_id: session_id.clone(),
                 user_event_tx,

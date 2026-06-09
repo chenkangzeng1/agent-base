@@ -370,6 +370,7 @@ impl Tool for PlanExecTool {
             &config,
             &mut event_rx,
             &mut |_| Ok(()), // Events are already emitted by the runner to the bus
+            Some(ctx.user_event_tx.clone()),
         ).await?;
 
         // Save the updated plan state
