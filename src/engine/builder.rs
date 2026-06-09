@@ -226,7 +226,7 @@ impl AgentBuilder {
         ));
 
         // Inject PlanRunner into PlanExecTool (deferred via OnceLock, no borrow conflict).
-        runner.tool_engine.tools().inject_plan_runner(&runner);
+        runner.tool_engine.inject_plan_runner_sync(&runner);
 
         Ok(AgentRuntime { runner })
     }

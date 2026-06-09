@@ -45,7 +45,7 @@ impl PlanRunner {
             return Err(e);
         }
 
-        let tool_definitions = self.tool_engine.definitions();
+        let tool_definitions = self.tool_engine.definitions().await;
         tracing::debug!(session_id = session_id.id, tool_count = tool_definitions.len(), "agent run start");
         let user_input_owned = self.with_session_mut(&session_id, |session| {
             session.chat_messages().last()
@@ -87,14 +87,20 @@ impl PlanRunner {
         tracing::info!(session_id = session_id.id, user_input = %user_input, "agent turn start");
         drop(_guard);
 
+        tracing::debug!(session_id = session_id.id, "run_turn: subscribing to event bus");
         let mut event_rx = self.event_bus.subscribe();
-        let tool_definitions = self.tool_engine.definitions();
+        let tool_definitions = self.tool_engine.definitions().await;
+        tracing::debug!(session_id = session_id.id, tool_count = tool_definitions.len(), "run_turn: got tool definitions");
 
+        tracing::debug!(session_id = session_id.id, "run_turn: applying user message middleware");
         let user_input_owned = self.apply_user_message_mw(&session_id, user_input.to_string()).await?;
+        tracing::debug!(session_id = session_id.id, "run_turn: user message middleware applied");
 
+        tracing::debug!(session_id = session_id.id, "run_turn: pushing user message to session");
         self.with_session_mut(&session_id, |session| {
             session.push_message(MessageRole::User, &user_input_owned);
         }).await?;
+        tracing::debug!(session_id = session_id.id, "run_turn: user message pushed");
 
         self.event_bus.emit(AgentEvent::Checkpoint {
             session_id: session_id.clone(),
@@ -106,6 +112,7 @@ impl PlanRunner {
             },
         });
 
+        tracing::info!(session_id = session_id.id, "run_turn: entering run_turn_loop");
         let (outcome, turn_count) = self
             .run_turn_loop(
                 &session_id,
@@ -150,7 +157,7 @@ impl PlanRunner {
         tracing::info!(session_id = session_id.id, turn_count, step = ?checkpoint.step, "resuming from checkpoint");
 
         let mut event_rx = self.event_bus.subscribe();
-        let tool_definitions = self.tool_engine.definitions();
+        let tool_definitions = self.tool_engine.definitions().await;
 
         if let CheckpointStep::BeforeToolCalls { tool_calls } = checkpoint.step {
             match self.handle_tool_calls(&session_id, &tool_calls, &mut event_rx, &mut on_event).await {
@@ -372,8 +379,10 @@ impl PlanRunner {
                 },
             });
 
+            tracing::info!(session_id = session_id.id, turn = turn_count, msg_count = messages.len(), tool_count = tools_for_turn.len(), "calling LLM");
             let stream = match self.config.llm.llm_retry.as_ref() {
                 Some(retry) => {
+                    tracing::debug!(session_id = session_id.id, turn = turn_count, "LLM: using retry mode");
                     self.llm_engine.run_llm_turn_with_retry(
                         session_id,
                         &messages,
@@ -384,6 +393,7 @@ impl PlanRunner {
                     ).await?
                 }
                 None => {
+                    tracing::debug!(session_id = session_id.id, turn = turn_count, "LLM: calling chat_stream");
                     self.llm_engine.chat_stream(
                         &messages,
                         &tools_for_turn,
@@ -392,12 +402,22 @@ impl PlanRunner {
                     ).await?
                 }
             };
+            tracing::info!(session_id = session_id.id, turn = turn_count, "LLM stream obtained, processing");
 
             let span = tracing::info_span!("llm_turn", session_id = session_id.id, turn = turn_count);
             let result = self.llm_engine.process_stream(session_id, stream, span, event_rx, on_event).await;
+            tracing::info!(session_id = session_id.id, turn = turn_count, is_err = result.is_err(), "LLM stream processed");
 
             match result {
                 Ok(LlmTurnResult { full_text, is_tool_call, tool_calls, usage: _ }) => {
+                    tracing::info!(
+                        session_id = session_id.id,
+                        turn = turn_count,
+                        text_len = full_text.len(),
+                        is_tool_call = is_tool_call,
+                        tool_call_count = tool_calls.len(),
+                        "LLM turn result"
+                    );
                     let tool_calls_parsed: Vec<(String, String, String)> = tool_calls.iter().map(|tc| {
                         let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
                         let name = tc.get("function").and_then(|f| f.get("name")).and_then(|n| n.as_str()).unwrap_or("").to_string();
@@ -439,6 +459,7 @@ impl PlanRunner {
                     }
 
                     if result.is_tool_call && !result.tool_calls.is_empty() {
+                        tracing::info!(session_id = session_id.id, turn = turn_count, tool_count = result.tool_calls.len(), "handling tool calls");
                         self.event_bus.emit(AgentEvent::Checkpoint {
                             session_id: session_id.clone(),
                             checkpoint: CheckpointData {
@@ -453,6 +474,7 @@ impl PlanRunner {
 
                         match self.handle_tool_calls(session_id, &result.tool_calls, event_rx, on_event).await {
                             Ok(ToolCallResult::Continue) => {
+                                tracing::info!(session_id = session_id.id, turn = turn_count, "tool calls done, continuing loop");
                                 let n = result.tool_calls.len();
                                 self.with_session_mut(session_id, |session| {
                                     session.total_tool_calls += n;
@@ -472,6 +494,7 @@ impl PlanRunner {
                                 continue;
                             }
                             Ok(ToolCallResult::Break) => {
+                                tracing::info!(session_id = session_id.id, turn = turn_count, "tool calls requested break");
                                 let n = result.tool_calls.len();
                                 self.with_session_mut(session_id, |session| {
                                     session.total_tool_calls += n;
@@ -492,6 +515,7 @@ impl PlanRunner {
                         }
                     }
 
+                    tracing::info!(session_id = session_id.id, turn = turn_count, "text-only response, run completed");
                     self.event_bus.emit(AgentEvent::RunFinished { session_id: session_id.clone() });
                     EventBus::drain_async_events(event_rx, on_event)?;
                     return Ok((RunOutcome::Completed, turn_count));

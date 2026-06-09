@@ -115,7 +115,7 @@ impl PlanRunner {
     {
         tracing::info!(session_id = session_id.id, %objective, "run_plan_with_generator start");
 
-        let tool_definitions = self.tool_engine.definitions();
+        let tool_definitions = self.tool_engine.definitions().await;
         let mut event_rx = self.event_bus.subscribe();
 
         // Create channel for streaming plan generation events
@@ -438,7 +438,7 @@ impl PlanRunner {
                 max_replans: config.max_replans,
                 plan: plan.clone(),
                 step_outputs: step_outputs.clone(),
-                available_tools: self.tool_engine.definitions(),
+                available_tools: self.tool_engine.definitions().await,
             };
 
             let action = strategy.recover(&recovery_ctx).await.unwrap_or(RecoveryAction::Abort);

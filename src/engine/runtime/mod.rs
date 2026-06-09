@@ -86,15 +86,14 @@ impl AgentRuntime {
         self.runner.llm_engine.client.clone()
     }
 
-    pub fn tools_mut(&mut self) -> &mut crate::tool::ToolRegistry {
-        // We need mutable access to tool_engine.tools
-        // This is safe because AgentRuntime usually isn't cloned for this purpose
-        Arc::get_mut(&mut self.runner).expect("Cannot mutably access tools when runner is shared").tool_engine.tools_mut()
+    pub fn tools_mut(&self) -> Arc<tokio::sync::RwLock<crate::tool::ToolRegistry>> {
+        self.runner.tool_engine.tools_arc()
     }
 
     pub fn create_step_executor(&self) -> crate::engine::ToolCallingStepExecutor {
         use crate::engine::pipeline::DefaultPipeline;
-        let registry = Arc::new(self.runner.tool_engine.tools().clone());
+        let tools_arc = self.runner.tool_engine.tools_arc();
+        let registry = Arc::new(tools_arc.blocking_read().clone());
         let base = self.runner.tool_engine.execution_pipeline();
         let pipeline = DefaultPipeline::new(
             base.policy(),

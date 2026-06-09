@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use serde_json::Value;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, RwLock};
 
 use crate::engine::approval::ApprovalHandler;
 use crate::engine::pipeline::{DefaultPipeline, ToolExecutionPipeline};
@@ -12,7 +12,7 @@ use crate::tool::{ToolContext, ToolControlFlow, ToolOutput, ToolPolicy, ToolRegi
 use crate::types::{AgentError, AgentEvent, AgentResult, Language, RuntimeEvent, SessionId, UserEvent};
 
 pub(crate) struct ToolEngine {
-    tools: ToolRegistry,
+    tools: Arc<RwLock<ToolRegistry>>,
     approval_handler: Option<Arc<dyn ApprovalHandler>>,
     tool_policy: Option<Arc<dyn ToolPolicy>>,
     error_recovery: Arc<dyn ToolErrorRecovery>,
@@ -30,7 +30,7 @@ impl ToolEngine {
     ) -> Self {
         let pipeline = DefaultPipeline::new(tool_policy.clone(), None, None);
         Self {
-            tools,
+            tools: Arc::new(RwLock::new(tools)),
             approval_handler,
             tool_policy,
             error_recovery,
@@ -39,8 +39,16 @@ impl ToolEngine {
         }
     }
 
-    pub fn definitions(&self) -> Vec<Value> {
-        self.tools.definitions()
+    /// Inject PlanRunner synchronously during build (before tokio runtime).
+    pub fn inject_plan_runner_sync(&self, runner: &Arc<crate::engine::PlanRunner>) {
+        // During build, we are the only holder of the Arc<RwLock<>>, so try_write is safe.
+        let mut tools = self.tools.try_write()
+            .expect("inject_plan_runner_sync: failed to acquire write lock");
+        tools.inject_plan_runner(runner);
+    }
+
+    pub async fn definitions(&self) -> Vec<Value> {
+        self.tools.read().await.definitions()
     }
 
     /// Get the inner pipeline (policy hooks only, no timeout/truncation).
@@ -93,7 +101,8 @@ impl ToolEngine {
         // The pipeline handles: before_call hook → timeout → truncation → after_call hook.
         // ToolEngine handles: event emission and UserEvent forwarding.
         tracing::debug!(session_id = session_id.id, tool = name, "looking up tool in registry");
-        let tool_result = match self.tools.get(name) {
+        let tools_guard = self.tools.read().await;
+        let tool_result = match tools_guard.get(name) {
             Some(tool) => {
                 tracing::debug!(session_id = session_id.id, tool = name, "tool found, executing via pipeline");
 
@@ -256,12 +265,8 @@ impl ToolEngine {
         self.approval_handler.as_ref()
     }
 
-    pub fn tools(&self) -> &ToolRegistry {
-        &self.tools
-    }
-
-    pub fn tools_mut(&mut self) -> &mut ToolRegistry {
-        &mut self.tools
+    pub fn tools_arc(&self) -> Arc<RwLock<ToolRegistry>> {
+        self.tools.clone()
     }
 }
 

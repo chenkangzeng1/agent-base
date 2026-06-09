@@ -28,9 +28,15 @@ impl LlmEngine {
         reasoning: Option<&ReasoningConfig>,
         response_format: Option<&crate::types::ResponseFormat>,
     ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
-        self.client
+        tracing::info!(msg_count = messages.len(), tool_count = tool_definitions.len(), "LLM chat_stream: sending request to API");
+        let result = self.client
             .chat_stream(messages, tool_definitions, reasoning, response_format)
-            .await
+            .await;
+        match &result {
+            Ok(_) => tracing::info!("LLM chat_stream: API response received"),
+            Err(e) => tracing::error!(error = %e, "LLM chat_stream: API request failed"),
+        }
+        result
     }
 
     pub async fn run_llm_turn_with_retry(
@@ -83,7 +89,7 @@ impl LlmEngine {
         let start = std::time::Instant::now();
         let mut first_token = true;
         let mut aggregator = StreamAggregator::new();
-        tracing::debug!(session_id = session_id.id, "process stream start");
+        tracing::info!(session_id = session_id.id, "LLM process_stream start");
 
         loop {
             tokio::select! {
@@ -103,7 +109,7 @@ impl LlmEngine {
                         Ok(StreamChunk::Text(text)) => {
                             if first_token {
                                 let ttft = start.elapsed();
-                                tracing::debug!(session_id = session_id.id, ?ttft, "llm first token");
+                                tracing::info!(session_id = session_id.id, ?ttft, "LLM first token received");
                                 first_token = false;
                             }
                             if !text.is_empty() && !aggregator.is_tool_call {
@@ -124,6 +130,9 @@ impl LlmEngine {
                             }
                         }
                         Ok(StreamChunk::ToolCall(choice)) => {
+                            if !aggregator.is_tool_call {
+                                tracing::info!(session_id = session_id.id, "LLM stream: first tool_call chunk received");
+                            }
                             aggregator.is_tool_call = true;
                             let Some(tool_calls) = choice
                                 .get("delta")
@@ -173,7 +182,7 @@ impl LlmEngine {
         }
 
         let total_elapsed = start.elapsed();
-        tracing::debug!(session_id = session_id.id, text_len = aggregator.full_text.len(), tool_calls = aggregator.partials.len(), elapsed_ms = total_elapsed.as_millis(), "llm stream done");
+        tracing::info!(session_id = session_id.id, text_len = aggregator.full_text.len(), tool_calls = aggregator.partials.len(), elapsed_ms = total_elapsed.as_millis(), "LLM stream done");
 
         let tool_calls = aggregator
             .partials

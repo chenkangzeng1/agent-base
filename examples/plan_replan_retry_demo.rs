@@ -335,7 +335,7 @@ async fn main() -> AgentResult<()> {
     let _session_id = runtime.create_session().await; // 预留, 实际每轮都会创建新 session
 
     // 获取全部工具定义 —— 生成 plan 时全部暴露
-    let tool_defs: Vec<Value> = runtime.tools_mut().definitions();
+    let tool_defs: Vec<Value> = runtime.tools_mut().blocking_read().definitions();
 
     let objective = "查询本月销售数据";
 
