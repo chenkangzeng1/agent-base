@@ -1,22 +1,21 @@
 use serde_json::json;
 use tokio::sync::{broadcast, mpsc};
+use std::sync::Arc;
 
 use crate::types::{
     AgentError, AgentEvent, AgentResult, ExecutionPlan, MessageRole, PlanStatus,
     RecoveryAction, RecoveryContext, RunOutcome, RuntimeEvent, SessionId, StepResult, StepStatus,
-    UserEvent,
 };
 use crate::tool::ToolContext;
 use crate::engine::plan::{
-    PlanConfig, PlanGenerator, RecoveryPolicy, RecoveryStrategy,
+    PlanConfig, PlanGenerator, RecoveryStrategy,
     StepContinuePolicy, StepExecutor,
 };
 use crate::engine::runtime::event_bus::EventBus;
-use super::AgentRuntime;
-use std::sync::Arc;
+use super::plan_runner::PlanRunner;
 
 /// Control-flow signal returned by step failure handling.
-enum StepFailureAction {
+pub(super) enum StepFailureAction {
     /// Retry the step (loop again without incrementing step_idx).
     Retry,
     /// Skip the step and continue to the next.
@@ -27,12 +26,8 @@ enum StepFailureAction {
     Abort,
 }
 
-impl AgentRuntime {
+impl PlanRunner {
     /// Execute a pre-built `ExecutionPlan`.
-    ///
-    /// Runtime adaptive execution:
-    /// - Steps with `tool_name` in payload + executor available → deterministic mode
-    /// - Otherwise → agentic mode (each step becomes an agent turn)
     pub async fn run_plan<F>(
         &self,
         session_id: SessionId,
@@ -57,7 +52,7 @@ impl AgentRuntime {
             return Ok(RunOutcome::Completed);
         }
 
-        let mut event_rx = self.subscribe_events();
+        let mut event_rx = self.event_bus.subscribe();
 
         self.emit_and_drain(
             AgentEvent::PlanGenerated {
@@ -95,8 +90,6 @@ impl AgentRuntime {
     }
 
     /// Generate a plan from an objective using the provided generator, then execute it.
-    ///
-    /// Convenience combination of `PlanGenerator::generate_plan` + `run_plan`.
     pub async fn run_plan_with_generator<F>(
         &self,
         session_id: SessionId,
@@ -111,14 +104,12 @@ impl AgentRuntime {
         tracing::info!(session_id = session_id.id, %objective, "run_plan_with_generator start");
 
         let tool_definitions = self.tool_engine.definitions();
-        let mut event_rx = self.subscribe_events();
+        let mut event_rx = self.event_bus.subscribe();
 
         // Create channel for streaming plan generation events
         let (plan_event_tx, mut plan_event_rx) = tokio::sync::mpsc::unbounded_channel();
 
         // Run generation and event consumption concurrently.
-        // This ensures on_event is called in real-time as steps are parsed,
-        // not batched after generation completes.
         let generate_fut = generator.generate_plan(objective, "", &tool_definitions, Some(plan_event_tx));
 
         tokio::pin!(generate_fut);
@@ -185,12 +176,7 @@ impl AgentRuntime {
     }
 
     /// Internal: shared plan-step execution loop with progressive adaptive recovery.
-    ///
-    /// Recovery pipeline when `adaptive_recovery` is configured:
-    /// - **Level 0**: Framework-level retry with linear backoff (`max_retries`)
-    /// - **Level 1/2**: `AdaptiveRecoveryStrategy` (`max_alternatives` / `max_replans`)
-    /// - **Level 3**: Fallback to old `RecoveryStrategy` as final safety net
-    async fn run_plan_steps<F>(
+    pub async fn run_plan_steps<F>(
         &self,
         session_id: &SessionId,
         plan: &mut ExecutionPlan,
@@ -224,7 +210,7 @@ impl AgentRuntime {
             while step_idx < plan.phases[phase_idx].steps.len() {
                 let step_id = plan.phases[phase_idx].steps[step_idx].id.clone();
 
-                // Check dependencies (immutable borrow of plan, no conflict with index-based access)
+                // Check dependencies
                 if plan.phases[phase_idx].steps[step_idx].status == StepStatus::Pending
                     && !Self::check_dependencies_met(plan, &step_id)
                 {
@@ -368,10 +354,9 @@ impl AgentRuntime {
         Ok(RunOutcome::Completed)
     }
 
-    /// Progressive step failure handler implementing the 4-level recovery pipeline:
-    /// Level 0 → Level 1/2 (adaptive) → Level 3 (fallback RecoveryStrategy).
+    /// Progressive step failure handler implementing the 4-level recovery pipeline.
     #[allow(clippy::too_many_arguments)]
-    async fn handle_step_failure_progressive<F>(
+    pub(super) async fn handle_step_failure_progressive<F>(
         &self,
         session_id: &SessionId,
         plan: &mut ExecutionPlan,
@@ -386,7 +371,7 @@ impl AgentRuntime {
         replan_count: &mut usize,
         config: &PlanConfig,
         recovery: &Option<Arc<dyn RecoveryStrategy>>,
-        recovery_policy: &Option<Arc<RecoveryPolicy>>,
+        recovery_policy: &Option<Arc<crate::engine::plan::RecoveryPolicy>>,
         step_outputs: &serde_json::Value,
         event_rx: &mut broadcast::Receiver<AgentEvent>,
         on_event: &mut F,
@@ -456,9 +441,7 @@ impl AgentRuntime {
             match action {
                 RecoveryAction::Alternative { step: new_step, root_step_id } => {
                     alternative_counts.insert(root_step_id.clone(), alt + 1);
-                    // Track the alternative chain: new step maps to the same root
                     root_step_map.insert(new_step.id.clone(), root_step_id.clone());
-                    // Inherit retry count from root (budget sharing)
                     let inherited_retry = retry_counts.get(&root_step_id).copied().unwrap_or(0);
                     retry_counts.insert(root_step_id.clone(), inherited_retry);
 
@@ -482,21 +465,16 @@ impl AgentRuntime {
                         on_event,
                     );
 
-                    // Keep failed step in history (Failed status), add alternative to end
                     let new_start_idx = plan.phases[phase_idx].steps.len();
                     plan.phases[phase_idx].steps.push(new_step);
-
-                    // Mark current as failed (preserve history)
                     plan.phases[phase_idx].steps[step_idx].status = StepStatus::Failed;
 
-                    // Mark orphaned pending steps (between failed step and new alt) as Skipped
                     for orphan_idx in (step_idx + 1)..new_start_idx {
                         if plan.phases[phase_idx].steps[orphan_idx].status == StepStatus::Pending {
                             plan.phases[phase_idx].steps[orphan_idx].status = StepStatus::Skipped;
                         }
                     }
 
-                    // Jump to the alternative step
                     return Ok(StepFailureAction::JumpTo(new_start_idx));
                 }
                 RecoveryAction::Replan { steps: new_steps, clear_future_phases }
@@ -520,12 +498,10 @@ impl AgentRuntime {
                         on_event,
                     );
 
-                    // Keep failed step in history, add new steps to end
                     plan.phases[phase_idx].steps[step_idx].status = StepStatus::Failed;
                     let new_start_idx = plan.phases[phase_idx].steps.len();
                     plan.phases[phase_idx].steps.extend(new_steps.clone());
 
-                    // Clear future phases if requested
                     if clear_future_phases {
                         for future_phase in plan.phases.iter_mut().skip(phase_idx + 1) {
                             future_phase.steps.retain(|s| {
@@ -547,14 +523,12 @@ impl AgentRuntime {
                         on_event,
                     );
 
-                    // Mark orphaned pending steps (between failed step and replan steps) as Skipped
                     for orphan_idx in (step_idx + 1)..new_start_idx {
                         if plan.phases[phase_idx].steps[orphan_idx].status == StepStatus::Pending {
                             plan.phases[phase_idx].steps[orphan_idx].status = StepStatus::Skipped;
                         }
                     }
 
-                    // Jump to the first replan step
                     return Ok(StepFailureAction::JumpTo(new_start_idx));
                 }
                 RecoveryAction::Skip => {
@@ -573,18 +547,11 @@ impl AgentRuntime {
                     );
                     return Ok(StepFailureAction::Skip);
                 }
-                RecoveryAction::Abort | RecoveryAction::Retry | RecoveryAction::Replan { .. } => {
-                    // Retry from adaptive is treated as Abort (retries already exhausted)
-                    // Replan when quota exhausted also falls through
-                }
+                _ => {}
             }
         }
 
-        // ── Level 3: Fallback to old RecoveryStrategy (final safety net) ──
-        // When adaptive is configured, this gives the user's base RecoveryStrategy
-        // a final chance (e.g., Recovery::skip() as fallback).
-        // Without adaptive, this is the primary recovery path.
-        // Use root_id for retry counting to stay consistent with root_step_map tracking.
+        // ── Level 3: Fallback to old RecoveryStrategy ──
         let current_retry = retry_counts.get(&root_id).copied().unwrap_or(0);
         let action: RecoveryAction = if let Some(rp) = recovery_policy {
             let err = AgentError::internal(error);
@@ -633,7 +600,6 @@ impl AgentRuntime {
                 Ok(StepFailureAction::Skip)
             }
             _ => {
-                // All recovery attempts exhausted → Abort
                 plan.phases[phase_idx].steps[step_idx].status = StepStatus::Failed;
                 plan.phases[phase_idx].status = crate::types::PhaseStatus::Failed;
                 plan.status = PlanStatus::Failed;
@@ -679,11 +645,7 @@ impl AgentRuntime {
     }
 
     /// Execute a single plan step — runtime adaptive.
-    ///
-    /// If the step has `tool_name` in its payload AND an executor is available,
-    /// uses deterministic mode (direct tool call). Otherwise falls back to
-    /// agentic mode (LLM-driven agent turn).
-    async fn execute_single_step<F>(
+    pub async fn execute_single_step<F>(
         &self,
         session_id: &SessionId,
         step: &crate::types::PlanStep,
@@ -697,7 +659,6 @@ impl AgentRuntime {
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
-        // Runtime adaptive: deterministic if executor available AND step has tool_name
         let has_tool_name = step.payload.get("tool_name").and_then(|v| v.as_str()).is_some();
 
         if let (Some(exec), true) = (executor.as_ref(), has_tool_name) {
@@ -713,17 +674,16 @@ impl AgentRuntime {
                 return Ok(StepResult::success("Skipped", 0));
             }
 
-            let (user_event_tx, _user_event_rx) = mpsc::unbounded_channel::<UserEvent>();
+            let (user_event_tx, _user_event_rx) = mpsc::unbounded_channel::<crate::types::UserEvent>();
             let tool_ctx = ToolContext {
                 session_id: session_id.clone(),
                 user_event_tx,
-                llm_client: Some(self.llm_engine().client.clone()),
+                llm_client: Some(self.llm_engine.client.clone()),
                 session_store: Some(self.session_manager.session_store().clone()),
                 language: crate::types::Language::En,
             };
             exec.execute_step(step, step_outputs, &tool_ctx).await
         } else {
-            // Agentic mode: inject step description as user message, then run ReAct loop
             self.with_session_mut(session_id, |session| {
                 session.push_message(MessageRole::User, &step.description);
             }).await?;
@@ -750,8 +710,8 @@ impl AgentRuntime {
         }
     }
 
-    /// Check if all dependencies of a step (found by id across all phases) are met.
-    fn check_dependencies_met(plan: &ExecutionPlan, step_id: &str) -> bool {
+    /// Check if all dependencies of a step are met.
+    pub(super) fn check_dependencies_met(plan: &ExecutionPlan, step_id: &str) -> bool {
         let step = match plan.find_step(step_id) {
             Some(s) => s,
             None => return true,
@@ -761,8 +721,6 @@ impl AgentRuntime {
             return true;
         }
 
-        tracing::debug!(%step_id, deps_count = step.dependencies.len(), "checking step dependencies");
-
         step.dependencies.iter().all(|dep_id: &String| {
             plan.find_step(dep_id)
                 .map(|s| matches!(s.status, StepStatus::Completed | StepStatus::Skipped))
@@ -770,7 +728,7 @@ impl AgentRuntime {
         })
     }
 
-    fn emit_and_drain<F>(
+    pub(super) fn emit_and_drain<F>(
         &self,
         event: AgentEvent,
         event_rx: &mut broadcast::Receiver<AgentEvent>,
@@ -778,12 +736,12 @@ impl AgentRuntime {
     ) where
         F: FnMut(RuntimeEvent) -> AgentResult<()>,
     {
-        self.emit_event(event);
+        self.event_bus.emit(event);
         let _ = EventBus::drain_async_events(event_rx, on_event);
     }
 
     /// Stamp real session_id and plan_id onto plan generation events.
-    fn stamp_session_id(event: RuntimeEvent, session_id: &SessionId, plan_id: &str) -> RuntimeEvent {
+    pub(super) fn stamp_session_id(event: RuntimeEvent, session_id: &SessionId, plan_id: &str) -> RuntimeEvent {
         match event {
             RuntimeEvent::PlanGenerating { .. } => RuntimeEvent::PlanGenerating {
                 session_id: session_id.clone(),

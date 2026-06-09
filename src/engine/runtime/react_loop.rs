@@ -4,9 +4,12 @@ use crate::engine::middleware::{PostLlmCtx, PreLlmCtx, UserMessageCtx};
 use crate::engine::recovery::ToolErrorAction;
 use crate::engine::runtime::event_bus::EventBus;
 use crate::engine::runtime::llm_engine::LlmTurnResult;
-use crate::types::{AgentError, AgentEvent, AgentResult, CheckpointData, CheckpointStep, MessageRole, RunOutcome, RuntimeEvent, SessionId};
+use crate::types::{
+    AgentError, AgentEvent, AgentResult, CheckpointData, CheckpointStep, 
+    MessageRole, RunOutcome, RuntimeEvent, SessionId
+};
 
-use super::AgentRuntime;
+use super::plan_runner::PlanRunner;
 
 pub(super) enum ToolCallResult {
     Continue,
@@ -21,7 +24,167 @@ pub(super) struct PostLlmMwResult {
     pub follow_up_message: Option<String>,
 }
 
-impl AgentRuntime {
+impl PlanRunner {
+    pub async fn run<F>(
+        &self,
+        session_id: SessionId,
+        mut on_event: F,
+    ) -> AgentResult<RunOutcome>
+    where
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
+    {
+        let span = tracing::info_span!("agent_run", session_id = session_id.id);
+        let _enter = span.enter();
+
+        let mut event_rx = self.event_bus.subscribe();
+
+        if let Err(e) = self.validate_session(&session_id).await {
+            tracing::warn!(session_id = session_id.id, error = %e, "session validation failed");
+            self.event_bus.emit(AgentEvent::RunFinished { session_id: session_id.clone() });
+            EventBus::drain_async_events(&mut event_rx, &mut on_event)?;
+            return Err(e);
+        }
+
+        let tool_definitions = self.tool_engine.definitions();
+        tracing::debug!(session_id = session_id.id, tool_count = tool_definitions.len(), "agent run start");
+        let user_input_owned = self.with_session_mut(&session_id, |session| {
+            session.chat_messages().last()
+                .and_then(|m| match m {
+                    crate::types::ChatMessage::User { content, .. } => Some(content.clone()),
+                    _ => None,
+                })
+                .unwrap_or_default()
+        }).await?;
+
+        let (outcome, _turn_count) = self
+            .run_turn_loop(
+                &session_id,
+                &user_input_owned,
+                &tool_definitions,
+                0,
+                &mut event_rx,
+                &mut on_event,
+            )
+            .await?;
+
+        self.event_bus.emit(AgentEvent::RunFinished { session_id: session_id.clone() });
+        EventBus::drain_async_events(&mut event_rx, &mut on_event)?;
+
+        Ok(outcome)
+    }
+
+    pub async fn run_turn<F>(
+        &self,
+        session_id: SessionId,
+        user_input: &str,
+        mut on_event: F,
+    ) -> AgentResult<RunOutcome>
+    where
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
+    {
+        let span = tracing::Span::current();
+        let _guard = span.enter();
+        tracing::info!(session_id = session_id.id, user_input = %user_input, "agent turn start");
+        drop(_guard);
+
+        let mut event_rx = self.event_bus.subscribe();
+        let tool_definitions = self.tool_engine.definitions();
+
+        let user_input_owned = self.apply_user_message_mw(&session_id, user_input.to_string()).await?;
+
+        self.with_session_mut(&session_id, |session| {
+            session.push_message(MessageRole::User, &user_input_owned);
+        }).await?;
+
+        self.event_bus.emit(AgentEvent::Checkpoint {
+            session_id: session_id.clone(),
+            checkpoint: CheckpointData {
+                session_id: session_id.clone(),
+                user_input: user_input_owned.clone(),
+                step: CheckpointStep::AfterUserInput,
+                turn_count: 0,
+            },
+        });
+
+        let (outcome, turn_count) = self
+            .run_turn_loop(
+                &session_id,
+                &user_input_owned,
+                &tool_definitions,
+                0,
+                &mut event_rx,
+                &mut on_event,
+            )
+            .await?;
+
+        tracing::info!(session_id = session_id.id, turn_count, "agent turn completed");
+        Ok(outcome)
+    }
+
+    pub async fn run_turn_collect(
+        &self,
+        session_id: SessionId,
+        user_input: &str,
+    ) -> AgentResult<(Vec<RuntimeEvent>, RunOutcome)> {
+        let mut events = Vec::new();
+        let outcome = self.run_turn(session_id, user_input, |event| {
+            events.push(event);
+            Ok(())
+        })
+        .await?;
+        Ok((events, outcome))
+    }
+
+    pub async fn resume_from_checkpoint<F>(
+        &self,
+        checkpoint: CheckpointData,
+        mut on_event: F,
+    ) -> AgentResult<RunOutcome>
+    where
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
+    {
+        let session_id = checkpoint.session_id.clone();
+        let user_input = checkpoint.user_input.clone();
+        let turn_count = checkpoint.turn_count;
+
+        tracing::info!(session_id = session_id.id, turn_count, step = ?checkpoint.step, "resuming from checkpoint");
+
+        let mut event_rx = self.event_bus.subscribe();
+        let tool_definitions = self.tool_engine.definitions();
+
+        if let CheckpointStep::BeforeToolCalls { tool_calls } = checkpoint.step {
+            match self.handle_tool_calls(&session_id, &tool_calls, &mut event_rx, &mut on_event).await {
+                Ok(ToolCallResult::Continue) => {}
+                Ok(ToolCallResult::Break) => {
+                    self.event_bus.emit(AgentEvent::RunFinished { session_id: session_id.clone() });
+                    EventBus::drain_async_events(&mut event_rx, &mut on_event)?;
+                    return Ok(RunOutcome::Completed);
+                }
+                Err(e) => {
+                    if let Some(outcome) = self
+                        .handle_tool_error(&session_id, &tool_calls, e, &mut event_rx, &mut on_event)
+                        .await?
+                    {
+                        return Ok(outcome);
+                    }
+                }
+            }
+        }
+
+        let (outcome, _final_turn_count) = self
+            .run_turn_loop(
+                &session_id,
+                &user_input,
+                &tool_definitions,
+                turn_count,
+                &mut event_rx,
+                &mut on_event,
+            )
+            .await?;
+
+        Ok(outcome)
+    }
+
     pub(super) async fn apply_user_message_mw(
         &self,
         session_id: &SessionId,
@@ -63,7 +226,7 @@ impl AgentRuntime {
         available_tools: &[String],
         turn_count: u32,
     ) -> AgentResult<PostLlmMwResult> {
-        let total_tool_calls = self.session_or_err(session_id).await?.total_tool_calls;
+        let total_tool_calls = self.session_manager.session_or_err(session_id).await?.total_tool_calls;
         let mut ctx = PostLlmCtx {
             session_id: session_id.clone(),
             full_text,
@@ -99,9 +262,9 @@ impl AgentRuntime {
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
         if e.is_cancelled() {
-            self.emit_event(AgentEvent::RunFinished { session_id: session_id.clone() });
+            self.event_bus.emit(AgentEvent::RunFinished { session_id: session_id.clone() });
             EventBus::drain_async_events(event_rx, on_event)?;
-            let session = self.session_or_err(session_id).await?;
+            let session = self.session_manager.session_or_err(session_id).await?;
             if let Err(e) = self.session_manager.session_store().save(&session).await {
                 tracing::warn!(session_id = session_id.id, error = %e, "Failed to persist session");
                 if self.config.execution.fail_on_persist_error {
@@ -117,9 +280,9 @@ impl AgentRuntime {
         let action = self.tool_engine.error_recovery().on_error(session_id, &names, &e)?;
         match action {
             ToolErrorAction::Stop => {
-                self.emit_event(AgentEvent::RunFinished { session_id: session_id.clone() });
+                self.event_bus.emit(AgentEvent::RunFinished { session_id: session_id.clone() });
                 EventBus::drain_async_events(event_rx, on_event)?;
-                let session = self.session_or_err(session_id).await?;
+                let session = self.session_manager.session_or_err(session_id).await?;
                 if let Err(e) = self.session_manager.session_store().save(&session).await {
                     tracing::warn!(session_id = session_id.id, error = %e, "Failed to persist session");
                     if self.config.execution.fail_on_persist_error {
@@ -163,7 +326,7 @@ impl AgentRuntime {
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
-        let max_turns = self.config.execution.max_turns.unwrap_or(super::DEFAULT_MAX_TURNS);
+        let max_turns = self.config.execution.max_turns.unwrap_or(crate::engine::runtime::DEFAULT_MAX_TURNS);
 
         tracing::debug!(session_id = session_id.id, max_turns, "run turn loop start");
 
@@ -172,7 +335,7 @@ impl AgentRuntime {
 
             if turn_count > max_turns {
                 tracing::warn!(session_id = session_id.id, turn_count, max_turns, "max turns exceeded");
-                self.emit_event(AgentEvent::RunFinished {
+                self.event_bus.emit(AgentEvent::RunFinished {
                     session_id: session_id.clone(),
                 });
                 EventBus::drain_async_events(event_rx, on_event)?;
@@ -184,7 +347,7 @@ impl AgentRuntime {
             let turn_span = tracing::info_span!("turn", session_id = session_id.id, turn = turn_count);
             let _turn_guard = turn_span.enter();
 
-            let session = self.session_or_err(session_id).await?;
+            let session = self.session_manager.session_or_err(session_id).await?;
             let mut messages: Vec<_> = session.chat_messages().to_vec();
             let tools_for_turn = tool_definitions.to_vec();
 
@@ -196,7 +359,7 @@ impl AgentRuntime {
 
             let (messages, tools_for_turn) = self.apply_pre_llm_mw(session_id, messages, tools_for_turn).await?;
 
-            self.emit_event(AgentEvent::Checkpoint {
+            self.event_bus.emit(AgentEvent::Checkpoint {
                 session_id: session_id.clone(),
                 checkpoint: CheckpointData {
                     session_id: session_id.clone(),
@@ -276,7 +439,7 @@ impl AgentRuntime {
                     }
 
                     if result.is_tool_call && !result.tool_calls.is_empty() {
-                        self.emit_event(AgentEvent::Checkpoint {
+                        self.event_bus.emit(AgentEvent::Checkpoint {
                             session_id: session_id.clone(),
                             checkpoint: CheckpointData {
                                 session_id: session_id.clone(),
@@ -294,7 +457,7 @@ impl AgentRuntime {
                                 self.with_session_mut(session_id, |session| {
                                     session.total_tool_calls += n;
                                 }).await?;
-                                self.emit_event(AgentEvent::Checkpoint {
+                                self.event_bus.emit(AgentEvent::Checkpoint {
                                     session_id: session_id.clone(),
                                     checkpoint: CheckpointData {
                                         session_id: session_id.clone(),
@@ -313,7 +476,7 @@ impl AgentRuntime {
                                 self.with_session_mut(session_id, |session| {
                                     session.total_tool_calls += n;
                                 }).await?;
-                                self.emit_event(AgentEvent::RunFinished { session_id: session_id.clone() });
+                                self.event_bus.emit(AgentEvent::RunFinished { session_id: session_id.clone() });
                                 EventBus::drain_async_events(event_rx, on_event)?;
                                 return Ok((RunOutcome::Completed, turn_count));
                             }
@@ -329,7 +492,7 @@ impl AgentRuntime {
                         }
                     }
 
-                    self.emit_event(AgentEvent::RunFinished { session_id: session_id.clone() });
+                    self.event_bus.emit(AgentEvent::RunFinished { session_id: session_id.clone() });
                     EventBus::drain_async_events(event_rx, on_event)?;
                     return Ok((RunOutcome::Completed, turn_count));
                 }
@@ -366,8 +529,6 @@ impl AgentRuntime {
 
             parsed_calls.push((id.clone(), name.clone(), args_str.clone(), args));
         }
-
-
 
         {
             let tc: Vec<(String, String, String)> = parsed_calls
@@ -412,5 +573,19 @@ impl AgentRuntime {
         }
 
         Ok(ToolCallResult::Continue)
+    }
+
+    pub async fn validate_session(&self, session_id: &SessionId) -> AgentResult<()> {
+        if self.session_manager.session(session_id).await.is_none() {
+            return Err(AgentError::session_not_found(session_id.id));
+        }
+        Ok(())
+    }
+
+    pub async fn with_session_mut<F, R>(&self, session_id: &SessionId, f: F) -> AgentResult<R>
+    where
+        F: FnOnce(&mut crate::engine::AgentSession) -> R,
+    {
+        self.session_manager.with_session_mut(session_id, f).await
     }
 }

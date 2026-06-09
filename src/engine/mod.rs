@@ -34,6 +34,7 @@ pub use plan_orchestrator::{PlanExecTool, PlanOrchestrator};
 pub use recovery::{RetryOnError, StopOnError, ToolErrorAction, ToolErrorRecovery};
 pub use reflexion::{AlternativeAction, ReflectionResult, ReflexionContext, ReflexionHandler, StepHistoryEntry};
 pub use runtime::AgentRuntime;
+pub(crate) use runtime::PlanRunner;
 pub use session::AgentSession;
 pub use session_store::{InMemorySessionStore, SessionStore};
 pub use tool_enforcement::{ToolEnforcementConfig, ToolEnforcementMiddleware};

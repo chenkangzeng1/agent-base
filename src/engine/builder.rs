@@ -215,14 +215,19 @@ impl AgentBuilder {
             event_bus.clone(),
         );
 
-        Ok(AgentRuntime {
-            config: self.config,
+        let runner = Arc::new(super::runtime::PlanRunner::new(
+            self.config,
             llm_engine,
             tool_engine,
             session_manager,
             event_bus,
-            context_manager: self.context_manager,
-            middlewares: self.middlewares,
-        })
+            self.context_manager,
+            self.middlewares,
+        ));
+
+        // Inject PlanRunner into PlanExecTool (deferred via OnceLock, no borrow conflict).
+        runner.tool_engine.tools().inject_plan_runner(&runner);
+
+        Ok(AgentRuntime { runner })
     }
 }

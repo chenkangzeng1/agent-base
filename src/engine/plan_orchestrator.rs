@@ -4,12 +4,11 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use crate::engine::{EventBus, PlanGenerator, PlanStore, StepExecutor};
-use crate::engine::plan::RecoveryPolicy;
+use crate::engine::plan::{RecoveryPolicy, PlanConfig};
 use crate::engine::circuit_breaker::CircuitBreaker;
+use crate::engine::runtime::PlanRunner;
 use crate::tool::{Tool, ToolContext, ToolControlFlow, ToolOutput};
-use crate::types::{AgentError, AgentEvent, AgentResult, PlanStatus, RuntimeEvent, StepStatus};
-
-use log;
+use crate::types::{AgentError, AgentEvent, AgentResult, RuntimeEvent};
 
 /// PlanOrchestrator is a domain-agnostic tool for creating execution plans.
 /// It delegates plan generation to a `PlanGenerator` implementation and
@@ -238,6 +237,10 @@ pub struct PlanExecTool {
     plan_store: Arc<dyn PlanStore>,
     recovery: Arc<dyn crate::engine::RecoveryStrategy>,
     event_bus: Option<EventBus>,
+    /// Deferred injection: set once after PlanRunner is constructed.
+    /// Uses `OnceLock` to break the circular dependency (PlanRunner owns
+    /// ToolEngine which owns this tool, but this tool needs a ref to PlanRunner).
+    plan_runner: std::sync::OnceLock<std::sync::Weak<PlanRunner>>,
     recovery_policy: Option<Arc<RecoveryPolicy>>,
     circuit_breaker: Option<std::sync::Weak<CircuitBreaker>>,
 }
@@ -253,6 +256,7 @@ impl PlanExecTool {
             plan_store,
             recovery,
             event_bus: None,
+            plan_runner: std::sync::OnceLock::new(),
             recovery_policy: None,
             circuit_breaker: None,
         }
@@ -261,6 +265,12 @@ impl PlanExecTool {
     /// Inject the internal event bus. Called by `AgentBuilder::build()`.
     pub(crate) fn set_event_bus(&mut self, event_bus: EventBus) {
         self.event_bus = Some(event_bus);
+    }
+
+    /// Inject the PlanRunner reference (deferred via OnceLock).
+    /// Can be called through `&self` — safe because OnceLock::set is atomic.
+    pub(crate) fn set_plan_runner(&self, runner: &Arc<PlanRunner>) {
+        let _ = self.plan_runner.set(Arc::downgrade(runner));
     }
 
     /// Set an adaptive recovery policy for error-kind-aware decisions.
@@ -330,6 +340,12 @@ impl Tool for PlanExecTool {
             });
         }
 
+        let runner = self.plan_runner.get()
+            .and_then(|w| w.upgrade())
+            .ok_or_else(|| {
+                AgentError::internal("PlanExecTool: PlanRunner not available (dropped or not injected)")
+            })?;
+
         let plan_data = self
             .plan_store
             .load_plan(&plan_id)
@@ -344,341 +360,59 @@ impl Tool for PlanExecTool {
 
         let mut plan = plan_data.plan;
         let objective = plan.objective.clone();
-        let plan_metadata = plan_data.metadata.clone();
-        let mut step_outputs = serde_json::json!({});
-        let mut execution_summary = if is_zh {
-            format!("计划 '{}' 的执行结果:\n", objective)
-        } else {
-            format!("Execution results for plan '{}':\n", objective)
-        };
-        let mut step_results = Vec::new();
-        let mut overall_success = true;
-        let mut failed_step_name: Option<String> = None;
-        let mut _completed_count = 0usize;
-        let mut global_step_index = 0usize;
-
-        'phase_loop: for phase_idx in 0..plan.phases.len() {
-            plan.phases[phase_idx].status = crate::types::PhaseStatus::Running;
-
-            for step_idx in 0..plan.phases[phase_idx].steps.len() {
-                if plan.phases[phase_idx].steps[step_idx].status != StepStatus::Pending {
-                    global_step_index += 1;
-                    continue;
-                }
-
-                let step_id = plan.phases[phase_idx].steps[step_idx].id.clone();
-                let step_desc = plan.phases[phase_idx].steps[step_idx].description.clone();
-                let step_payload = plan.phases[phase_idx].steps[step_idx].payload.clone();
-
-                log::info!(
-                    "PlanExecTool: executing step {} ({})",
-                    step_id,
-                    step_desc
-                );
-
-                plan.phases[phase_idx].steps[step_idx].status = StepStatus::Running;
-
-                let _ = self.event_bus.as_ref().expect("EventBus must be injected by AgentBuilder::build()").emit(AgentEvent::PlanStepStarted {
-                    session_id: ctx.session_id.clone(),
-                    step_id: step_id.clone(),
-                    step_description: step_desc.clone(),
-                    payload: Some(step_payload.clone()),
-                });
-
-                execution_summary.push_str(&if is_zh {
-                    format!("步骤 {}: {}\n", global_step_index + 1, step_desc)
-                } else {
-                    format!("Step {}: {}\n", global_step_index + 1, step_desc)
-                });
-
-                // Circuit breaker check — skip step if circuit is open
-                if let Some(weak_cb) = &self.circuit_breaker
-                    && let Some(cb) = weak_cb.upgrade()
-                    && !cb.is_available()
-                {
-                    log::warn!(
-                        "PlanExecTool: circuit breaker open, skipping step {}",
-                        step_id
-                    );
-                    plan.phases[phase_idx].steps[step_idx].status = StepStatus::Skipped;
-                    execution_summary.push_str(&if is_zh {
-                        "  [跳过] 熔断器开启，跳过该步骤\n"
-                    } else {
-                        "  [Skipped] Circuit breaker open, skipping step\n"
-                    });
-                    overall_success = false;
-                    global_step_index += 1;
-                    continue;
-                }
-
-                match self
-                    .step_executor
-                    .execute_step(&plan.phases[phase_idx].steps[step_idx], &plan_metadata, ctx)
-                    .await
-                {
-                    Ok(result) => {
-                        let step_success = result.success;
-                        log::info!(
-                            "PlanExecTool: step {} completed with success={}",
-                            step_id,
-                            step_success
-                        );
-
-                        // Record circuit breaker outcome
-                        if let Some(weak_cb) = &self.circuit_breaker
-                            && let Some(cb) = weak_cb.upgrade()
-                        {
-                            if step_success {
-                                cb.record_success();
-                            } else {
-                                cb.record_failure();
-                            }
-                        }
-
-                        plan.phases[phase_idx].steps[step_idx].status = if step_success {
-                            StepStatus::Completed
-                        } else {
-                            StepStatus::Failed
-                        };
-                        plan.phases[phase_idx].steps[step_idx].result = Some(result.clone());
-
-                        // Accumulate step output into step_outputs
-                        if let serde_json::Value::Object(ref mut map) = step_outputs {
-                            if step_success {
-                                let output_val = result.output.as_deref()
-                                    .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
-                                    .unwrap_or_else(|| serde_json::json!(result.output));
-                                map.insert(step_id.clone(), output_val);
-                            } else {
-                                map.insert(step_id.clone(), serde_json::json!({
-                                    "error": result.output.as_deref().unwrap_or(""),
-                                    "success": false
-                                }));
-                            }
-                        }
-
-                        execution_summary.push_str(&if is_zh {
-                            format!(
-                                "  结果: {}\n",
-                                if step_success { "成功" } else { "失败" }
-                            )
-                        } else {
-                            format!(
-                                "  Result: {}\n",
-                                if step_success { "OK" } else { "FAILED" }
-                            )
-                        });
-
-                        let _ = self.event_bus.as_ref().expect("EventBus must be injected by AgentBuilder::build()").emit(AgentEvent::PlanStepCompleted {
-                            session_id: ctx.session_id.clone(),
-                            step_id: step_id.clone(),
-                            success: step_success,
-                            result: result.output.clone(),
-                            payload: Some(step_payload.clone()),
-                        });
-
-                        if step_success {
-                            _completed_count += 1;
-                        } else {
-                            if let Some(ref output) = result.output {
-                                execution_summary.push_str(&if is_zh {
-                                    format!("  错误: {output}\n")
-                                } else {
-                                    format!("  Error: {output}\n")
-                                });
-                            }
-
-                            match self
-                                .recovery
-                                .handle_step_failure(
-                                    &plan.phases[phase_idx].steps[step_idx],
-                                    result.output.as_deref().unwrap_or(""),
-                                    0,
-                                    &plan,
-                                    &step_outputs,
-                                )
-                                .await
-                            {
-                                Ok(action) => match action {
-                                    crate::types::RecoveryAction::Retry => {
-                                        execution_summary.push_str(
-                                            if is_zh {
-                                                "  [重试] 系统建议重试该步骤（计划标记为未完全成功）\n"
-                                            } else {
-                                                "  [Retry] System suggests retrying this step (plan marked as not fully successful)\n"
-                                            },
-                                        );
-                                        overall_success = false;
-                                    }
-                                    crate::types::RecoveryAction::Skip => {
-                                        execution_summary.push_str(
-                                            if is_zh {
-                                                "  [跳过] 系统建议跳过该步骤（计划标记为未完全成功）\n"
-                                            } else {
-                                                "  [Skip] System suggests skipping this step (plan marked as not fully successful)\n"
-                                            },
-                                        );
-                                        plan.phases[phase_idx].steps[step_idx].status = StepStatus::Skipped;
-                                        overall_success = false;
-                                    }
-                                    crate::types::RecoveryAction::Abort => {
-                                        execution_summary.push_str(
-                                            if is_zh {
-                                                "  [中止] 系统建议中止计划\n"
-                                            } else {
-                                                "  [Abort] System suggests aborting the plan\n"
-                                            },
-                                        );
-                                        overall_success = false;
-                                        failed_step_name = Some(step_desc.clone());
-                                        plan.phases[phase_idx].status = crate::types::PhaseStatus::Failed;
-                                        break 'phase_loop;
-                                    }
-                                    // Alternative/Replan not handled in PlanExecTool path
-                                    _ => {
-                                        overall_success = false;
-                                        failed_step_name = Some(step_desc.clone());
-                                        plan.phases[phase_idx].status = crate::types::PhaseStatus::Failed;
-                                        break 'phase_loop;
-                                    }
-                                },
-                                Err(_e) => {
-                                    overall_success = false;
-                                    failed_step_name = Some(step_desc.clone());
-                                    plan.phases[phase_idx].status = crate::types::PhaseStatus::Failed;
-                                    break 'phase_loop;
-                                }
-                            }
-                        }
-
-                        step_results.push(json!({
-                            "step": step_desc,
-                            "success": step_success,
-                            "output": result.output,
-                        }));
-                    }
-                    Err(e) => {
-                        // Record circuit breaker failure
-                        if let Some(weak_cb) = &self.circuit_breaker
-                            && let Some(cb) = weak_cb.upgrade()
-                        {
-                            cb.record_failure();
-                        }
-
-                        plan.phases[phase_idx].steps[step_idx].status = StepStatus::Failed;
-                        execution_summary.push_str(&if is_zh {
-                            format!("  执行错误: {e}\n")
-                        } else {
-                            format!("  Execution error: {e}\n")
-                        });
-
-                        let _ = self.event_bus.as_ref().expect("EventBus must be injected by AgentBuilder::build()").emit(AgentEvent::PlanStepCompleted {
-                            session_id: ctx.session_id.clone(),
-                            step_id: step_id.clone(),
-                            success: false,
-                            result: Some(e.to_string()),
-                            payload: Some(step_payload.clone()),
-                        });
-
-                        // Use RecoveryPolicy for error-kind-aware decision when available
-                        if let Some(ref policy) = self.recovery_policy {
-                            let action = policy.with_context(&e, 0);
-                            match action {
-                                crate::types::RecoveryAction::Retry => {
-                                    execution_summary.push_str(
-                                        if is_zh {
-                                            "  [重试] 系统建议重试该步骤（基于错误类型）\n"
-                                        } else {
-                                            "  [Retry] System suggests retrying this step (error-kind based)\n"
-                                        },
-                                    );
-                                    overall_success = false;
-                                    // Don't break — continue to next step (retry would need loop restructuring)
-                                }
-                                crate::types::RecoveryAction::Skip => {
-                                    execution_summary.push_str(
-                                        if is_zh {
-                                            "  [跳过] 系统建议跳过该步骤\n"
-                                        } else {
-                                            "  [Skip] System suggests skipping this step\n"
-                                        },
-                                    );
-                                    plan.phases[phase_idx].steps[step_idx].status = StepStatus::Skipped;
-                                    overall_success = false;
-                                }
-                                crate::types::RecoveryAction::Abort => {
-                                    overall_success = false;
-                                    failed_step_name = Some(step_desc.clone());
-                                    plan.phases[phase_idx].status = crate::types::PhaseStatus::Failed;
-                                    break 'phase_loop;
-                                }
-                                // Alternative/Replan not handled in PlanExecTool path
-                                _ => {
-                                    overall_success = false;
-                                    failed_step_name = Some(step_desc.clone());
-                                    plan.phases[phase_idx].status = crate::types::PhaseStatus::Failed;
-                                    break 'phase_loop;
-                                }
-                            }
-                        } else {
-                            overall_success = false;
-                            failed_step_name = Some(step_desc.clone());
-                            plan.phases[phase_idx].status = crate::types::PhaseStatus::Failed;
-                            break 'phase_loop;
-                        }
-                    }
-                }
-
-                global_step_index += 1;
-            }
-
-            // Phase completed or already marked failed
-            if plan.phases[phase_idx].status == crate::types::PhaseStatus::Running {
-                plan.phases[phase_idx].status = if plan.phases[phase_idx].has_failed() {
-                    crate::types::PhaseStatus::Failed
-                } else {
-                    crate::types::PhaseStatus::Completed
-                };
-            }
-
-            // Skip remaining phases if any step in this phase failed
-            if !overall_success {
-                break 'phase_loop;
-            }
+        
+        let mut config = PlanConfig::new()
+            .with_executor(self.step_executor.clone())
+            .recovery(self.recovery.clone());
+            
+        if let Some(ref policy) = self.recovery_policy {
+            config = config.recovery_policy(policy.clone());
         }
+        
+        // Use the runner to execute the plan steps with full adaptive recovery support
+        let mut event_rx = runner.event_bus.subscribe();
+        
+        let outcome = runner.run_plan_steps(
+            &ctx.session_id,
+            &mut plan,
+            &config,
+            &mut event_rx,
+            &mut |_| Ok(()), // Events are already emitted by the runner to the bus
+        ).await?;
 
-        plan.status = if overall_success && plan.is_completed() {
-            PlanStatus::Completed
-        } else if plan.has_failed() {
-            PlanStatus::Failed
-        } else {
-            PlanStatus::Executing
+        // Save the updated plan state
+        self.plan_store.save_plan(&plan, plan_data.metadata).await?;
+
+        let (summary, success, outcome_str) = match &outcome {
+            crate::types::RunOutcome::Completed => (
+                if is_zh { format!("计划 '{}' 执行成功。", objective) } else { format!("Plan '{}' completed successfully.", objective) },
+                true,
+                "completed",
+            ),
+            crate::types::RunOutcome::Failed { error } => (
+                if is_zh { format!("计划 '{}' 执行失败: {}", objective, error) } else { format!("Plan '{}' failed: {}", objective, error) },
+                false,
+                "failed",
+            ),
+            crate::types::RunOutcome::MaxTurnsExceeded { .. } => (
+                if is_zh { format!("计划 '{}' 执行中断。", objective) } else { format!("Plan '{}' execution interrupted.", objective) },
+                false,
+                "max_turns_exceeded",
+            ),
+            crate::types::RunOutcome::Cancelled => (
+                if is_zh { format!("计划 '{}' 执行中断。", objective) } else { format!("Plan '{}' execution interrupted.", objective) },
+                false,
+                "cancelled",
+            ),
         };
-
-        self.plan_store
-            .save_plan(&plan, plan_data.metadata)
-            .await?;
-
-        if overall_success {
-            execution_summary.push_str(
-                if is_zh { "所有步骤执行完毕。" } else { "All steps completed." }
-            );
-        }
-
-        let _ = self.event_bus.as_ref().expect("EventBus must be injected by AgentBuilder::build()").emit(AgentEvent::PlanCompleted {
-            session_id: ctx.session_id.clone(),
-            plan_id: plan_id.clone(),
-            success: overall_success,
-        });
 
         Ok(ToolOutput {
-            summary: execution_summary,
+            summary,
             raw: Some(json!({
                 "objective": objective,
                 "plan_id": plan_id,
-                "steps": step_results,
-                "success": overall_success,
-                "failed_step": failed_step_name,
+                "success": success,
+                "outcome": outcome_str,
             })),
             control_flow: ToolControlFlow::Continue,
             truncation: None,

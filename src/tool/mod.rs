@@ -171,11 +171,6 @@ impl ToolRegistry {
 
     /// Inject the internal `EventBus` into framework-provided tools that
     /// implement `set_event_bus` (PlanOrchestrator, PlanExecTool).
-    ///
-    /// **Calling order constraint**: This must be called *after* all tools are
-    /// registered and *before* the `ToolRegistry` is moved into `ToolEngine`.
-    /// Any `Arc<dyn Tool>` references held before this call will point to the
-    /// old (event_bus=None) clones and must not be used after injection.
     pub(crate) fn inject_event_bus(&mut self, event_bus: &crate::engine::EventBus) {
         let names: Vec<String> = self.tools.keys().cloned().collect();
         for name in names {
@@ -197,6 +192,18 @@ impl ToolRegistry {
                             self.tools.insert(name.clone(), Arc::new(clone));
                         }
                     }
+                }
+            }
+        }
+    }
+
+    /// Inject the `PlanRunner` into framework-provided tools (via `Weak` to avoid circular Arc).
+    /// Uses `OnceLock` internally so injection can happen through shared references.
+    pub(crate) fn inject_plan_runner(&self, runner: &Arc<crate::engine::PlanRunner>) {
+        for tool in self.tools.values() {
+            if let Some(any) = tool.as_any() {
+                if let Some(exec) = any.downcast_ref::<crate::engine::PlanExecTool>() {
+                    exec.set_plan_runner(runner);
                 }
             }
         }
