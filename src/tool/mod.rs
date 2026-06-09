@@ -71,9 +71,26 @@ pub trait Tool: Send + Sync {
     fn definition(&self) -> Value;
     async fn call(&self, args: &Value, ctx: &ToolContext) -> AgentResult<ToolOutput>;
 
-    /// Support downcasting for framework-provided tools that need internal
-    /// infrastructure (e.g. `EventBus` injection). Default returns `None`.
-    fn as_any(&self) -> Option<&dyn std::any::Any> { None }
+    /// Return `Some(&dyn FrameworkTool)` if this tool is a framework-internal tool
+    /// that needs engine infrastructure injection (EventBus, PlanRunner).
+    /// Default returns `None` — user-defined tools need not override this.
+    #[allow(private_interfaces)]
+    fn as_framework_tool(&self) -> Option<&dyn FrameworkTool> { None }
+}
+
+/// Marker trait for framework-internal tools that require engine infrastructure.
+///
+/// Framework tools implement this trait to receive `EventBus` and `PlanRunner`
+/// references during `AgentBuilder::build()`. User-defined tools do not need this.
+///
+/// All methods have default no-op implementations so only the needed injection
+/// points need to be overridden.
+pub(crate) trait FrameworkTool: Tool {
+    /// Inject the internal event bus. Called once during build.
+    fn set_event_bus(&self, _event_bus: crate::engine::EventBus) {}
+
+    /// Inject the PlanRunner reference. Called once after PlanRunner construction.
+    fn set_plan_runner(&self, _runner: &Arc<crate::engine::PlanRunner>) {}
 }
 
 #[async_trait]
@@ -169,42 +186,20 @@ impl ToolRegistry {
         self.tools.is_empty()
     }
 
-    /// Inject the internal `EventBus` into framework-provided tools that
-    /// implement `set_event_bus` (PlanOrchestrator, PlanExecTool).
-    pub(crate) fn inject_event_bus(&mut self, event_bus: &crate::engine::EventBus) {
-        let names: Vec<String> = self.tools.keys().cloned().collect();
-        for name in names {
-            let needs_inject = self.tools.get(&name).and_then(|t| t.as_any()).map(|any| {
-                any.downcast_ref::<crate::engine::PlanOrchestrator>().is_some()
-                    || any.downcast_ref::<crate::engine::PlanExecTool>().is_some()
-            }).unwrap_or(false);
-
-            if needs_inject {
-                if let Some(tool) = self.tools.remove(&name) {
-                    if let Some(any) = tool.as_any() {
-                        if let Some(p) = any.downcast_ref::<crate::engine::PlanOrchestrator>() {
-                            let mut clone = p.clone();
-                            clone.set_event_bus(event_bus.clone());
-                            self.tools.insert(name.clone(), Arc::new(clone));
-                        } else if let Some(p) = any.downcast_ref::<crate::engine::PlanExecTool>() {
-                            let mut clone = p.clone();
-                            clone.set_event_bus(event_bus.clone());
-                            self.tools.insert(name.clone(), Arc::new(clone));
-                        }
-                    }
-                }
+    /// Inject the internal `EventBus` into framework-provided tools.
+    pub(crate) fn inject_event_bus(&self, event_bus: &crate::engine::EventBus) {
+        for tool in self.tools.values() {
+            if let Some(fw) = tool.as_framework_tool() {
+                fw.set_event_bus(event_bus.clone());
             }
         }
     }
 
     /// Inject the `PlanRunner` into framework-provided tools (via `Weak` to avoid circular Arc).
-    /// Uses `OnceLock` internally so injection can happen through shared references.
     pub(crate) fn inject_plan_runner(&self, runner: &Arc<crate::engine::PlanRunner>) {
         for tool in self.tools.values() {
-            if let Some(any) = tool.as_any() {
-                if let Some(exec) = any.downcast_ref::<crate::engine::PlanExecTool>() {
-                    exec.set_plan_runner(runner);
-                }
+            if let Some(fw) = tool.as_framework_tool() {
+                fw.set_plan_runner(runner);
             }
         }
     }

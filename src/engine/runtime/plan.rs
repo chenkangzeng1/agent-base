@@ -26,6 +26,18 @@ pub(super) enum StepFailureAction {
     Abort,
 }
 
+/// Accumulated state for plan execution, shared across step failure recovery calls.
+pub(super) struct PlanExecutionContext {
+    /// Retry count per root step (keyed by root_step_id).
+    pub retry_counts: std::collections::HashMap<String, usize>,
+    /// Alternative count per root step (keyed by root_step_id).
+    pub alternative_counts: std::collections::HashMap<String, usize>,
+    /// Alternative chain mapping: alternative_step_id -> root_step_id.
+    pub root_step_map: std::collections::HashMap<String, String>,
+    /// Global replan count for the plan.
+    pub replan_count: usize,
+}
+
 impl PlanRunner {
     /// Execute a pre-built `ExecutionPlan`.
     pub async fn run_plan<F>(
@@ -194,14 +206,13 @@ impl PlanRunner {
 
         // step_outputs accumulates step outputs, keyed by step_id.
         let mut step_outputs = json!({});
-        // Track retry count per root step (keyed by root_step_id).
-        let mut retry_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-        // Track alternative count per root step (keyed by root_step_id).
-        let mut alternative_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-        // Track replan count (global for the plan).
-        let mut replan_count: usize = 0;
-        // Track alternative chain: alternative_step_id -> root_step_id.
-        let mut root_step_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+        // Shared recovery state across step failure handling calls.
+        let mut exec_ctx = PlanExecutionContext {
+            retry_counts: std::collections::HashMap::new(),
+            alternative_counts: std::collections::HashMap::new(),
+            root_step_map: std::collections::HashMap::new(),
+            replan_count: 0,
+        };
 
         for phase_idx in 0..plan.phases.len() {
             plan.phases[phase_idx].status = crate::types::PhaseStatus::Running;
@@ -297,8 +308,7 @@ impl PlanRunner {
                             match self.handle_step_failure_progressive(
                                 session_id, plan, phase_idx, step_idx,
                                 &step_id, &error, &step_payload,
-                                &mut retry_counts, &mut alternative_counts,
-                                &mut root_step_map, &mut replan_count,
+                                &mut exec_ctx,
                                 config, &recovery, &recovery_policy,
                                 &step_outputs, event_rx, on_event,
                             ).await? {
@@ -317,8 +327,7 @@ impl PlanRunner {
                         match self.handle_step_failure_progressive(
                             session_id, plan, phase_idx, step_idx,
                             &step_id, &e.to_string(), &step_payload,
-                            &mut retry_counts, &mut alternative_counts,
-                            &mut root_step_map, &mut replan_count,
+                            &mut exec_ctx,
                             config, &recovery, &recovery_policy,
                             &step_outputs, event_rx, &mut *on_event,
                         ).await? {
@@ -355,7 +364,6 @@ impl PlanRunner {
     }
 
     /// Progressive step failure handler implementing the 4-level recovery pipeline.
-    #[allow(clippy::too_many_arguments)]
     pub(super) async fn handle_step_failure_progressive<F>(
         &self,
         session_id: &SessionId,
@@ -365,10 +373,7 @@ impl PlanRunner {
         step_id: &str,
         error: &str,
         step_payload: &serde_json::Value,
-        retry_counts: &mut std::collections::HashMap<String, usize>,
-        alternative_counts: &mut std::collections::HashMap<String, usize>,
-        root_step_map: &mut std::collections::HashMap<String, String>,
-        replan_count: &mut usize,
+        ctx: &mut PlanExecutionContext,
         config: &PlanConfig,
         recovery: &Option<Arc<dyn RecoveryStrategy>>,
         recovery_policy: &Option<Arc<crate::engine::plan::RecoveryPolicy>>,
@@ -380,17 +385,17 @@ impl PlanRunner {
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
         // Resolve root step ID for quota accounting
-        let root_id = root_step_map
+        let root_id = ctx.root_step_map
             .get(step_id)
             .cloned()
             .unwrap_or_else(|| step_id.to_string());
-        let retry = retry_counts.get(&root_id).copied().unwrap_or(0);
+        let retry = ctx.retry_counts.get(&root_id).copied().unwrap_or(0);
 
         // ── Adaptive recovery path (when configured) ──
         if config.adaptive_recovery.is_some() {
             // Level 0: Framework-level retry with linear backoff
             if retry < config.max_retries {
-                retry_counts.insert(root_id.clone(), retry + 1);
+                ctx.retry_counts.insert(root_id.clone(), retry + 1);
                 let backoff_ms = 100 * (retry + 1) as u64;
                 tracing::debug!(
                     session_id = session_id.id, %step_id,
@@ -417,17 +422,17 @@ impl PlanRunner {
             }
 
             // Level 1 & 2: AdaptiveRecoveryStrategy
-            let alt = alternative_counts.get(&root_id).copied().unwrap_or(0);
+            let alt = ctx.alternative_counts.get(&root_id).copied().unwrap_or(0);
             let strategy = config.adaptive_recovery.as_ref().unwrap();
 
-            let ctx = RecoveryContext {
+            let recovery_ctx = RecoveryContext {
                 session_id: session_id.clone(),
                 failed_step: plan.phases[phase_idx].steps[step_idx].clone(),
                 root_step_id: root_id.clone(),
                 error: error.to_string(),
                 retry_count: retry,
                 alternative_count: alt,
-                replan_count: *replan_count,
+                replan_count: ctx.replan_count,
                 max_retries: config.max_retries,
                 max_alternatives: config.max_alternatives,
                 max_replans: config.max_replans,
@@ -436,14 +441,14 @@ impl PlanRunner {
                 available_tools: self.tool_engine.definitions(),
             };
 
-            let action = strategy.recover(&ctx).await.unwrap_or(RecoveryAction::Abort);
+            let action = strategy.recover(&recovery_ctx).await.unwrap_or(RecoveryAction::Abort);
 
             match action {
                 RecoveryAction::Alternative { step: new_step, root_step_id } => {
-                    alternative_counts.insert(root_step_id.clone(), alt + 1);
-                    root_step_map.insert(new_step.id.clone(), root_step_id.clone());
-                    let inherited_retry = retry_counts.get(&root_step_id).copied().unwrap_or(0);
-                    retry_counts.insert(root_step_id.clone(), inherited_retry);
+                    ctx.alternative_counts.insert(root_step_id.clone(), alt + 1);
+                    ctx.root_step_map.insert(new_step.id.clone(), root_step_id.clone());
+                    let inherited_retry = ctx.retry_counts.get(&root_step_id).copied().unwrap_or(0);
+                    ctx.retry_counts.insert(root_step_id.clone(), inherited_retry);
 
                     let new_step_id = new_step.id.clone();
                     tracing::debug!(
@@ -478,13 +483,13 @@ impl PlanRunner {
                     return Ok(StepFailureAction::JumpTo(new_start_idx));
                 }
                 RecoveryAction::Replan { steps: new_steps, clear_future_phases }
-                    if *replan_count < config.max_replans =>
+                    if ctx.replan_count < config.max_replans =>
                 {
-                    *replan_count += 1;
+                    ctx.replan_count += 1;
                     tracing::debug!(
                         session_id = session_id.id,
                         plan_id = %plan.id,
-                        replan_count = *replan_count,
+                        replan_count = ctx.replan_count,
                         "Level 2: replanning"
                     );
 
@@ -492,7 +497,7 @@ impl PlanRunner {
                         AgentEvent::PlanReplanning {
                             session_id: session_id.clone(),
                             plan_id: plan.id.clone(),
-                            replan_count: *replan_count,
+                            replan_count: ctx.replan_count,
                         },
                         event_rx,
                         on_event,
@@ -552,7 +557,7 @@ impl PlanRunner {
         }
 
         // ── Level 3: Fallback to old RecoveryStrategy ──
-        let current_retry = retry_counts.get(&root_id).copied().unwrap_or(0);
+        let current_retry = ctx.retry_counts.get(&root_id).copied().unwrap_or(0);
         let action: RecoveryAction = if let Some(rp) = recovery_policy {
             let err = AgentError::internal(error);
             rp.with_context(&err, current_retry)
@@ -574,10 +579,10 @@ impl PlanRunner {
             RecoveryAction::Retry => {
                 plan.phases[phase_idx].steps[step_idx].status = StepStatus::Pending;
                 plan.phases[phase_idx].steps[step_idx].result = None;
-                *retry_counts.entry(root_id.clone()).or_insert(0) += 1;
+                *ctx.retry_counts.entry(root_id.clone()).or_insert(0) += 1;
                 tracing::debug!(
                     session_id = session_id.id, %step_id,
-                    retry = retry_counts[&root_id],
+                    retry = ctx.retry_counts[&root_id],
                     "Level 3: fallback retry"
                 );
                 Ok(StepFailureAction::Retry)
@@ -609,9 +614,9 @@ impl PlanRunner {
                     AgentEvent::PlanRecoveryExhausted {
                         session_id: session_id.clone(),
                         step_id: step_id.to_string(),
-                        retries: retry_counts.get(&root_id).copied().unwrap_or(0),
-                        alternatives: alternative_counts.get(&root_id).copied().unwrap_or(0),
-                        replans: *replan_count,
+                        retries: ctx.retry_counts.get(&root_id).copied().unwrap_or(0),
+                        alternatives: ctx.alternative_counts.get(&root_id).copied().unwrap_or(0),
+                        replans: ctx.replan_count,
                     },
                     event_rx,
                     on_event,
@@ -680,7 +685,7 @@ impl PlanRunner {
                 user_event_tx,
                 llm_client: Some(self.llm_engine.client.clone()),
                 session_store: Some(self.session_manager.session_store().clone()),
-                language: crate::types::Language::En,
+                language: self.config.language.clone(),
             };
             exec.execute_step(step, step_outputs, &tool_ctx).await
         } else {

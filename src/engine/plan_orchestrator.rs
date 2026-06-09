@@ -7,7 +7,7 @@ use crate::engine::{EventBus, PlanGenerator, PlanStore, StepExecutor};
 use crate::engine::plan::{RecoveryPolicy, PlanConfig};
 use crate::engine::circuit_breaker::CircuitBreaker;
 use crate::engine::runtime::PlanRunner;
-use crate::tool::{Tool, ToolContext, ToolControlFlow, ToolOutput};
+use crate::tool::{FrameworkTool, Tool, ToolContext, ToolControlFlow, ToolOutput};
 use crate::types::{AgentError, AgentEvent, AgentResult, RuntimeEvent};
 
 /// PlanOrchestrator is a domain-agnostic tool for creating execution plans.
@@ -18,7 +18,7 @@ pub struct PlanOrchestrator {
     plan_generator: Arc<dyn PlanGenerator>,
     step_executor: Arc<dyn StepExecutor>,
     plan_store: Arc<dyn PlanStore>,
-    event_bus: Option<EventBus>,
+    event_bus: std::sync::OnceLock<EventBus>,
 }
 
 impl PlanOrchestrator {
@@ -31,13 +31,8 @@ impl PlanOrchestrator {
             plan_generator,
             step_executor,
             plan_store,
-            event_bus: None,
+            event_bus: std::sync::OnceLock::new(),
         }
-    }
-
-    /// Inject the internal event bus. Called by `AgentBuilder::build()`.
-    pub(crate) fn set_event_bus(&mut self, event_bus: EventBus) {
-        self.event_bus = Some(event_bus);
     }
 
     pub fn with_step_executor(&mut self, step_executor: Arc<dyn StepExecutor>) {
@@ -51,7 +46,8 @@ impl Tool for PlanOrchestrator {
         "create_plan"
     }
 
-    fn as_any(&self) -> Option<&dyn std::any::Any> { Some(self) }
+    #[allow(private_interfaces)]
+    fn as_framework_tool(&self) -> Option<&dyn FrameworkTool> { Some(self) }
 
     fn definition(&self) -> Value {
         json!({
@@ -121,7 +117,7 @@ impl Tool for PlanOrchestrator {
                 plan.status = crate::types::PlanStatus::AwaitingConfirmation;
 
                 // Drain plan generation events and emit to EventBus
-                if let Some(bus) = &self.event_bus {
+                if let Some(bus) = self.event_bus.get() {
                     while let Ok(event) = plan_event_rx.try_recv() {
                         let agent_event = match event {
                             RuntimeEvent::PlanGenerating { .. } => AgentEvent::PlanGenerating {
@@ -151,7 +147,7 @@ impl Tool for PlanOrchestrator {
                     .save_plan(&plan, json!({"session_id": ctx.session_id.to_string()}))
                     .await?;
 
-                let _ = self.event_bus.as_ref().expect("EventBus must be injected by AgentBuilder::build()").emit(AgentEvent::PlanGenerated {
+                let _ = self.event_bus.get().expect("EventBus must be injected by AgentBuilder::build()").emit(AgentEvent::PlanGenerated {
                     session_id: ctx.session_id.clone(),
                     plan: plan.clone(),
                 });
@@ -195,7 +191,7 @@ impl Tool for PlanOrchestrator {
                 })
             }
             Err(e) => {
-                let _ = self.event_bus.as_ref().expect("EventBus must be injected by AgentBuilder::build()").emit(AgentEvent::PlanFailed {
+                let _ = self.event_bus.get().expect("EventBus must be injected by AgentBuilder::build()").emit(AgentEvent::PlanFailed {
                     session_id: ctx.session_id.clone(),
                     plan_id: plan_id.clone(),
                     error: e.to_string(),
@@ -223,6 +219,12 @@ impl Tool for PlanOrchestrator {
     }
 }
 
+impl FrameworkTool for PlanOrchestrator {
+    fn set_event_bus(&self, event_bus: EventBus) {
+        let _ = self.event_bus.set(event_bus);
+    }
+}
+
 /// PlanExecTool is a domain-agnostic tool for executing previously created plans.
 ///
 /// Steps are executed by the configured StepExecutor. If the StepExecutor is
@@ -236,7 +238,7 @@ pub struct PlanExecTool {
     step_executor: Arc<dyn StepExecutor>,
     plan_store: Arc<dyn PlanStore>,
     recovery: Arc<dyn crate::engine::RecoveryStrategy>,
-    event_bus: Option<EventBus>,
+    event_bus: std::sync::OnceLock<EventBus>,
     /// Deferred injection: set once after PlanRunner is constructed.
     /// Uses `OnceLock` to break the circular dependency (PlanRunner owns
     /// ToolEngine which owns this tool, but this tool needs a ref to PlanRunner).
@@ -255,22 +257,11 @@ impl PlanExecTool {
             step_executor,
             plan_store,
             recovery,
-            event_bus: None,
+            event_bus: std::sync::OnceLock::new(),
             plan_runner: std::sync::OnceLock::new(),
             recovery_policy: None,
             circuit_breaker: None,
         }
-    }
-
-    /// Inject the internal event bus. Called by `AgentBuilder::build()`.
-    pub(crate) fn set_event_bus(&mut self, event_bus: EventBus) {
-        self.event_bus = Some(event_bus);
-    }
-
-    /// Inject the PlanRunner reference (deferred via OnceLock).
-    /// Can be called through `&self` — safe because OnceLock::set is atomic.
-    pub(crate) fn set_plan_runner(&self, runner: &Arc<PlanRunner>) {
-        let _ = self.plan_runner.set(Arc::downgrade(runner));
     }
 
     /// Set an adaptive recovery policy for error-kind-aware decisions.
@@ -292,7 +283,8 @@ impl Tool for PlanExecTool {
         "execute_plan"
     }
 
-    fn as_any(&self) -> Option<&dyn std::any::Any> { Some(self) }
+    #[allow(private_interfaces)]
+    fn as_framework_tool(&self) -> Option<&dyn FrameworkTool> { Some(self) }
 
     fn definition(&self) -> Value {
         json!({
@@ -417,5 +409,15 @@ impl Tool for PlanExecTool {
             control_flow: ToolControlFlow::Continue,
             truncation: None,
         })
+    }
+}
+
+impl FrameworkTool for PlanExecTool {
+    fn set_event_bus(&self, event_bus: EventBus) {
+        let _ = self.event_bus.set(event_bus);
+    }
+
+    fn set_plan_runner(&self, runner: &Arc<PlanRunner>) {
+        let _ = self.plan_runner.set(Arc::downgrade(runner));
     }
 }

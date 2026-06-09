@@ -171,7 +171,7 @@ impl AgentBuilder {
         self
     }
 
-    pub fn build(mut self) -> crate::types::AgentResult<AgentRuntime> {
+    pub fn build(self) -> crate::types::AgentResult<AgentRuntime> {
         tracing::info!(
             tool_count = self.tools.len(),
             middleware_count = self.middlewares.len(),

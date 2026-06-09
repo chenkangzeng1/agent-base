@@ -4,7 +4,7 @@ use serde_json::Value;
 use tokio::sync::{broadcast, mpsc};
 
 use crate::engine::approval::ApprovalHandler;
-use crate::engine::pipeline::DefaultPipeline;
+use crate::engine::pipeline::{DefaultPipeline, ToolExecutionPipeline};
 use crate::engine::recovery::ToolErrorRecovery;
 use crate::engine::runtime::event_bus::EventBus;
 use crate::engine::runtime::session_manager::SessionManager;
@@ -43,10 +43,10 @@ impl ToolEngine {
         self.tools.definitions()
     }
 
-    /// Get the inner execution pipeline (without event emission).
+    /// Get the inner pipeline (policy hooks only, no timeout/truncation).
     ///
-    /// Plan step execution uses this pipeline directly — same policy hooks,
-    /// timeout, and truncation as ReAct, but without ToolCallStarted/Finished events.
+    /// Used by [`AgentRuntime::create_step_executor`] to construct a per-call
+    /// pipeline that inherits the policy but adds timeout/truncation from config.
     pub fn execution_pipeline(&self) -> DefaultPipeline {
         self.pipeline.clone()
     }
@@ -72,19 +72,15 @@ impl ToolEngine {
         tracing::debug!(session_id = session_id.id, tool = name, args_len = tool_args_json.len(), "execute tool start");
 
         // Emit ToolCallStarted via internal EventBus
-        tracing::info!(session_id = session_id.id, tool = name, "ToolEngine: emitting ToolCallStarted to broadcast");
         self.event_bus.emit(AgentEvent::ToolCallStarted {
             session_id: session_id.clone(),
             tool_name: name.to_string(),
             args_json: tool_args_json.to_string(),
         });
-        tracing::info!(session_id = session_id.id, tool = name, "ToolEngine: draining broadcast events via on_event");
         EventBus::drain_async_events(event_rx, on_event)?;
-        tracing::info!(session_id = session_id.id, tool = name, "ToolEngine: broadcast drain complete");
 
-        // Create UserEvent channel for this tool invocation
+        // Build ToolContext with UserEvent channel for tool-produced events
         let (user_event_tx, mut user_event_rx) = mpsc::unbounded_channel::<UserEvent>();
-
         let tool_context = ToolContext {
             session_id: session_id.clone(),
             user_event_tx,
@@ -93,56 +89,38 @@ impl ToolEngine {
             language: language.clone(),
         };
 
-        if let Some(policy) = self.tool_policy.as_ref() {
-            policy.before_call(name, args, &tool_context)?;
-        }
-
+        // Lookup tool and execute via pipeline.
+        // The pipeline handles: before_call hook → timeout → truncation → after_call hook.
+        // ToolEngine handles: event emission and UserEvent forwarding.
         tracing::debug!(session_id = session_id.id, tool = name, "looking up tool in registry");
         let tool_result = match self.tools.get(name) {
             Some(tool) => {
-                tracing::debug!(session_id = session_id.id, tool = name, "tool found in registry");
-                let future = tool.call(args, &tool_context);
+                tracing::debug!(session_id = session_id.id, tool = name, "tool found, executing via pipeline");
+
+                // Per-call pipeline: inherits policy from self.pipeline, adds caller's timeout/truncation.
+                let pipeline = DefaultPipeline::new(
+                    self.pipeline.policy(),
+                    tool_timeout_ms,
+                    max_output_chars,
+                );
+
+                let future = pipeline.execute(tool.as_ref(), args, &tool_context);
                 tokio::pin!(future);
 
-                let output = if let Some(duration) = tool_timeout_ms {
-                    let sleep = tokio::time::sleep(std::time::Duration::from_millis(duration));
-                    tokio::pin!(sleep);
-                    loop {
-                        tokio::select! {
-                            result = &mut future => break result,
-                            Some(user_event) = user_event_rx.recv() => {
-                                // Forward UserEvent as RuntimeEvent::UserEvent
-                                on_event(RuntimeEvent::UserEvent {
-                                    session_id: session_id.clone(),
-                                    event: user_event,
-                                })?;
-                            }
-                            _ = &mut sleep => {
-                                tracing::warn!(session_id = session_id.id, tool_name = name, "Tool execution timed out");
-                                break Ok(ToolOutput {
-                                    summary: "[Tool Timeout]".to_string(),
-                                    raw: None,
-                                    control_flow: ToolControlFlow::Continue,
-                                    truncation: None,
-                                });
-                            }
-                        }
-                    }
-                } else {
-                    loop {
-                        tokio::select! {
-                            result = &mut future => break result,
-                            Some(user_event) = user_event_rx.recv() => {
-                                on_event(RuntimeEvent::UserEvent {
-                                    session_id: session_id.clone(),
-                                    event: user_event,
-                                })?;
-                            }
+                // Execute with UserEvent forwarding interleaved via tokio::select!
+                let output = loop {
+                    tokio::select! {
+                        result = &mut future => break result,
+                        Some(user_event) = user_event_rx.recv() => {
+                            on_event(RuntimeEvent::UserEvent {
+                                session_id: session_id.clone(),
+                                event: user_event,
+                            })?;
                         }
                     }
                 };
 
-                // Drain remaining UserEvents
+                // Drain remaining UserEvents after tool completes
                 while let Ok(user_event) = user_event_rx.try_recv() {
                     on_event(RuntimeEvent::UserEvent {
                         session_id: session_id.clone(),
@@ -151,24 +129,7 @@ impl ToolEngine {
                 }
 
                 match output {
-                    Ok(mut output) => {
-                        if let Some(max_chars) = max_output_chars {
-                            if output.summary.len() > max_chars {
-                                let original_summary_len = output.summary.len();
-                                let original_raw_len = output.raw.as_ref().map(|v| v.to_string().len());
-                                tracing::debug!(session_id = session_id.id, tool = name, original_len = original_summary_len, max_chars, "tool output truncated");
-                                let truncated_len = max_chars.saturating_sub("...(truncated)".len());
-                                output.summary.truncate(truncated_len);
-                                output.summary.push_str("...(truncated)");
-                                output.truncation = Some(crate::tool::TruncationInfo {
-                                    original_summary_len,
-                                    original_raw_len,
-                                    max_allowed_chars: max_chars,
-                                });
-                            }
-                        }
-                        output
-                    }
+                    Ok(output) => output,
                     Err(e) => {
                         tracing::error!(session_id = session_id.id, tool_name = name, error = %e, "Tool execution failed");
                         return Err(AgentError::ToolExecution {
@@ -189,10 +150,7 @@ impl ToolEngine {
             }
         };
 
-        if let Some(policy) = self.tool_policy.as_ref() {
-            policy.after_call(name, args, &tool_result, &tool_context)?;
-        }
-
+        // Emit ToolCallFinished via internal EventBus
         self.event_bus.emit(AgentEvent::ToolCallFinished {
             session_id: session_id.clone(),
             tool_name: name.to_string(),

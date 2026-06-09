@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use agent_base::{AgentResult, AgentConfig, ConfigManager, AgentError, ConfigError};
+    use agent_base::{AgentResult, AppConfig, ConfigManager, AgentError, ConfigError};
 
     #[tokio::test]
     async fn test_enhanced_error_types() {
@@ -31,7 +31,7 @@ mod tests {
         // 测试第二阶段的配置管理器
 
         // 创建默认配置
-        let config = AgentConfig::default();
+        let config = AppConfig::default();
         let mut manager = ConfigManager::new(config);
 
         // 验证默认值
@@ -62,7 +62,7 @@ mod tests {
         let config_path = temp_file.path().to_str().unwrap().to_string();
 
         // 创建一个带有自定义值的配置
-        let config = AgentConfig {
+        let config = AppConfig {
             llm_timeout: 25000,
             tool_timeout: 15000,
             max_tool_output_chars: 20000,
@@ -131,7 +131,7 @@ mod tests {
         // 测试配置序列化和反序列化
 
         // 原始配置
-        let original_config = AgentConfig {
+        let original_config = AppConfig {
             llm_timeout: 18000,
             tool_timeout: 9000,
             max_tool_output_chars: 15000,
@@ -148,7 +148,7 @@ mod tests {
         // 序列化到JSON
         let json_str = serde_json::to_string(&original_config).unwrap();
         // 从JSON反序列化
-        let deserialized_config: AgentConfig = serde_json::from_str(&json_str).unwrap();
+        let deserialized_config: AppConfig = serde_json::from_str(&json_str).unwrap();
 
         // 验证值一致
         assert_eq!(original_config.llm_timeout, deserialized_config.llm_timeout);

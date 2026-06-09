@@ -66,7 +66,7 @@ impl StepExecutor for ToolCallingStepExecutor {
     ) -> AgentResult<StepResult> {
         let start = std::time::Instant::now();
 
-        log::debug!(
+        tracing::debug!(
             "ToolCallingStepExecutor: executing step {} with payload: {}",
             step.id,
             step.payload
@@ -80,7 +80,7 @@ impl StepExecutor for ToolCallingStepExecutor {
 
         let args = step.payload.get("args").unwrap_or(&Value::Null);
 
-        log::debug!(
+        tracing::debug!(
             "ToolCallingStepExecutor: calling tool '{}' with args: {}",
             tool_name,
             args
@@ -100,7 +100,7 @@ impl StepExecutor for ToolCallingStepExecutor {
         let duration = start.elapsed().as_millis() as u64;
         match result {
             Ok(output) => {
-                log::debug!(
+                tracing::debug!(
                     "ToolCallingStepExecutor: tool '{}' succeeded in {}ms",
                     tool_name,
                     duration
@@ -113,7 +113,7 @@ impl StepExecutor for ToolCallingStepExecutor {
                 })
             }
             Err(e) => {
-                log::warn!(
+                tracing::warn!(
                     "ToolCallingStepExecutor: tool '{}' failed in {}ms: {}",
                     tool_name,
                     duration,

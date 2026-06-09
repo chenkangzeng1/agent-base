@@ -27,7 +27,7 @@ pub enum ConfigError {
 
 /// 基础配置项
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentConfig {
+pub struct AppConfig {
     pub llm_timeout: u64,           // LLM 调用超时时间（毫秒）
     pub tool_timeout: u64,          // 工具调用超时时间（毫秒）
     pub max_tool_output_chars: usize, // 最大工具输出字符数
@@ -41,7 +41,7 @@ pub struct AgentConfig {
     pub context_window_size: usize, // 上下文窗口大小
 }
 
-impl Default for AgentConfig {
+impl Default for AppConfig {
     fn default() -> Self {
         Self {
             llm_timeout: 30000,              // 30秒
@@ -62,12 +62,12 @@ impl Default for AgentConfig {
 /// 配置管理器
 #[derive(Debug, Clone)]
 pub struct ConfigManager {
-    config: AgentConfig,
+    config: AppConfig,
     overrides: HashMap<String, String>,
 }
 
 impl ConfigManager {
-    pub fn new(config: AgentConfig) -> Self {
+    pub fn new(config: AppConfig) -> Self {
         Self {
             config,
             overrides: HashMap::new(),
@@ -75,7 +75,7 @@ impl ConfigManager {
     }
 
     /// 获取当前配置
-    pub fn get_config(&self) -> &AgentConfig {
+    pub fn get_config(&self) -> &AppConfig {
         &self.config
     }
 
@@ -116,7 +116,7 @@ impl ConfigManager {
     /// 加载配置文件
     pub fn load_from_file(path: &str) -> Result<Self, ConfigError> {
         let content = std::fs::read_to_string(path)?;
-        let config: AgentConfig = serde_json::from_str(&content)?;
+        let config: AppConfig = serde_json::from_str(&content)?;
         Ok(Self::new(config))
     }
 
@@ -129,7 +129,7 @@ impl ConfigManager {
 
     /// 从环境变量加载配置
     pub fn load_from_env() -> Result<Self, ConfigError> {
-        let mut config = AgentConfig::default();
+        let mut config = AppConfig::default();
 
         if let Ok(val) = std::env::var("AGENT_LLM_TIMEOUT") {
             if let Ok(parsed) = val.parse::<u64>() {
@@ -189,7 +189,7 @@ mod tests {
 
     #[test]
     fn test_default_config() {
-        let config = AgentConfig::default();
+        let config = AppConfig::default();
 
         assert_eq!(config.llm_timeout, 30000);
         assert_eq!(config.tool_timeout, 10000);
@@ -201,7 +201,7 @@ mod tests {
 
     #[test]
     fn test_config_manager_basics() {
-        let config = AgentConfig {
+        let config = AppConfig {
             llm_timeout: 5000,
             tool_timeout: 8000,
             ..Default::default()
@@ -216,7 +216,7 @@ mod tests {
 
     #[test]
     fn test_config_overrides() {
-        let config = AgentConfig {
+        let config = AppConfig {
             llm_timeout: 5000,
             ..Default::default()
         };
@@ -230,7 +230,7 @@ mod tests {
 
     #[test]
     fn test_missing_config_field() {
-        let manager = ConfigManager::new(AgentConfig::default());
+        let manager = ConfigManager::new(AppConfig::default());
 
         // 无效的配置键应该返回 None
         let result: Option<u64> = manager.get("invalid_key");
@@ -239,9 +239,9 @@ mod tests {
 
     #[test]
     fn test_config_serialization() {
-        let original_config = AgentConfig::default();
+        let original_config = AppConfig::default();
         let serialized = serde_json::to_string(&original_config).unwrap();
-        let deserialized: AgentConfig = serde_json::from_str(&serialized).unwrap();
+        let deserialized: AppConfig = serde_json::from_str(&serialized).unwrap();
 
         assert_eq!(original_config.llm_timeout, deserialized.llm_timeout);
         assert_eq!(original_config.tool_timeout, deserialized.tool_timeout);

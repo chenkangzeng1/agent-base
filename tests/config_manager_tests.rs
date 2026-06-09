@@ -1,11 +1,11 @@
 #[cfg(test)]
 mod tests {
-    use agent_base::{AgentResult, ConfigManager, AgentConfig};
+    use agent_base::{AgentResult, ConfigManager, AppConfig};
 
     #[tokio::test]
     async fn test_config_manager_creation() -> AgentResult<()> {
         // 测试配置管理器的基本创建
-        let config = AgentConfig::default();
+        let config = AppConfig::default();
         let manager = ConfigManager::new(config);
 
         assert_eq!(manager.get::<u64>("llm_timeout"), Some(30000));
@@ -17,7 +17,7 @@ mod tests {
     #[tokio::test]
     async fn test_config_overrides() -> AgentResult<()> {
         // 测试配置覆盖功能
-        let config = AgentConfig {
+        let config = AppConfig {
             llm_timeout: 5000,
             tool_timeout: 8000,
             ..Default::default()
@@ -42,7 +42,7 @@ mod tests {
     #[tokio::test]
     async fn test_config_serialization_roundtrip() -> AgentResult<()> {
         // 测试配置序列化和反序列化
-        let original_config = AgentConfig {
+        let original_config = AppConfig {
             llm_timeout: 12345,
             tool_timeout: 6789,
             max_tool_output_chars: 5000,
@@ -52,7 +52,7 @@ mod tests {
         };
 
         let json_str = serde_json::to_string(&original_config).unwrap();
-        let deserialized_config: AgentConfig = serde_json::from_str(&json_str).unwrap();
+        let deserialized_config: AppConfig = serde_json::from_str(&json_str).unwrap();
 
         assert_eq!(original_config.llm_timeout, deserialized_config.llm_timeout);
         assert_eq!(original_config.tool_timeout, deserialized_config.tool_timeout);
@@ -72,7 +72,7 @@ mod tests {
         let config_path = temp_file.path().to_str().unwrap().to_string();
 
         // 创建一个配置对象
-        let config = AgentConfig {
+        let config = AppConfig {
             llm_timeout: 9999,
             tool_timeout: 8888,
             ..Default::default()
@@ -126,7 +126,7 @@ mod tests {
     #[tokio::test]
     async fn test_config_manager_with_invalid_values() -> AgentResult<()> {
         // 创建一个包含无效值的配置管理器
-        let config = AgentConfig::default();
+        let config = AppConfig::default();
         let mut manager = ConfigManager::new(config);
 
         // 尝试设置无效的覆盖值（无效的JSON）
@@ -143,7 +143,7 @@ mod tests {
     #[tokio::test]
     async fn test_config_manager_edge_cases() -> AgentResult<()> {
         // 测试边界情况
-        let config = AgentConfig::default();
+        let config = AppConfig::default();
         let mut manager = ConfigManager::new(config);
 
         // 测试空覆盖
@@ -163,7 +163,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_agent_config_default_values() -> AgentResult<()> {
-        let config = AgentConfig::default();
+        let config = AppConfig::default();
 
         // 验证所有默认值
         assert_eq!(config.llm_timeout, 30000);

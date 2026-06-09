@@ -5,6 +5,28 @@ pub mod types;
 pub mod config_manager;
 
 // ---------------------------------------------------------------------------
+// Prelude — most commonly used types for `use agent_base::prelude::*`
+// ---------------------------------------------------------------------------
+pub mod prelude {
+    pub use crate::engine::{
+        AgentBuilder, AgentRuntime, AgentSession, AllowAllApprovalHandler,
+        DenyAllApprovalHandler,
+    };
+    pub use crate::llm::{
+        AnthropicClient, LlmClient, LlmClientBuilder, OpenAiClient,
+    };
+    pub use crate::tool::{
+        AutoContinueTool, SubAgentTool, Tool, ToolContext, ToolOutput,
+        ToolPolicy, ToolRegistry, TypedTool,
+    };
+    pub use crate::types::{
+        AgentConfig, AgentError, AgentResult, ChatMessage, Language,
+        Message, MessageRole, RunOutcome, RuntimeEvent, SessionId, UserEvent,
+    };
+    pub use crate::config_manager::AppConfig;
+}
+
+// ---------------------------------------------------------------------------
 // Agent Runtime
 // ---------------------------------------------------------------------------
 pub use engine::{
@@ -105,7 +127,7 @@ pub use tool::{
 // ---------------------------------------------------------------------------
 // Config Manager
 // ---------------------------------------------------------------------------
-pub use config_manager::{AgentConfig, ConfigManager, ConfigSource, ConfigError};
+pub use config_manager::{AppConfig, ConfigManager, ConfigSource, ConfigError};
 
 // ---------------------------------------------------------------------------
 // Events
@@ -121,7 +143,7 @@ pub use types::{AgentError, AgentResult, ErrorKind};
 // Types
 // ---------------------------------------------------------------------------
 pub use types::{
-    AgentConfig as TypesAgentConfig,
+    AgentConfig,
     ChatMessage,
     CheckpointData,
     CheckpointStep,
