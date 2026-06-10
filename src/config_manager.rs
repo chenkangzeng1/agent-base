@@ -134,48 +134,64 @@ impl ConfigManager {
         if let Ok(val) = std::env::var("AGENT_LLM_TIMEOUT") {
             if let Ok(parsed) = val.parse::<u64>() {
                 config.llm_timeout = parsed;
+            } else {
+                tracing::warn!(var = "AGENT_LLM_TIMEOUT", value = %val, "invalid value, using default");
             }
         }
 
         if let Ok(val) = std::env::var("AGENT_TOOL_TIMEOUT") {
             if let Ok(parsed) = val.parse::<u64>() {
                 config.tool_timeout = parsed;
+            } else {
+                tracing::warn!(var = "AGENT_TOOL_TIMEOUT", value = %val, "invalid value, using default");
             }
         }
 
         if let Ok(val) = std::env::var("AGENT_MAX_TOOL_OUTPUT_CHARS") {
             if let Ok(parsed) = val.parse::<usize>() {
                 config.max_tool_output_chars = parsed;
+            } else {
+                tracing::warn!(var = "AGENT_MAX_TOOL_OUTPUT_CHARS", value = %val, "invalid value, using default");
             }
         }
 
         if let Ok(val) = std::env::var("AGENT_RETRY_ATTEMPTS") {
             if let Ok(parsed) = val.parse::<u32>() {
                 config.retry_attempts = parsed;
+            } else {
+                tracing::warn!(var = "AGENT_RETRY_ATTEMPTS", value = %val, "invalid value, using default");
             }
         }
 
         if let Ok(val) = std::env::var("AGENT_RETRY_DELAY_MS") {
             if let Ok(parsed) = val.parse::<u64>() {
                 config.retry_delay_ms = parsed;
+            } else {
+                tracing::warn!(var = "AGENT_RETRY_DELAY_MS", value = %val, "invalid value, using default");
             }
         }
 
         if let Ok(val) = std::env::var("AGENT_ENABLE_THOUGHT") {
             if let Ok(parsed) = val.parse::<bool>() {
                 config.enable_thought = parsed;
+            } else {
+                tracing::warn!(var = "AGENT_ENABLE_THOUGHT", value = %val, "invalid value, using default");
             }
         }
 
         if let Ok(val) = std::env::var("AGENT_ENABLE_THINKING") {
             if let Ok(parsed) = val.parse::<bool>() {
                 config.enable_thinking = parsed;
+            } else {
+                tracing::warn!(var = "AGENT_ENABLE_THINKING", value = %val, "invalid value, using default");
             }
         }
 
         if let Ok(val) = std::env::var("AGENT_THINKING_BUDGET") {
             if let Ok(parsed) = val.parse::<u64>() {
                 config.thinking_budget = parsed;
+            } else {
+                tracing::warn!(var = "AGENT_THINKING_BUDGET", value = %val, "invalid value, using default");
             }
         }
 

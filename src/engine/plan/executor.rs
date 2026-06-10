@@ -67,9 +67,10 @@ impl StepExecutor for ToolCallingStepExecutor {
         let start = std::time::Instant::now();
 
         tracing::debug!(
-            "ToolCallingStepExecutor: executing step {} with payload: {}",
-            step.id,
-            step.payload
+            step_id = %step.id,
+            session_id = %ctx.session_id,
+            payload = %step.payload,
+            "ToolCallingStepExecutor: executing step"
         );
 
         let tool_name = step
@@ -81,9 +82,10 @@ impl StepExecutor for ToolCallingStepExecutor {
         let args = step.payload.get("args").unwrap_or(&Value::Null);
 
         tracing::debug!(
-            "ToolCallingStepExecutor: calling tool '{}' with args: {}",
-            tool_name,
-            args
+            tool_name = tool_name,
+            session_id = %ctx.session_id,
+            args = %args,
+            "ToolCallingStepExecutor: calling tool"
         );
 
         let tool = self
@@ -101,9 +103,10 @@ impl StepExecutor for ToolCallingStepExecutor {
         match result {
             Ok(output) => {
                 tracing::debug!(
-                    "ToolCallingStepExecutor: tool '{}' succeeded in {}ms",
-                    tool_name,
-                    duration
+                    tool_name = tool_name,
+                    session_id = %ctx.session_id,
+                    duration_ms = duration,
+                    "ToolCallingStepExecutor: tool succeeded"
                 );
                 Ok(StepResult {
                     success: true,
@@ -114,10 +117,11 @@ impl StepExecutor for ToolCallingStepExecutor {
             }
             Err(e) => {
                 tracing::warn!(
-                    "ToolCallingStepExecutor: tool '{}' failed in {}ms: {}",
-                    tool_name,
-                    duration,
-                    e
+                    tool_name = tool_name,
+                    session_id = %ctx.session_id,
+                    duration_ms = duration,
+                    error = %e,
+                    "ToolCallingStepExecutor: tool failed"
                 );
                 Ok(StepResult {
                     success: false,

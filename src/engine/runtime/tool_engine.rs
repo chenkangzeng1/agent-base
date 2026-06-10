@@ -235,13 +235,17 @@ impl ToolEngine {
         };
 
         match decision {
-            crate::types::ApprovalDecision::AllowOnce => {}
+            crate::types::ApprovalDecision::AllowOnce => {
+                tracing::info!(session_id = session_id.id, tool = tool_name, decision = "AllowOnce", "approval granted");
+            }
             crate::types::ApprovalDecision::AllowAlways => {
+                tracing::info!(session_id = session_id.id, tool = tool_name, decision = "AllowAlways", "approval granted (cached)");
                 if let Some(action_key) = request.action_key.clone() {
                     session_manager.cache_approval(session_id, action_key).await;
                 }
             }
             crate::types::ApprovalDecision::Deny => {
+                tracing::warn!(session_id = session_id.id, tool = tool_name, decision = "Deny", "approval denied");
                 let denial_summary = format!("[Action Denied]: tool {} rejected by approval", tool_name);
                 session_manager.with_session_mut(session_id, |session| {
                     session.push_assistant_tool_call("", tool_name, tool_args_json);

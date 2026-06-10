@@ -305,6 +305,7 @@ impl LlmClient for AnthropicClient {
     ) -> AgentResult<Value> {
         let url = format!("{}/v1/messages", self.base_url);
         let body = Self::build_body(messages, tools, &self.model, reasoning);
+        tracing::debug!(model = %self.model, url = %url, body = %serde_json::to_string_pretty(&body).unwrap_or_default(), "Anthropic chat request");
 
         let response = self
             .client
@@ -333,6 +334,7 @@ impl LlmClient for AnthropicClient {
             });
         }
 
+        tracing::debug!(status = %status, "Anthropic chat response received");
         Ok(res_json)
     }
 
@@ -349,6 +351,7 @@ impl LlmClient for AnthropicClient {
         if let Some(obj) = body.as_object_mut() {
             obj.insert("stream".to_string(), json!(true));
         }
+        tracing::debug!(model = %self.model, url = %url, body = %serde_json::to_string_pretty(&body).unwrap_or_default(), "Anthropic chat_stream request");
 
         let response = self
             .client

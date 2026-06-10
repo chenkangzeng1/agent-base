@@ -71,6 +71,11 @@ impl ToolExecutionPipeline for DefaultPipeline {
             {
                 Ok(result) => result,
                 Err(_) => {
+                    tracing::warn!(
+                        tool = tool.name(),
+                        timeout_ms = timeout_ms,
+                        "tool execution timed out"
+                    );
                     return Ok(ToolOutput {
                         summary: "[Tool Timeout]".to_string(),
                         control_flow: ToolControlFlow::Continue,
@@ -102,6 +107,13 @@ impl ToolExecutionPipeline for DefaultPipeline {
                     original_raw_len,
                     max_allowed_chars: max_chars,
                 });
+                tracing::debug!(
+                    tool = tool.name(),
+                    original_summary_len = original_summary_len,
+                    original_raw_len = original_raw_len,
+                    max_allowed_chars = max_chars,
+                    "tool output truncated"
+                );
             }
         }
 

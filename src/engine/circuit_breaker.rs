@@ -56,8 +56,12 @@ impl CircuitBreaker {
     pub fn record_success(&self) {
         self.consecutive_failures.store(0, Ordering::SeqCst);
         let mut state = self.state.lock().unwrap();
+        let prev = *state;
         *state = CircuitState::Closed;
         *self.opened_at.lock().unwrap() = None;
+        if prev != CircuitState::Closed {
+            tracing::info!(from = ?prev, to = ?CircuitState::Closed, "circuit breaker state changed");
+        }
     }
 
     /// Record a failed operation.
@@ -68,8 +72,18 @@ impl CircuitBreaker {
         let count = self.consecutive_failures.fetch_add(1, Ordering::SeqCst) + 1;
         if count >= self.failure_threshold {
             let mut state = self.state.lock().unwrap();
-            *state = CircuitState::Open;
-            *self.opened_at.lock().unwrap() = Some(Instant::now());
+            let prev = *state;
+            if prev != CircuitState::Open {
+                *state = CircuitState::Open;
+                *self.opened_at.lock().unwrap() = Some(Instant::now());
+                tracing::warn!(
+                    from = ?prev,
+                    to = ?CircuitState::Open,
+                    consecutive_failures = count,
+                    threshold = self.failure_threshold,
+                    "circuit breaker opened"
+                );
+            }
         }
     }
 
@@ -94,6 +108,11 @@ impl CircuitBreaker {
                     && at.elapsed().as_millis() >= self.open_duration_ms as u128
                 {
                     *state = CircuitState::HalfOpen;
+                    tracing::info!(
+                        from = ?CircuitState::Open,
+                        to = ?CircuitState::HalfOpen,
+                        "circuit breaker half-open, allowing trial request"
+                    );
                     return true;
                 }
                 false
