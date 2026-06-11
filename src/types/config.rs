@@ -102,7 +102,23 @@ use crate::llm::ReasoningConfig;
 #[derive(Clone, Debug)]
 pub struct AgentConfig {
     pub system_prompt: Option<String>,
+    /// Controls whether to include the reasoning content in LLM responses.
+    ///
+    /// Distinction from `reasoning.enabled`:
+    /// - `enable_thought`: controls whether the `reasoning_content` field is forwarded
+    ///   to consumers (i.e., "show the thinking process")
+    /// - `reasoning.enabled`: controls whether the model's extended thinking / reasoning
+    ///   mode is enabled (i.e., "let the model think deeply")
+    ///
+    /// Both are usually kept in sync, but can be controlled independently. For example,
+    /// to enable deep thinking without showing the process, set `enable_thought = false`
+    /// and `reasoning.enabled = true`.
     pub enable_thought: bool,
+    /// Reasoning/thinking configuration that controls LLM reasoning behavior.
+    ///
+    /// - `enabled`: whether to enable extended thinking mode (equivalent to builder's `enable_thinking`)
+    /// - `budget_tokens`: thinking token budget cap
+    /// - `effort`: reasoning intensity/depth (semantics vary by provider)
     pub reasoning: Option<ReasoningConfig>,
     pub language: Language,
     pub execution: ExecutionConfig,

@@ -39,7 +39,13 @@ impl EventBus {
             match event_rx.try_recv() {
                 Ok(event) => on_event(RuntimeEvent::from(event))?,
                 Err(broadcast::error::TryRecvError::Empty) => break,
-                Err(broadcast::error::TryRecvError::Lagged(_)) => continue,
+                Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                    tracing::warn!(
+                        skipped = n,
+                        "EventBus consumer lagged, events dropped"
+                    );
+                    continue;
+                }
                 Err(broadcast::error::TryRecvError::Closed) => break,
             }
         }

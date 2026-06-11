@@ -57,6 +57,11 @@ impl AgentBuilder {
         self
     }
 
+    /// Set whether to include the reasoning content in LLM responses.
+    ///
+    /// Controls whether the `reasoning_content` field from the LLM is forwarded
+    /// to consumers (i.e., "show the thinking process").
+    /// See [`AgentConfig::enable_thought`] for the distinction from `enable_thinking()`.
     pub fn enable_thought(mut self, enable: bool) -> Self {
         self.config.enable_thought = enable;
         self
@@ -67,6 +72,10 @@ impl AgentBuilder {
         self
     }
 
+    /// Set whether to enable the model's extended thinking / reasoning mode.
+    ///
+    /// Controls whether the model performs deep reasoning (i.e., "enable thinking mode").
+    /// See [`AgentConfig::enable_thought`] for the distinction from `enable_thought()`.
     pub fn enable_thinking(mut self, enable: bool) -> Self {
         let mut config = self.config.reasoning.take().unwrap_or_default();
         config.enabled = Some(enable);
@@ -169,6 +178,21 @@ impl AgentBuilder {
     pub fn language(mut self, language: crate::types::Language) -> Self {
         self.config.language = language;
         self
+    }
+
+    /// Conditionally chain a builder call: apply `f` only when `value` is `Some`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let builder = AgentBuilder::new(client)
+    ///     .apply_if(config.timeout, |b, t| b.tool_timeout(t))
+    ///     .apply_if(config.max_chars, |b, c| b.max_tool_output_chars(c));
+    /// ```
+    pub fn apply_if<T>(self, value: Option<T>, f: impl FnOnce(Self, T) -> Self) -> Self {
+        match value {
+            Some(v) => f(self, v),
+            None => self,
+        }
     }
 
     pub fn build(self) -> crate::types::AgentResult<AgentRuntime> {

@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use async_trait::async_trait;
 
-use crate::engine::middleware::{Middleware, PostLlmCtx};
+use crate::engine::middleware::{Middleware, PostLlmCtx, UserMessageCtx};
 use crate::types::AgentResult;
 
 pub struct ToolEnforcementConfig {
@@ -42,6 +42,12 @@ impl ToolEnforcementMiddleware {
 
 #[async_trait]
 impl Middleware for ToolEnforcementMiddleware {
+    /// Reset nudge count on each new user message to prevent permanent self-disable.
+    async fn on_user_message(&self, _ctx: &mut UserMessageCtx) -> AgentResult<()> {
+        self.nudge_count.store(0, Ordering::SeqCst);
+        Ok(())
+    }
+
     async fn on_post_llm(&self, ctx: &mut PostLlmCtx) -> AgentResult<()> {
         if ctx.available_tools.len() < self.config.min_tools_threshold {
             return Ok(());
