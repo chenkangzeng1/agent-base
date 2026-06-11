@@ -686,12 +686,13 @@ impl PlanRunner {
 
             let (fallback_tx, _fallback_rx) = mpsc::unbounded_channel::<crate::types::UserEvent>();
             let user_event_tx = parent_user_event_tx.clone().unwrap_or(fallback_tx);
+            let config = self.config_snapshot_async().await;
             let tool_ctx = ToolContext {
                 session_id: session_id.clone(),
                 user_event_tx,
                 llm_client: Some(self.llm_engine.client.clone()),
                 session_store: Some(self.session_manager.session_store().clone()),
-                language: self.config.language.clone(),
+                language: config.language.clone(),
             };
             exec.execute_step(step, step_outputs, &tool_ctx).await
         } else {

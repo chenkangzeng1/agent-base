@@ -33,7 +33,8 @@ pub struct AgentRuntime {
 
 impl AgentRuntime {
     pub async fn create_session(&self) -> SessionId {
-        self.runner.session_manager.create_session(self.runner.config.system_prompt.as_deref()).await
+        let config = self.runner.config.read().await;
+        self.runner.session_manager.create_session(config.system_prompt.as_deref()).await
     }
 
     pub async fn restore_session(&self, session_id: &SessionId) -> Option<AgentSession> {
@@ -95,10 +96,11 @@ impl AgentRuntime {
         let tools_arc = self.runner.tool_engine.tools_arc();
         let registry = Arc::new(tools_arc.blocking_read().clone());
         let base = self.runner.tool_engine.execution_pipeline();
+        let config = self.runner.config.blocking_read();
         let pipeline = DefaultPipeline::new(
             base.policy(),
-            self.runner.config.tool.tool_timeout_ms,
-            self.runner.config.tool.max_tool_output_chars,
+            config.tool.tool_timeout_ms,
+            config.tool.max_tool_output_chars,
         );
         crate::engine::ToolCallingStepExecutor::new(registry).with_pipeline(pipeline)
     }
@@ -110,8 +112,24 @@ impl AgentRuntime {
         tools.inject_plan_runner(&self.runner);
     }
 
-    pub fn config(&self) -> &AgentConfig {
-        &self.runner.config
+    pub fn config(&self) -> tokio::sync::RwLockReadGuard<'_, AgentConfig> {
+        self.runner.config.blocking_read()
+    }
+
+    /// 设置 reasoning effort（异步版本）
+    pub async fn set_reasoning_effort(&self, effort: crate::llm::ReasoningEffort) {
+        let mut config = self.runner.config.write().await;
+        let mut reasoning = config.reasoning.take().unwrap_or_default();
+        reasoning.effort = Some(effort);
+        config.reasoning = Some(reasoning);
+    }
+
+    /// 设置 reasoning effort（同步版本，只在同步上下文中使用）
+    pub fn set_reasoning_effort_sync(&self, effort: crate::llm::ReasoningEffort) {
+        let mut config = self.runner.config.blocking_write();
+        let mut reasoning = config.reasoning.take().unwrap_or_default();
+        reasoning.effort = Some(effort);
+        config.reasoning = Some(reasoning);
     }
 
     pub fn approval_handler(&self) -> Option<&Arc<dyn ApprovalHandler>> {

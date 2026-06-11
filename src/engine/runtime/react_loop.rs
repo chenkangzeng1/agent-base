@@ -268,13 +268,15 @@ impl PlanRunner {
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
+        let config = self.config_snapshot_async().await;
+
         if e.is_cancelled() {
             self.event_bus.emit(AgentEvent::RunFinished { session_id: session_id.clone() });
             EventBus::drain_async_events(event_rx, on_event)?;
             let session = self.session_manager.session_or_err(session_id).await?;
             if let Err(e) = self.session_manager.session_store().save(&session).await {
                 tracing::warn!(session_id = session_id.id, error = %e, "Failed to persist session");
-                if self.config.execution.fail_on_persist_error {
+                if config.execution.fail_on_persist_error {
                     return Err(AgentError::internal(format!("Session persistence failed: {e}")));
                 }
             }
@@ -283,7 +285,7 @@ impl PlanRunner {
 
         let names: Vec<String> = tool_calls.iter().map(|(_, n, _)| n.clone()).collect();
         let error_text = e.to_string();
-        let retry_prompt_template: Option<String> = self.config.tool.tool_error_retry_prompt.clone();
+        let retry_prompt_template: Option<String> = config.tool.tool_error_retry_prompt.clone();
         let action = self.tool_engine.error_recovery().on_error(session_id, &names, &e)?;
         match action {
             ToolErrorAction::Stop => {
@@ -292,7 +294,7 @@ impl PlanRunner {
                 let session = self.session_manager.session_or_err(session_id).await?;
                 if let Err(e) = self.session_manager.session_store().save(&session).await {
                     tracing::warn!(session_id = session_id.id, error = %e, "Failed to persist session");
-                    if self.config.execution.fail_on_persist_error {
+                    if config.execution.fail_on_persist_error {
                         return Err(AgentError::internal(format!("Session persistence failed: {e}")));
                     }
                 }
@@ -333,7 +335,8 @@ impl PlanRunner {
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
-        let max_turns = self.config.execution.max_turns.unwrap_or(crate::engine::runtime::DEFAULT_MAX_TURNS);
+        let config = self.config_snapshot_async().await;
+        let max_turns = config.execution.max_turns.unwrap_or(crate::engine::runtime::DEFAULT_MAX_TURNS);
 
         tracing::debug!(session_id = session_id.id, max_turns, "run turn loop start");
 
@@ -380,15 +383,15 @@ impl PlanRunner {
             });
 
             tracing::info!(session_id = session_id.id, turn = turn_count, msg_count = messages.len(), tool_count = tools_for_turn.len(), "calling LLM");
-            let stream = match self.config.llm.llm_retry.as_ref() {
+            let stream = match config.llm.llm_retry.as_ref() {
                 Some(retry) => {
                     tracing::debug!(session_id = session_id.id, turn = turn_count, "LLM: using retry mode");
                     self.llm_engine.run_llm_turn_with_retry(
                         session_id,
                         &messages,
                         &tools_for_turn,
-                        self.config.reasoning.as_ref(),
-                        self.config.llm.response_format.as_ref(),
+                        config.reasoning.as_ref(),
+                        config.llm.response_format.as_ref(),
                         retry.clone(),
                     ).await?
                 }
@@ -397,8 +400,8 @@ impl PlanRunner {
                     self.llm_engine.chat_stream(
                         &messages,
                         &tools_for_turn,
-                        self.config.reasoning.as_ref(),
-                        self.config.llm.response_format.as_ref(),
+                        config.reasoning.as_ref(),
+                        config.llm.response_format.as_ref(),
                     ).await?
                 }
             };
@@ -564,6 +567,8 @@ impl PlanRunner {
             }).await?;
         }
 
+        let config = self.config_snapshot_async().await;
+
         for (id, name, args_str, args) in parsed_calls {
             let tool_result = self.tool_engine.execute_tool(
                 session_id,
@@ -575,9 +580,9 @@ impl PlanRunner {
                 on_event,
                 &self.session_manager,
                 Some(self.llm_engine.client.clone()),
-                self.config.language.clone(),
-                self.config.tool.tool_timeout_ms,
-                self.config.tool.max_tool_output_chars,
+                config.language.clone(),
+                config.tool.tool_timeout_ms,
+                config.tool.max_tool_output_chars,
             ).await;
 
             match tool_result {

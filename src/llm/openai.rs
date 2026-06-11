@@ -73,6 +73,7 @@ impl OpenAiClient {
         let Some(config) = reasoning else { return };
 
         if self.is_qwen_model() {
+            // qwen 模型使用 enable_thinking 和 thinking_budget
             if let Some(enabled) = config.enabled {
                 if let Some(obj) = request_body.as_object_mut() {
                     obj.insert("enable_thinking".to_string(), json!(enabled));
@@ -81,6 +82,25 @@ impl OpenAiClient {
             if let Some(budget) = config.budget_tokens {
                 if let Some(obj) = request_body.as_object_mut() {
                     obj.insert("thinking_budget".to_string(), json!(budget));
+                }
+            }
+            // 将 effort 转换为 thinking_budget
+            if let Some(effort) = &config.effort {
+                let budget = match effort {
+                    ReasoningEffort::None => 0,
+                    ReasoningEffort::Low => 500,
+                    ReasoningEffort::Medium => 2000,
+                    ReasoningEffort::High => 5000,
+                    ReasoningEffort::XHigh => 10000,
+                };
+                if let Some(obj) = request_body.as_object_mut() {
+                    obj.insert("thinking_budget".to_string(), json!(budget));
+                    // 对于 low 和 none，禁用 thinking
+                    if matches!(effort, ReasoningEffort::None | ReasoningEffort::Low) {
+                        obj.insert("enable_thinking".to_string(), json!(false));
+                    } else {
+                        obj.insert("enable_thinking".to_string(), json!(true));
+                    }
                 }
             }
         } else if self.is_deepseek_model() {
