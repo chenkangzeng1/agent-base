@@ -56,6 +56,14 @@ impl PlanRunner {
                 .unwrap_or_default()
         }).await?;
 
+        // Apply user message middleware (same as run_turn)
+        let user_input_owned = self.apply_user_message_mw(&session_id, user_input_owned).await?;
+
+        // Reset nudge_count for the new turn
+        self.with_session_mut(&session_id, |session| {
+            session.nudge_count = 0;
+        }).await?;
+
         let (outcome, _turn_count) = self
             .run_turn_loop(
                 &session_id,
@@ -95,6 +103,11 @@ impl PlanRunner {
         tracing::debug!(session_id = session_id.id, "run_turn: applying user message middleware");
         let user_input_owned = self.apply_user_message_mw(&session_id, user_input.to_string()).await?;
         tracing::debug!(session_id = session_id.id, "run_turn: user message middleware applied");
+
+        // Reset nudge_count for the new turn
+        self.with_session_mut(&session_id, |session| {
+            session.nudge_count = 0;
+        }).await?;
 
         tracing::debug!(session_id = session_id.id, "run_turn: pushing user message to session");
         self.with_session_mut(&session_id, |session| {
@@ -233,7 +246,10 @@ impl PlanRunner {
         available_tools: &[String],
         turn_count: u32,
     ) -> AgentResult<PostLlmMwResult> {
-        let total_tool_calls = self.session_manager.session_or_err(session_id).await?.total_tool_calls;
+        let session = self.session_manager.session_or_err(session_id).await?;
+        let total_tool_calls = session.total_tool_calls;
+        let nudge_count = session.nudge_count;
+        drop(session);
         let mut ctx = PostLlmCtx {
             session_id: session_id.clone(),
             full_text,
@@ -242,11 +258,18 @@ impl PlanRunner {
             available_tools: available_tools.to_vec(),
             turn_count,
             total_tool_calls,
+            nudge_count,
             skip_push: false,
             follow_up_message: None,
         };
         for mw in &self.middlewares {
             mw.on_post_llm(&mut ctx).await?;
+        }
+        // Write back nudge_count if middleware modified it
+        if ctx.nudge_count != nudge_count {
+            self.with_session_mut(session_id, |session| {
+                session.nudge_count = ctx.nudge_count;
+            }).await?;
         }
         Ok(PostLlmMwResult {
             full_text: ctx.full_text,
@@ -289,6 +312,15 @@ impl PlanRunner {
         let action = self.tool_engine.error_recovery().on_error(session_id, &names, &e)?;
         match action {
             ToolErrorAction::Stop => {
+                // Close any dangling tool calls in the session before stopping
+                let error_summary = if config.language == crate::types::Language::Zh {
+                    format!("❌ 执行失败: {}", e)
+                } else {
+                    format!("❌ Tool execution failed: {}", e)
+                };
+                self.with_session_mut(session_id, |session| {
+                    session.close_dangling_tool_calls(&error_summary);
+                }).await?;
                 self.event_bus.emit(AgentEvent::RunFinished { session_id: session_id.clone() });
                 EventBus::drain_async_events(event_rx, on_event)?;
                 let session = self.session_manager.session_or_err(session_id).await?;
@@ -314,8 +346,13 @@ impl PlanRunner {
                     ),
                 };
 
+                let error_summary = if config.language == crate::types::Language::Zh {
+                    format!("❌ 执行失败: {}", error_text)
+                } else {
+                    format!("❌ Tool execution failed: {}", error_text)
+                };
                 self.with_session_mut(session_id, |session| {
-                    session.close_dangling_tool_calls(&format!("[Tool Execution Failed] {}", error_text));
+                    session.close_dangling_tool_calls(&error_summary);
                     session.push_message(MessageRole::User, retry_prompt);
                 }).await?;
                 Ok(None)

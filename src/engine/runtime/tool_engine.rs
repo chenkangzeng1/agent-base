@@ -146,6 +146,20 @@ impl ToolEngine {
                     Ok(output) => output,
                     Err(e) => {
                         tracing::error!(session_id = session_id.id, tool_name = name, error = %e, "Tool execution failed");
+                        // Emit ToolCallFinished with error summary before returning error
+                        let error_summary = if language == Language::Zh {
+                            format!("❌ 执行失败: {}", e)
+                        } else {
+                            format!("❌ Tool execution failed: {}", e)
+                        };
+                        self.event_bus.emit(AgentEvent::ToolCallFinished {
+                            session_id: session_id.clone(),
+                            tool_name: name.to_string(),
+                            summary: error_summary,
+                        });
+                        // Use `let _ =` to avoid masking the original tool error
+                        // if the event callback fails
+                        let _ = EventBus::drain_async_events(event_rx, on_event);
                         return Err(AgentError::ToolExecution {
                             name: name.to_string(),
                             source: Box::new(e),
@@ -156,7 +170,11 @@ impl ToolEngine {
             None => {
                 tracing::warn!(session_id = session_id.id, tool = name, "tool not found in registry");
                 ToolOutput {
-                    summary: format!("Tool {} not found", name),
+                    summary: if language == Language::Zh {
+                        format!("工具 {} 未找到", name)
+                    } else {
+                        format!("Tool {} not found", name)
+                    },
                     raw: None,
                     control_flow: ToolControlFlow::Break,
                     truncation: None,
@@ -256,7 +274,7 @@ impl ToolEngine {
                     tool_name: tool_name.to_string(),
                     summary: denial_summary,
                 });
-                EventBus::drain_async_events(event_rx, on_event)?;
+                let _ = EventBus::drain_async_events(event_rx, on_event);
                 return Err(AgentError::ApprovalDenied {
                     tool_name: tool_name.to_string(),
                 });

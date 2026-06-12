@@ -1,8 +1,6 @@
-use std::sync::atomic::{AtomicUsize, Ordering};
-
 use async_trait::async_trait;
 
-use crate::engine::middleware::{Middleware, PostLlmCtx, UserMessageCtx};
+use crate::engine::middleware::{Middleware, PostLlmCtx};
 use crate::types::AgentResult;
 
 pub struct ToolEnforcementConfig {
@@ -28,26 +26,18 @@ impl Default for ToolEnforcementConfig {
 
 pub struct ToolEnforcementMiddleware {
     config: ToolEnforcementConfig,
-    nudge_count: AtomicUsize,
 }
 
 impl ToolEnforcementMiddleware {
     pub fn new(config: ToolEnforcementConfig) -> Self {
         Self {
             config,
-            nudge_count: AtomicUsize::new(0),
         }
     }
 }
 
 #[async_trait]
 impl Middleware for ToolEnforcementMiddleware {
-    /// Reset nudge count on each new user message to prevent permanent self-disable.
-    async fn on_user_message(&self, _ctx: &mut UserMessageCtx) -> AgentResult<()> {
-        self.nudge_count.store(0, Ordering::SeqCst);
-        Ok(())
-    }
-
     async fn on_post_llm(&self, ctx: &mut PostLlmCtx) -> AgentResult<()> {
         if ctx.available_tools.len() < self.config.min_tools_threshold {
             return Ok(());
@@ -62,13 +52,15 @@ impl Middleware for ToolEnforcementMiddleware {
             return Ok(());
         }
 
-        let count = self.nudge_count.fetch_add(1, Ordering::SeqCst);
-        if count >= self.config.max_nudges {
+        if ctx.nudge_count >= self.config.max_nudges {
             return Ok(());
         }
 
+        // Increment nudge_count in the context; the caller will write it back to the session
+        ctx.nudge_count += 1;
+
         tracing::info!(
-            nudge_count = count,
+            nudge_count = ctx.nudge_count,
             full_text_len = ctx.full_text.len(),
             "ToolEnforcement: suppressing text response, injecting nudge"
         );

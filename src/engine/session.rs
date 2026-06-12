@@ -19,6 +19,10 @@ pub struct AgentSession {
     /// Total number of tool calls made in this session (across all turns).
     /// Used by middleware for decisions like "first_turn_only" enforcement.
     pub total_tool_calls: usize,
+    /// Number of tool-enforcement nudges issued in the current turn.
+    /// Reset to 0 at the start of each turn (when a new user message arrives).
+    /// Used by `ToolEnforcementMiddleware` to cap nudge attempts per turn.
+    pub nudge_count: usize,
 }
 
 impl AgentSession {
@@ -29,6 +33,7 @@ impl AgentSession {
             chat_messages: Vec::new(),
             always_allowed_actions: HashSet::new(),
             total_tool_calls: 0,
+            nudge_count: 0,
         }
     }
 
