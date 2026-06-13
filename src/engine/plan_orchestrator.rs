@@ -18,7 +18,12 @@ pub struct PlanOrchestrator {
     plan_generator: Arc<dyn PlanGenerator>,
     step_executor: Arc<dyn StepExecutor>,
     plan_store: Arc<dyn PlanStore>,
+    recovery: Arc<dyn crate::engine::RecoveryStrategy>,
     event_bus: std::sync::OnceLock<EventBus>,
+    plan_runner: std::sync::OnceLock<std::sync::Weak<PlanRunner>>,
+    /// When true, the plan will be executed immediately after creation
+    /// without waiting for user confirmation.
+    auto_execute: bool,
 }
 
 impl PlanOrchestrator {
@@ -31,8 +36,26 @@ impl PlanOrchestrator {
             plan_generator,
             step_executor,
             plan_store,
+            recovery: crate::engine::Recovery::abort(),
             event_bus: std::sync::OnceLock::new(),
+            plan_runner: std::sync::OnceLock::new(),
+            auto_execute: false,
         }
+    }
+
+    /// Set the recovery strategy for plan execution.
+    pub fn with_recovery(mut self, recovery: Arc<dyn crate::engine::RecoveryStrategy>) -> Self {
+        self.recovery = recovery;
+        self
+    }
+
+    /// Set whether the plan should be executed immediately after creation.
+    ///
+    /// When `auto_execute` is true, the plan will be executed without waiting
+    /// for user confirmation. This is useful in non-interactive or auto-approve modes.
+    pub fn with_auto_execute(mut self, auto: bool) -> Self {
+        self.auto_execute = auto;
+        self
     }
 
     pub fn with_step_executor(&mut self, step_executor: Arc<dyn StepExecutor>) {
@@ -50,11 +73,17 @@ impl Tool for PlanOrchestrator {
     fn as_framework_tool(&self) -> Option<&dyn FrameworkTool> { Some(self) }
 
     fn definition(&self) -> Value {
+        let description = if self.auto_execute {
+            "Analyze a task and generate an execution plan, then execute it immediately. Used for complex tasks that require multiple steps. The system will analyze the objective, generate a plan, and execute it automatically."
+        } else {
+            "Analyze a task and generate an execution plan (without executing commands). Used for complex tasks that require multiple steps. The system will analyze the objective and generate a plan; after user review and confirmation, use execute_plan to execute it."
+        };
+
         json!({
             "type": "function",
             "function": {
                 "name": "create_plan",
-                "description": "Analyze a task and generate an execution plan (without executing commands). Used for complex tasks that require multiple steps. The system will analyze the objective and generate a plan; after user review and confirmation, use execute_plan to execute it.",
+                "description": description,
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -162,6 +191,94 @@ impl Tool for PlanOrchestrator {
                     })
                     .collect();
 
+                // If auto_execute is enabled, execute the plan immediately
+                if self.auto_execute {
+                    tracing::info!(plan_id = %plan_id, "auto_execute enabled, executing plan immediately");
+
+                    let runner = self.plan_runner.get()
+                        .and_then(|w| w.upgrade())
+                        .ok_or_else(|| {
+                            AgentError::internal("PlanOrchestrator: PlanRunner not available for auto_execute")
+                        })?;
+
+                    let mut plan_to_execute = plan.clone();
+                    plan_to_execute.status = crate::types::PlanStatus::Executing;
+
+                    let mut config = PlanConfig::new()
+                        .with_executor(self.step_executor.clone())
+                        .recovery(self.recovery.clone());
+
+                    let mut event_rx = runner.event_bus.subscribe();
+
+                    let outcome = runner.run_plan_steps(
+                        &ctx.session_id,
+                        &mut plan_to_execute,
+                        &config,
+                        &mut event_rx,
+                        &mut |_| Ok(()),
+                        Some(ctx.user_event_tx.clone()),
+                    ).await?;
+
+                    // Save the updated plan state
+                    self.plan_store.save_plan(&plan_to_execute, json!({"session_id": ctx.session_id.to_string()})).await?;
+
+                    let is_zh = ctx.language == crate::types::Language::Zh;
+                    let (summary, success, outcome_str) = match &outcome {
+                        crate::types::RunOutcome::Completed => (
+                            if is_zh {
+                                format!("计划 '{}' 已自动执行成功，包含 {} 个步骤。", objective, plan.total_steps())
+                            } else {
+                                format!("Plan '{}' auto-executed successfully with {} steps.", objective, plan.total_steps())
+                            },
+                            true,
+                            "completed",
+                        ),
+                        crate::types::RunOutcome::Failed { error } => (
+                            if is_zh {
+                                format!("计划 '{}' 自动执行失败: {}", objective, error)
+                            } else {
+                                format!("Plan '{}' auto-execution failed: {}", objective, error)
+                            },
+                            false,
+                            "failed",
+                        ),
+                        crate::types::RunOutcome::MaxTurnsExceeded { .. } => (
+                            if is_zh {
+                                format!("计划 '{}' 自动执行中断。", objective)
+                            } else {
+                                format!("Plan '{}' auto-execution interrupted.", objective)
+                            },
+                            false,
+                            "max_turns_exceeded",
+                        ),
+                        crate::types::RunOutcome::Cancelled => (
+                            if is_zh {
+                                format!("计划 '{}' 自动执行中断。", objective)
+                            } else {
+                                format!("Plan '{}' auto-execution interrupted.", objective)
+                            },
+                            false,
+                            "cancelled",
+                        ),
+                    };
+
+                    return Ok(ToolOutput {
+                        summary,
+                        raw: Some(json!({
+                            "objective": objective,
+                            "plan_id": plan_id,
+                            "steps_count": plan.total_steps(),
+                            "steps": step_details,
+                            "success": success,
+                            "status": outcome_str,
+                            "auto_executed": true,
+                        })),
+                        control_flow: ToolControlFlow::Continue,
+                        truncation: None,
+                    });
+                }
+
+                // Default: return plan without execution
                 let summary = if ctx.language == crate::types::Language::Zh {
                     format!(
                         "计划已生成，包含 {} 个步骤，等待用户确认。计划ID: {}",
@@ -222,6 +339,10 @@ impl Tool for PlanOrchestrator {
 impl FrameworkTool for PlanOrchestrator {
     fn set_event_bus(&self, event_bus: EventBus) {
         let _ = self.event_bus.set(event_bus);
+    }
+
+    fn set_plan_runner(&self, runner: &Arc<PlanRunner>) {
+        let _ = self.plan_runner.set(Arc::downgrade(runner));
     }
 }
 
