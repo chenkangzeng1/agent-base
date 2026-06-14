@@ -9,6 +9,56 @@ use crate::engine::circuit_breaker::CircuitBreaker;
 use crate::engine::runtime::PlanRunner;
 use crate::tool::{FrameworkTool, Tool, ToolContext, ToolControlFlow, ToolOutput};
 use crate::types::{AgentError, AgentEvent, AgentResult, RuntimeEvent};
+use crate::types::{ExecutionPlan, StepStatus};
+
+/// Build a step-by-step result summary from a completed plan for LLM consumption.
+fn build_step_details_summary(plan: &ExecutionPlan, is_zh: bool) -> String {
+    let mut lines = Vec::new();
+    for step in plan.all_steps() {
+        let status_icon = match step.status {
+            StepStatus::Completed => "✅",
+            StepStatus::Failed => "❌",
+            StepStatus::Skipped => "⏭️",
+            StepStatus::Running => "🔄",
+            StepStatus::Pending => "⏳",
+            _ => "❓",
+        };
+
+        let detail = match &step.result {
+            Some(r) if r.success => {
+                let output = r.output.as_deref().unwrap_or("");
+                let truncated = if output.len() > 200 {
+                    format!("{}…", &output[..200])
+                } else {
+                    output.to_string()
+                };
+                if truncated.is_empty() {
+                    format!("{}ms", r.duration_ms)
+                } else {
+                    format!("{} ({}ms)", truncated, r.duration_ms)
+                }
+            }
+            Some(r) => {
+                let err = r.error.as_deref().unwrap_or("未知错误");
+                format!("错误: {} ({}ms)", err, r.duration_ms)
+            }
+            None => String::new(),
+        };
+
+        if detail.is_empty() {
+            lines.push(format!("  {} [{}] {}", status_icon, step.id, step.description));
+        } else {
+            lines.push(format!("  {} [{}] {}: {}", status_icon, step.id, step.description, detail));
+        }
+    }
+
+    if lines.is_empty() {
+        return String::new();
+    }
+
+    let header = if is_zh { "步骤详情：" } else { "Step details:" };
+    format!("{}\n{}", header, lines.join("\n"))
+}
 
 /// PlanOrchestrator is a domain-agnostic tool for creating execution plans.
 /// It delegates plan generation to a `PlanGenerator` implementation and
@@ -74,9 +124,9 @@ impl Tool for PlanOrchestrator {
 
     fn definition(&self) -> Value {
         let description = if self.auto_execute {
-            "Analyze a task and generate an execution plan, then execute it immediately. Used for complex tasks that require multiple steps. The system will analyze the objective, generate a plan, and execute it automatically."
+            "Create and immediately execute a plan for complex tasks. Best for:\n- Steps with sequential dependencies (output of step N feeds step N+1)\n- Tasks requiring rollback/recovery if a step fails\n- Multi-phase workflows (backup -> modify -> verify -> rollback if needed)\n\nDo NOT use for:\n- Independent operations that can run in parallel (use parallel tool calls instead)\n- Simple multi-step tasks where each step is self-contained"
         } else {
-            "Analyze a task and generate an execution plan (without executing commands). Used for complex tasks that require multiple steps. The system will analyze the objective and generate a plan; after user review and confirmation, use execute_plan to execute it."
+            "Generate a plan for user review before execution. Best for:\n- High-risk tasks where the user should approve the approach first\n- Steps with sequential dependencies\n- Multi-phase workflows requiring human checkpoints\n\nThe plan will be presented to the user; use execute_plan to run it after approval.\nDo NOT use for: independent parallel operations."
         };
 
         json!({
@@ -223,39 +273,47 @@ impl Tool for PlanOrchestrator {
                     self.plan_store.save_plan(&plan_to_execute, json!({"session_id": ctx.session_id.to_string()})).await?;
 
                     let is_zh = ctx.language == crate::types::Language::Zh;
+                    let steps_detail = build_step_details_summary(&plan_to_execute, is_zh);
+                    let completed_count = plan_to_execute.all_steps()
+                        .filter(|s| s.status == StepStatus::Completed)
+                        .count();
+                    let failed_count = plan_to_execute.all_steps()
+                        .filter(|s| s.status == StepStatus::Failed)
+                        .count();
+
                     let (summary, success, outcome_str) = match &outcome {
                         crate::types::RunOutcome::Completed => (
                             if is_zh {
-                                format!("计划 '{}' 已自动执行成功，包含 {} 个步骤。", objective, plan.total_steps())
+                                format!("计划 '{}' 自动执行成功（{}/{}步成功）。\n\n{}", objective, completed_count, plan.total_steps(), steps_detail)
                             } else {
-                                format!("Plan '{}' auto-executed successfully with {} steps.", objective, plan.total_steps())
+                                format!("Plan '{}' auto-executed successfully ({}/{} steps succeeded).\n\n{}", objective, completed_count, plan.total_steps(), steps_detail)
                             },
                             true,
                             "completed",
                         ),
                         crate::types::RunOutcome::Failed { error } => (
                             if is_zh {
-                                format!("计划 '{}' 自动执行失败: {}", objective, error)
+                                format!("计划 '{}' 自动执行失败（{}成功/{}失败）。错误: {}\n\n{}", objective, completed_count, failed_count, error, steps_detail)
                             } else {
-                                format!("Plan '{}' auto-execution failed: {}", objective, error)
+                                format!("Plan '{}' auto-execution failed ({} succeeded/{} failed). Error: {}\n\n{}", objective, completed_count, failed_count, error, steps_detail)
                             },
                             false,
                             "failed",
                         ),
                         crate::types::RunOutcome::MaxTurnsExceeded { .. } => (
                             if is_zh {
-                                format!("计划 '{}' 自动执行中断。", objective)
+                                format!("计划 '{}' 自动执行中断（{}/{}步成功）。\n\n{}", objective, completed_count, plan.total_steps(), steps_detail)
                             } else {
-                                format!("Plan '{}' auto-execution interrupted.", objective)
+                                format!("Plan '{}' auto-execution interrupted ({}/{} steps succeeded).\n\n{}", objective, completed_count, plan.total_steps(), steps_detail)
                             },
                             false,
                             "max_turns_exceeded",
                         ),
                         crate::types::RunOutcome::Cancelled => (
                             if is_zh {
-                                format!("计划 '{}' 自动执行中断。", objective)
+                                format!("计划 '{}' 自动执行中断。\n\n{}", objective, steps_detail)
                             } else {
-                                format!("Plan '{}' auto-execution interrupted.", objective)
+                                format!("Plan '{}' auto-execution interrupted.\n\n{}", objective, steps_detail)
                             },
                             false,
                             "cancelled",
@@ -497,24 +555,32 @@ impl Tool for PlanExecTool {
         // Save the updated plan state
         self.plan_store.save_plan(&plan, plan_data.metadata).await?;
 
+        let steps_detail = build_step_details_summary(&plan, is_zh);
+        let completed_count = plan.all_steps()
+            .filter(|s| s.status == StepStatus::Completed)
+            .count();
+        let failed_count = plan.all_steps()
+            .filter(|s| s.status == StepStatus::Failed)
+            .count();
+
         let (summary, success, outcome_str) = match &outcome {
             crate::types::RunOutcome::Completed => (
-                if is_zh { format!("计划 '{}' 执行成功。", objective) } else { format!("Plan '{}' completed successfully.", objective) },
+                if is_zh { format!("计划 '{}' 执行成功（{}/{}步成功）。\n\n{}", objective, completed_count, plan.total_steps(), steps_detail) } else { format!("Plan '{}' completed successfully ({}/{} steps succeeded).\n\n{}", objective, completed_count, plan.total_steps(), steps_detail) },
                 true,
                 "completed",
             ),
             crate::types::RunOutcome::Failed { error } => (
-                if is_zh { format!("计划 '{}' 执行失败: {}", objective, error) } else { format!("Plan '{}' failed: {}", objective, error) },
+                if is_zh { format!("计划 '{}' 执行失败（{}成功/{}失败）。错误: {}\n\n{}", objective, completed_count, failed_count, error, steps_detail) } else { format!("Plan '{}' failed ({} succeeded/{} failed). Error: {}\n\n{}", objective, completed_count, failed_count, error, steps_detail) },
                 false,
                 "failed",
             ),
             crate::types::RunOutcome::MaxTurnsExceeded { .. } => (
-                if is_zh { format!("计划 '{}' 执行中断。", objective) } else { format!("Plan '{}' execution interrupted.", objective) },
+                if is_zh { format!("计划 '{}' 执行中断（{}/{}步成功）。\n\n{}", objective, completed_count, plan.total_steps(), steps_detail) } else { format!("Plan '{}' execution interrupted ({}/{} steps succeeded).\n\n{}", objective, completed_count, plan.total_steps(), steps_detail) },
                 false,
                 "max_turns_exceeded",
             ),
             crate::types::RunOutcome::Cancelled => (
-                if is_zh { format!("计划 '{}' 执行中断。", objective) } else { format!("Plan '{}' execution interrupted.", objective) },
+                if is_zh { format!("计划 '{}' 执行中断。\n\n{}", objective, steps_detail) } else { format!("Plan '{}' execution interrupted.\n\n{}", objective, steps_detail) },
                 false,
                 "cancelled",
             ),
