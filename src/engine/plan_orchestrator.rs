@@ -28,7 +28,12 @@ fn build_step_details_summary(plan: &ExecutionPlan, is_zh: bool) -> String {
             Some(r) if r.success => {
                 let output = r.output.as_deref().unwrap_or("");
                 let truncated = if output.len() > 200 {
-                    format!("{}…", &output[..200])
+                    // Find a valid char boundary at or before byte 200
+                    let mut end = 200;
+                    while end > 0 && !output.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    format!("{}…", &output[..end])
                 } else {
                     output.to_string()
                 };
