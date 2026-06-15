@@ -226,7 +226,7 @@ struct AutoApprove;
 
 #[async_trait]
 impl ApprovalHandler for AutoApprove {
-    async fn approve(&self, request: ApprovalRequest) -> AgentResult<ApprovalDecision> {
+    async fn approve(&self, request: ApprovalRequest, _cancel_token: tokio_util::sync::CancellationToken) -> AgentResult<ApprovalDecision> {
         println!("\n  ⚠️  审批请求: {} (risk: {:?})", request.title, request.risk_level);
         println!("     {}", request.message);
         println!("     → 自动放行 (开发模式)");

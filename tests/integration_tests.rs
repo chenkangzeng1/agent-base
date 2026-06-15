@@ -242,7 +242,7 @@ async fn test_approval_deny_stops_execution() {
 
     #[async_trait]
     impl ApprovalHandler for DenyHandler {
-        async fn approve(&self, _request: ApprovalRequest) -> AgentResult<ApprovalDecision> {
+        async fn approve(&self, _request: ApprovalRequest, _cancel_token: tokio_util::sync::CancellationToken) -> AgentResult<ApprovalDecision> {
             Ok(ApprovalDecision::Deny)
         }
     }
@@ -324,7 +324,7 @@ async fn test_approval_allow_once_executes_tool() {
 
     #[async_trait]
     impl ApprovalHandler for AllowOnceHandler {
-        async fn approve(&self, _request: ApprovalRequest) -> AgentResult<ApprovalDecision> {
+        async fn approve(&self, _request: ApprovalRequest, _cancel_token: tokio_util::sync::CancellationToken) -> AgentResult<ApprovalDecision> {
             Ok(ApprovalDecision::AllowOnce)
         }
     }
@@ -1136,7 +1136,7 @@ async fn approval_deny_with_stop_messages_remain_valid() {
     struct DenyHandler;
     #[async_trait]
     impl ApprovalHandler for DenyHandler {
-        async fn approve(&self, _request: ApprovalRequest) -> AgentResult<ApprovalDecision> {
+        async fn approve(&self, _request: ApprovalRequest, _cancel_token: tokio_util::sync::CancellationToken) -> AgentResult<ApprovalDecision> {
             Ok(ApprovalDecision::Deny)
         }
     }
@@ -1195,7 +1195,7 @@ async fn approval_deny_with_retry_tool_result_still_present() {
     struct DenyHandler;
     #[async_trait]
     impl ApprovalHandler for DenyHandler {
-        async fn approve(&self, _request: ApprovalRequest) -> AgentResult<ApprovalDecision> {
+        async fn approve(&self, _request: ApprovalRequest, _cancel_token: tokio_util::sync::CancellationToken) -> AgentResult<ApprovalDecision> {
             Ok(ApprovalDecision::Deny)
         }
     }

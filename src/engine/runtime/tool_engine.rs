@@ -248,19 +248,15 @@ impl ToolEngine {
         let decision = match self.approval_handler.as_ref() {
             Some(handler) => {
                 let timeout = std::time::Duration::from_secs(300);
-                tokio::select! {
-                    _ = cancel_token.cancelled() => {
-                        tracing::info!(session_id = session_id.id, tool = tool_name, "approval cancelled");
-                        return Err(crate::types::AgentError::Cancelled);
-                    }
-                    result = tokio::time::timeout(timeout, handler.approve(request.clone())) => {
-                        match result {
-                            Ok(result) => result.map_err(|e| AgentError::internal(format!("Approval handler failed: {e}")))?,
-                            Err(_) => {
-                                tracing::warn!(session_id = session_id.id, ?timeout, "Approval timed out, defaulting to Deny");
-                                crate::types::ApprovalDecision::Deny
-                            }
-                        }
+                let result = tokio::time::timeout(
+                    timeout,
+                    handler.approve(request.clone(), cancel_token.clone()),
+                ).await;
+                match result {
+                    Ok(result) => result.map_err(|e| AgentError::internal(format!("Approval handler failed: {e}")))?,
+                    Err(_) => {
+                        tracing::warn!(session_id = session_id.id, ?timeout, "Approval timed out, defaulting to Deny");
+                        crate::types::ApprovalDecision::Deny
                     }
                 }
             }

@@ -188,7 +188,7 @@ struct CliApprovalHandler;
 
 #[async_trait]
 impl ApprovalHandler for CliApprovalHandler {
-    async fn approve(&self, request: ApprovalRequest) -> AgentResult<ApprovalDecision> {
+    async fn approve(&self, request: ApprovalRequest, _cancel_token: tokio_util::sync::CancellationToken) -> AgentResult<ApprovalDecision> {
         println!();
         println!("[Approval request] {}", request.title);
         println!("  Risk level: {:?}", request.risk_level);
