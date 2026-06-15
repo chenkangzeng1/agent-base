@@ -78,6 +78,7 @@ impl ToolEngine {
         language: Language,
         tool_timeout_ms: Option<u64>,
         max_output_chars: Option<usize>,
+        cancel_token: &tokio_util::sync::CancellationToken,
     ) -> AgentResult<ToolExecutionResult>
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
@@ -100,6 +101,7 @@ impl ToolEngine {
             llm_client: llm_client.clone(),
             session_store: Some(session_manager.session_store().clone()),
             language: language.clone(),
+            cancel_token: cancel_token.clone(),
         };
 
         // Lookup tool and execute via pipeline.
@@ -130,6 +132,10 @@ impl ToolEngine {
                                 session_id: session_id.clone(),
                                 event: user_event,
                             })?;
+                        }
+                        _ = cancel_token.cancelled() => {
+                            tracing::info!(session_id = session_id.id, tool = name, "tool execution cancelled");
+                            return Err(crate::types::AgentError::Cancelled);
                         }
                     }
                 };
@@ -206,6 +212,7 @@ impl ToolEngine {
         event_rx: &mut broadcast::Receiver<AgentEvent>,
         on_event: &mut F,
         session_manager: &SessionManager,
+        cancel_token: &tokio_util::sync::CancellationToken,
     ) -> AgentResult<()>
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
@@ -241,11 +248,19 @@ impl ToolEngine {
         let decision = match self.approval_handler.as_ref() {
             Some(handler) => {
                 let timeout = std::time::Duration::from_secs(300);
-                match tokio::time::timeout(timeout, handler.approve(request.clone())).await {
-                    Ok(result) => result.map_err(|e| AgentError::internal(format!("Approval handler failed: {e}")))?,
-                    Err(_) => {
-                        tracing::warn!(session_id = session_id.id, ?timeout, "Approval timed out, defaulting to Deny");
-                        crate::types::ApprovalDecision::Deny
+                tokio::select! {
+                    _ = cancel_token.cancelled() => {
+                        tracing::info!(session_id = session_id.id, tool = tool_name, "approval cancelled");
+                        return Err(crate::types::AgentError::Cancelled);
+                    }
+                    result = tokio::time::timeout(timeout, handler.approve(request.clone())) => {
+                        match result {
+                            Ok(result) => result.map_err(|e| AgentError::internal(format!("Approval handler failed: {e}")))?,
+                            Err(_) => {
+                                tracing::warn!(session_id = session_id.id, ?timeout, "Approval timed out, defaulting to Deny");
+                                crate::types::ApprovalDecision::Deny
+                            }
+                        }
                     }
                 }
             }

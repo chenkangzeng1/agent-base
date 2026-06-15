@@ -81,6 +81,7 @@ impl LlmEngine {
         span: Span,
         event_rx: &mut tokio::sync::broadcast::Receiver<AgentEvent>,
         on_event: &mut F,
+        cancel_token: &tokio_util::sync::CancellationToken,
     ) -> AgentResult<LlmTurnResult>
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
@@ -99,6 +100,10 @@ impl LlmEngine {
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
+                }
+                _ = cancel_token.cancelled() => {
+                    tracing::info!(session_id = session_id.id, "LLM stream cancelled");
+                    return Err(crate::types::AgentError::Cancelled);
                 }
                 maybe_chunk = stream.next() => {
                     let Some(chunk) = maybe_chunk else {

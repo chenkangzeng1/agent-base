@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use tokio_util::sync::CancellationToken;
+
 use crate::engine::session_store::SessionStore;
 use crate::engine::AgentSession;
 use crate::types::{
@@ -260,5 +262,28 @@ impl AgentRuntime {
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
         self.runner.run_plan_with_generator(session_id, objective, generator, config, on_event).await
+    }
+
+    // --- Cancellation support ---
+
+    /// Cancel the currently executing run_turn / run / run_plan.
+    /// No-op if there is no current execution.
+    pub fn cancel(&self) {
+        self.runner.cancel();
+    }
+
+    /// Reset the cancel token (called automatically before each run_turn)
+    pub fn reset_cancel(&self) {
+        self.runner.reset_cancel();
+    }
+
+    /// Get a clone of the cancel token
+    pub fn cancel_token(&self) -> CancellationToken {
+        self.runner.cancel_token()
+    }
+
+    /// Check if cancellation has been requested
+    pub fn is_cancelled(&self) -> bool {
+        self.runner.is_cancelled()
     }
 }

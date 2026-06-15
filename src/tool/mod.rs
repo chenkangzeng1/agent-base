@@ -51,6 +51,8 @@ pub struct ToolContext {
     /// Language preference for tool output.
     /// Defaults to `Language::En` if not set.
     pub language: crate::types::Language,
+    /// Cancellation token for checking if the operation should be cancelled.
+    pub cancel_token: tokio_util::sync::CancellationToken,
 }
 
 impl ToolContext {

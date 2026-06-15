@@ -33,6 +33,9 @@ impl PlanRunner {
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
+        // Reset cancel token for this run
+        self.reset_cancel();
+
         let span = tracing::info_span!("agent_run", session_id = session_id.id);
         let _enter = span.enter();
 
@@ -64,7 +67,7 @@ impl PlanRunner {
             session.nudge_count = 0;
         }).await?;
 
-        let (outcome, _turn_count) = self
+        let result = self
             .run_turn_loop(
                 &session_id,
                 &user_input_owned,
@@ -73,11 +76,23 @@ impl PlanRunner {
                 &mut event_rx,
                 &mut on_event,
             )
-            .await?;
+            .await;
 
-        self.event_bus.emit(AgentEvent::RunFinished { session_id: session_id.clone() });
-        EventBus::drain_async_events(&mut event_rx, &mut on_event)?;
+        // Emit RunCancelled if cancelled, RunFinished otherwise (same as run_turn)
+        match &result {
+            Ok((RunOutcome::Cancelled, _)) => {
+                on_event(RuntimeEvent::RunCancelled { session_id: session_id.clone() })?;
+            }
+            Err(e) if e.is_cancelled() => {
+                on_event(RuntimeEvent::RunCancelled { session_id: session_id.clone() })?;
+            }
+            _ => {
+                self.event_bus.emit(AgentEvent::RunFinished { session_id: session_id.clone() });
+                EventBus::drain_async_events(&mut event_rx, &mut on_event)?;
+            }
+        }
 
+        let (outcome, _turn_count) = result?;
         Ok(outcome)
     }
 
@@ -90,6 +105,9 @@ impl PlanRunner {
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
+        // Reset cancel token for this turn
+        self.reset_cancel();
+
         let span = tracing::Span::current();
         let _guard = span.enter();
         tracing::info!(session_id = session_id.id, user_input = %user_input, "agent turn start");
@@ -126,7 +144,7 @@ impl PlanRunner {
         });
 
         tracing::info!(session_id = session_id.id, "run_turn: entering run_turn_loop");
-        let (outcome, turn_count) = self
+        let result = self
             .run_turn_loop(
                 &session_id,
                 &user_input_owned,
@@ -135,8 +153,20 @@ impl PlanRunner {
                 &mut event_rx,
                 &mut on_event,
             )
-            .await?;
+            .await;
 
+        // Emit RunCancelled event if cancelled (unified emission point)
+        match &result {
+            Ok((RunOutcome::Cancelled, _)) => {
+                on_event(RuntimeEvent::RunCancelled { session_id: session_id.clone() })?;
+            }
+            Err(e) if e.is_cancelled() => {
+                on_event(RuntimeEvent::RunCancelled { session_id: session_id.clone() })?;
+            }
+            _ => {}
+        }
+
+        let (outcome, turn_count) = result?;
         tracing::info!(session_id = session_id.id, turn_count, "agent turn completed");
         Ok(outcome)
     }
@@ -163,6 +193,9 @@ impl PlanRunner {
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
+        // Reset cancel token for this resume
+        self.reset_cancel();
+
         let session_id = checkpoint.session_id.clone();
         let user_input = checkpoint.user_input.clone();
         let turn_count = checkpoint.turn_count;
@@ -191,7 +224,7 @@ impl PlanRunner {
             }
         }
 
-        let (outcome, _final_turn_count) = self
+        let result = self
             .run_turn_loop(
                 &session_id,
                 &user_input,
@@ -200,8 +233,20 @@ impl PlanRunner {
                 &mut event_rx,
                 &mut on_event,
             )
-            .await?;
+            .await;
 
+        // Emit RunCancelled if cancelled, same as run_turn
+        match &result {
+            Ok((RunOutcome::Cancelled, _)) => {
+                on_event(RuntimeEvent::RunCancelled { session_id: session_id.clone() })?;
+            }
+            Err(e) if e.is_cancelled() => {
+                on_event(RuntimeEvent::RunCancelled { session_id: session_id.clone() })?;
+            }
+            _ => {}
+        }
+
+        let (outcome, _final_turn_count) = result?;
         Ok(outcome)
     }
 
@@ -294,7 +339,8 @@ impl PlanRunner {
         let config = self.config_snapshot_async().await;
 
         if e.is_cancelled() {
-            self.event_bus.emit(AgentEvent::RunFinished { session_id: session_id.clone() });
+            // Don't emit RunFinished when cancelled — RunCancelled will be emitted by run_turn
+            // But still drain pending events and persist session
             EventBus::drain_async_events(event_rx, on_event)?;
             let session = self.session_manager.session_or_err(session_id).await?;
             if let Err(e) = self.session_manager.session_store().save(&session).await {
@@ -380,6 +426,12 @@ impl PlanRunner {
         loop {
             turn_count += 1;
 
+            // Check for cancellation at the top of each iteration
+            if self.is_cancelled() {
+                tracing::info!(session_id = session_id.id, "run_turn_loop cancelled");
+                return Ok((RunOutcome::Cancelled, turn_count));
+            }
+
             if turn_count > max_turns {
                 tracing::warn!(session_id = session_id.id, turn_count, max_turns, "max turns exceeded");
                 self.event_bus.emit(AgentEvent::RunFinished {
@@ -445,7 +497,8 @@ impl PlanRunner {
             tracing::info!(session_id = session_id.id, turn = turn_count, "LLM stream obtained, processing");
 
             let span = tracing::info_span!("llm_turn", session_id = session_id.id, turn = turn_count);
-            let result = self.llm_engine.process_stream(session_id, stream, span, event_rx, on_event).await;
+            let cancel_token = self.cancel_token();
+            let result = self.llm_engine.process_stream(session_id, stream, span, event_rx, on_event, &cancel_token).await;
             tracing::info!(session_id = session_id.id, turn = turn_count, is_err = result.is_err(), "LLM stream processed");
 
             match result {
@@ -561,6 +614,12 @@ impl PlanRunner {
                     return Ok((RunOutcome::Completed, turn_count));
                 }
                 Err(e) => {
+                    // Persist session on cancellation (LLM-stream path bypasses handle_tool_error)
+                    if e.is_cancelled() {
+                        if let Ok(session) = self.session_manager.session_or_err(session_id).await {
+                            let _ = self.session_manager.session_store().save(&session).await;
+                        }
+                    }
                     return Err(e);
                 }
             }
@@ -589,6 +648,7 @@ impl PlanRunner {
 
             self.tool_engine.process_approval(
                 session_id, name, &args, args_str, event_rx, on_event, &self.session_manager,
+                &self.cancel_token(),
             ).await?;
 
             parsed_calls.push((id.clone(), name.clone(), args_str.clone(), args));
@@ -607,6 +667,7 @@ impl PlanRunner {
         let config = self.config_snapshot_async().await;
 
         for (id, name, args_str, args) in parsed_calls {
+            let cancel_token = self.cancel_token();
             let tool_result = self.tool_engine.execute_tool(
                 session_id,
                 &id,
@@ -620,6 +681,7 @@ impl PlanRunner {
                 config.language.clone(),
                 config.tool.tool_timeout_ms,
                 config.tool.max_tool_output_chars,
+                &cancel_token,
             ).await;
 
             match tool_result {

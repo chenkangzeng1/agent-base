@@ -46,6 +46,9 @@ pub(crate) enum AgentEvent {
     RunFinished {
         session_id: SessionId,
     },
+    RunCancelled {
+        session_id: SessionId,
+    },
     PlanGenerated {
         session_id: SessionId,
         plan: ExecutionPlan,
@@ -162,6 +165,7 @@ pub enum RuntimeEvent {
     AwaitingApproval { session_id: SessionId, request: ApprovalRequest },
     Checkpoint { session_id: SessionId, checkpoint: CheckpointData },
     RunFinished { session_id: SessionId },
+    RunCancelled { session_id: SessionId },
     PlanGenerating { session_id: SessionId, plan_id: String },
     PlanGenerated { session_id: SessionId, plan: ExecutionPlan },
     PlanStepParsed { session_id: SessionId, plan_id: String, step_index: usize, step_id: String, step_description: String },
@@ -192,6 +196,7 @@ impl RuntimeEvent {
             RuntimeEvent::AwaitingApproval { session_id, .. } => session_id,
             RuntimeEvent::Checkpoint { session_id, .. } => session_id,
             RuntimeEvent::RunFinished { session_id, .. } => session_id,
+            RuntimeEvent::RunCancelled { session_id, .. } => session_id,
             RuntimeEvent::PlanGenerating { session_id, .. } => session_id,
             RuntimeEvent::PlanGenerated { session_id, .. } => session_id,
             RuntimeEvent::PlanStepParsed { session_id, .. } => session_id,
@@ -221,6 +226,7 @@ impl From<AgentEvent> for RuntimeEvent {
             AgentEvent::AwaitingApproval { session_id, request } => RuntimeEvent::AwaitingApproval { session_id, request },
             AgentEvent::Checkpoint { session_id, checkpoint } => RuntimeEvent::Checkpoint { session_id, checkpoint },
             AgentEvent::RunFinished { session_id } => RuntimeEvent::RunFinished { session_id },
+            AgentEvent::RunCancelled { session_id } => RuntimeEvent::RunCancelled { session_id },
             AgentEvent::PlanGenerated { session_id, plan } => RuntimeEvent::PlanGenerated { session_id, plan },
             AgentEvent::PlanStepStarted { session_id, step_id, step_description, payload } => RuntimeEvent::PlanStepStarted { session_id, step_id, step_description, payload },
             AgentEvent::PlanStepCompleted { session_id, step_id, success, result, payload } => RuntimeEvent::PlanStepCompleted { session_id, step_id, success, result, payload },

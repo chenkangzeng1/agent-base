@@ -693,6 +693,7 @@ impl PlanRunner {
                 llm_client: Some(self.llm_engine.client.clone()),
                 session_store: Some(self.session_manager.session_store().clone()),
                 language: config.language.clone(),
+                cancel_token: self.cancel_token(),
             };
             exec.execute_step(step, step_outputs, &tool_ctx).await
         } else {
