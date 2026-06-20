@@ -86,7 +86,13 @@ impl AgentRuntime {
     }
 
     pub fn client(&self) -> Arc<dyn crate::llm::LlmClient> {
-        self.runner.llm_engine.client.clone()
+        self.runner.llm_engine.get_client()
+    }
+
+    /// Replace the LLM client at runtime (e.g., model switch).
+    /// Requires `&mut self` — obtain via `runtime.lock().await`.
+    pub fn set_client(&mut self, client: Arc<dyn crate::llm::LlmClient>) {
+        self.runner.llm_engine.set_client(client);
     }
 
     pub fn tools_mut(&self) -> Arc<tokio::sync::RwLock<crate::tool::ToolRegistry>> {

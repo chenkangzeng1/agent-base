@@ -1,5 +1,5 @@
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 use futures_core::Stream;
@@ -12,13 +12,23 @@ use crate::types::{AgentEvent, AgentResult, ChatMessage, RuntimeEvent, SessionId
 use crate::engine::runtime::event_bus::EventBus;
 
 pub struct LlmEngine {
-    pub client: Arc<dyn LlmClient>,
+    client: RwLock<Arc<dyn LlmClient>>,
     event_bus: EventBus,
 }
 
 impl LlmEngine {
     pub(crate) fn new(client: Arc<dyn LlmClient>, event_bus: EventBus) -> Self {
-        Self { client, event_bus }
+        Self { client: RwLock::new(client), event_bus }
+    }
+
+    /// Get a clone of the current LLM client.
+    pub fn get_client(&self) -> Arc<dyn LlmClient> {
+        self.client.read().unwrap().clone()
+    }
+
+    /// Replace the LLM client at runtime (e.g., model switch).
+    pub fn set_client(&self, client: Arc<dyn LlmClient>) {
+        *self.client.write().unwrap() = client;
     }
 
     pub async fn chat_stream(
@@ -29,7 +39,7 @@ impl LlmEngine {
         response_format: Option<&crate::types::ResponseFormat>,
     ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
         tracing::info!(msg_count = messages.len(), tool_count = tool_definitions.len(), "LLM chat_stream: sending request to API");
-        let result = self.client
+        let result = self.get_client()
             .chat_stream(messages, tool_definitions, reasoning, response_format)
             .await;
         match &result {
@@ -52,7 +62,7 @@ impl LlmEngine {
         let mut delay_ms = retry.initial_backoff_ms;
         loop {
             match self
-                .client
+                .get_client()
                 .chat_stream(messages, tool_definitions, reasoning, response_format)
                 .await
             {

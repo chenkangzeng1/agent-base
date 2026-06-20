@@ -677,7 +677,7 @@ impl PlanRunner {
                 event_rx,
                 on_event,
                 &self.session_manager,
-                Some(self.llm_engine.client.clone()),
+                Some(self.llm_engine.get_client()),
                 config.language.clone(),
                 config.tool.tool_timeout_ms,
                 config.tool.max_tool_output_chars,

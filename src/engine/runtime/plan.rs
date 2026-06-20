@@ -690,7 +690,7 @@ impl PlanRunner {
             let tool_ctx = ToolContext {
                 session_id: session_id.clone(),
                 user_event_tx,
-                llm_client: Some(self.llm_engine.client.clone()),
+                llm_client: Some(self.llm_engine.get_client()),
                 session_store: Some(self.session_manager.session_store().clone()),
                 language: config.language.clone(),
                 cancel_token: self.cancel_token(),
