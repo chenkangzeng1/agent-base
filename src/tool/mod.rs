@@ -172,6 +172,11 @@ impl ToolRegistry {
         self.tools.insert(tool.name().to_string(), Arc::new(tool));
     }
 
+    /// Remove a tool from the registry by name.
+    pub fn remove(&mut self, name: &str) {
+        self.tools.remove(name);
+    }
+
     pub fn get(&self, name: &str) -> Option<ToolRef> {
         self.tools.get(name).cloned()
     }
