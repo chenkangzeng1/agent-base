@@ -5,7 +5,7 @@ use tokio_util::sync::CancellationToken;
 use crate::engine::session_store::SessionStore;
 use crate::engine::AgentSession;
 use crate::types::{
-    AgentConfig, AgentError, AgentEvent, AgentResult, CheckpointData,
+    AgentConfig, AgentError, AgentResult, CheckpointData,
     MessageRole, RunOutcome, RuntimeEvent, SessionId, ExecutionPlan
 };
 use crate::engine::plan::PlanConfig;
@@ -58,23 +58,22 @@ impl AgentRuntime {
         self.runner.session_manager.with_session_mut(session_id, f).await
     }
 
-    pub(crate) fn emit_event(&self, event: AgentEvent) {
+    pub(crate) fn emit_event(&self, event: RuntimeEvent) {
         self.runner.event_bus.emit(event);
     }
 
-    pub(crate) fn subscribe_events(&self) -> tokio::sync::broadcast::Receiver<AgentEvent> {
+    pub(crate) fn subscribe_events(&self) -> tokio::sync::broadcast::Receiver<RuntimeEvent> {
         self.runner.event_bus.subscribe()
     }
 
+    /// Subscribe to runtime events from the internal broadcast channel.
+    ///
+    /// Events are delivered directly from the runtime's event bus (capacity 2048).
+    /// Slow consumers may receive `Lagged(n)` errors if they cannot keep up —
+    /// ensure the receiver loop processes events promptly or use a buffering
+    /// layer in the consumer if backpressure is a concern.
     pub fn subscribe_runtime_events(&self) -> tokio::sync::broadcast::Receiver<RuntimeEvent> {
-        let (tx, rx) = tokio::sync::broadcast::channel(256);
-        let mut internal_rx = self.runner.event_bus.subscribe();
-        tokio::spawn(async move {
-            while let Ok(event) = internal_rx.recv().await {
-                let _ = tx.send(RuntimeEvent::from(event));
-            }
-        });
-        rx
+        self.runner.event_bus.subscribe()
     }
 
     pub fn session_manager(&self) -> &SessionManager {
@@ -99,12 +98,12 @@ impl AgentRuntime {
         self.runner.tool_engine.tools_arc()
     }
 
-    pub fn create_step_executor(&self) -> crate::engine::ToolCallingStepExecutor {
+    pub async fn create_step_executor(&self) -> crate::engine::ToolCallingStepExecutor {
         use crate::engine::pipeline::DefaultPipeline;
         let tools_arc = self.runner.tool_engine.tools_arc();
-        let registry = Arc::new(tools_arc.blocking_read().clone());
+        let registry = Arc::new(tools_arc.read().await.clone());
         let base = self.runner.tool_engine.execution_pipeline();
-        let config = self.runner.config.blocking_read();
+        let config = self.runner.config.read().await;
         let pipeline = DefaultPipeline::new(
             base.policy(),
             config.tool.tool_timeout_ms,
@@ -153,7 +152,7 @@ impl AgentRuntime {
     }
 
     pub async fn save_checkpoint(&self, session_id: &SessionId, checkpoint: CheckpointData) -> AgentResult<()> {
-        self.emit_event(AgentEvent::Checkpoint {
+        self.emit_event(RuntimeEvent::Checkpoint {
             session_id: session_id.clone(),
             checkpoint,
         });
@@ -268,6 +267,98 @@ impl AgentRuntime {
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
         self.runner.run_plan_with_generator(session_id, objective, generator, config, on_event).await
+    }
+
+    /// Generate an execution plan with real-time streaming events.
+    ///
+    /// Unlike `run_plan_with_generator` which buffers plan generation events and
+    /// emits `PlanGenerated` only at completion, this method forwards plan generation
+    /// progress (`PlanGenerating`, `PlanStepParsed`, `ThoughtDelta`) to the callback
+    /// as they arrive from the generator.
+    pub async fn generate_plan_streaming<F>(
+        &self,
+        session_id: &SessionId,
+        objective: &str,
+        context: &str,
+        generator: Arc<dyn crate::engine::PlanGenerator>,
+        on_event: &mut F,
+    ) -> AgentResult<ExecutionPlan>
+    where
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
+    {
+        let (plan_event_tx, mut plan_event_rx) = tokio::sync::mpsc::unbounded_channel();
+        let tools = self.runner.tool_engine.definitions().await;
+
+        let plan_future = generator.generate_plan(objective, context, &tools, Some(plan_event_tx));
+        tokio::pin!(plan_future);
+
+        // Stream events in real-time while the plan is being generated
+        let mut plan = loop {
+            tokio::select! {
+                result = &mut plan_future => {
+                    break match result {
+                        Ok(plan) => plan,
+                        Err(e) => return Err(e),
+                    };
+                }
+                Some(event) = plan_event_rx.recv() => {
+                    let runtime_event = match event {
+                        RuntimeEvent::PlanGenerating { .. } => RuntimeEvent::PlanGenerating {
+                            session_id: session_id.clone(),
+                            plan_id: String::new(),
+                        },
+                        RuntimeEvent::PlanStepParsed { step_index, step_id, step_description, .. } => {
+                            RuntimeEvent::PlanStepParsed {
+                                session_id: session_id.clone(),
+                                plan_id: String::new(),
+                                step_index,
+                                step_id,
+                                step_description,
+                            }
+                        }
+                        RuntimeEvent::ThoughtDelta { text, .. } => RuntimeEvent::ThoughtDelta {
+                            session_id: session_id.clone(),
+                            text,
+                        },
+                        other => other,
+                    };
+                    on_event(runtime_event)?;
+                }
+            }
+        };
+
+        // Drain any remaining events
+        while let Ok(event) = plan_event_rx.try_recv() {
+            let runtime_event = match event {
+                RuntimeEvent::PlanGenerating { .. } => RuntimeEvent::PlanGenerating {
+                    session_id: session_id.clone(),
+                    plan_id: plan.id.clone(),
+                },
+                RuntimeEvent::PlanStepParsed { step_index, step_id, step_description, .. } => {
+                    RuntimeEvent::PlanStepParsed {
+                        session_id: session_id.clone(),
+                        plan_id: plan.id.clone(),
+                        step_index,
+                        step_id,
+                        step_description,
+                    }
+                }
+                RuntimeEvent::ThoughtDelta { text, .. } => RuntimeEvent::ThoughtDelta {
+                    session_id: session_id.clone(),
+                    text,
+                },
+                other => other,
+            };
+            on_event(runtime_event)?;
+        }
+
+        // Emit final PlanGenerated
+        on_event(RuntimeEvent::PlanGenerated {
+            session_id: session_id.clone(),
+            plan: plan.clone(),
+        })?;
+
+        Ok(plan)
     }
 
     // --- Cancellation support ---

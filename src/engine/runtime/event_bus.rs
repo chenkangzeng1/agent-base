@@ -1,15 +1,11 @@
 use tokio::sync::broadcast;
 
-use crate::types::{AgentEvent, AgentResult, RuntimeEvent};
+use crate::types::{AgentResult, RuntimeEvent};
 
-/// Internal event bus broadcasting [`AgentEvent`]s within the runtime.
-///
-/// This is **not** exposed to external consumers or user tools. External
-/// consumers receive [`RuntimeEvent`](crate::types::RuntimeEvent) through the
-/// unified event callback.
+/// Internal event bus broadcasting [`RuntimeEvent`]s within the runtime.
 #[derive(Clone)]
 pub(crate) struct EventBus {
-    sender: broadcast::Sender<AgentEvent>,
+    sender: broadcast::Sender<RuntimeEvent>,
 }
 
 impl EventBus {
@@ -18,18 +14,18 @@ impl EventBus {
         Self { sender }
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<AgentEvent> {
+    pub fn subscribe(&self) -> broadcast::Receiver<RuntimeEvent> {
         self.sender.subscribe()
     }
 
-    pub fn emit(&self, event: AgentEvent) {
+    pub fn emit(&self, event: RuntimeEvent) {
         let _ = self.sender.send(event);
     }
 
-    /// Drain pending events from a broadcast receiver, converting each
-    /// [`AgentEvent`] to [`RuntimeEvent`] before forwarding to the callback.
+    /// Drain pending events from the broadcast receiver, forwarding each
+    /// [`RuntimeEvent`] to the callback.
     pub fn drain_async_events<F>(
-        event_rx: &mut broadcast::Receiver<AgentEvent>,
+        event_rx: &mut broadcast::Receiver<RuntimeEvent>,
         on_event: &mut F,
     ) -> AgentResult<()>
     where
@@ -37,7 +33,7 @@ impl EventBus {
     {
         loop {
             match event_rx.try_recv() {
-                Ok(event) => on_event(RuntimeEvent::from(event))?,
+                Ok(event) => on_event(event)?,
                 Err(broadcast::error::TryRecvError::Empty) => break,
                 Err(broadcast::error::TryRecvError::Lagged(n)) => {
                     tracing::warn!(

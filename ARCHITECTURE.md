@@ -2,6 +2,11 @@
 
 `agent-base` is a lightweight Agent Runtime Kernel written in Rust. It provides a trait-driven, event-based foundation for building autonomous agents with support for both single-turn (ReAct) and multi-step (Plan) execution modes.
 
+Among agent runtime libraries, `agent-base` distinguishes itself in two areas:
+
+- **Plan system with 4-level progressive recovery** — retry → alternative → replan → fallback. Each level escalates intelligently: framework-level retries with linear backoff, LLM-generated alternative steps, full replanning via the generator, and a configurable fallback strategy. This is a depth of recovery not commonly found in agent runtimes.
+- **Pipeline composition over monolithic orchestration** — `DefaultPipeline` handles policy hooks, timeout, and truncation as composable layers. `EventEmittingPipeline` decorates without modifying core logic. A `ToolEngine::orchestrate()` method unifies approval + execution in one call, keeping the ReAct loop lean.
+
 ## Layered Architecture
 
 ```
@@ -41,36 +46,34 @@
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-## Three-Layer Event System
+## Two-Layer Event System
 
-Events flow through three layers, from internal to public:
+Events flow through two layers, from runtime to consumer:
 
 ```
-AgentEvent (pub(crate))       20 internal framework events
-    │                         (11 Plan-related, 9 core)
-    ↓ From<AgentEvent>
-RuntimeEvent (public)         Unified public event stream
-    ├─ System(AgentEvent)     Framework events exposed to consumers
-    └─ UserEvent              Tool-produced user events
+RuntimeEvent (public)           Unified event stream — single source of truth
+    │                           (22 variants: 9 core, 13 plan-related)
+    ├─ Framework events         TextDelta, ToolCallStarted, PlanGenerated, etc.
+    └─ UserEvent              Wraps tool-produced user-space events
 
-UserEvent (public)            Events emitted by tools during execution
-    ├─ Progress               Progress updates from long-running tools
-    ├─ SubAgentEvent          Events from sub-agent tools
-    └─ Structured             Arbitrary structured data
+UserEvent (public)              Events emitted by tools during execution
+    ├─ Progress                 Progress updates from long-running tools
+    ├─ SubAgentEvent            Events from sub-agent tools
+    └─ Structured               Arbitrary structured data
 ```
 
-- **AgentEvent** is the internal bus event — not visible outside the crate
-- **RuntimeEvent** is what consumers receive via `on_event` callback or `subscribe_runtime_events()`
+- **RuntimeEvent** is both internal and public — emitted directly on the internal broadcast channel and forwarded to consumers via `on_event` callback or `subscribe_runtime_events()`
 - **UserEvent** is produced by tools via `ToolContext.user_event_tx` and forwarded as `RuntimeEvent::UserEvent`
+- **PlanEvent** is an aggregate enum (14 variants) extracted via `RuntimeEvent::as_plan_event()` for exhaustive matching on plan lifecycle events
 
-### AgentEvent Variants
+### RuntimeEvent Variants
 
 | Category | Events |
 |----------|--------|
 | **Core** | `TextDelta`, `ThoughtDelta`, `ToolCallStarted`, `ToolCallFinished`, `AwaitingApproval`, `Checkpoint`, `RunFinished` |
 | **Plan Lifecycle** | `PlanGenerating`, `PlanGenerated`, `PlanFailed`, `PlanCompleted` |
 | **Plan Steps** | `PlanStepStarted`, `PlanStepCompleted`, `PlanStepParsed`, `PlanStepWaitingConfirmation` |
-| **Plan Recovery** | `PlanReplanning`, `PlanReplanned`, `PlanRecoveryExhausted` |
+| **Plan Recovery** | `StepRetry`, `StepAlternativeTrying`, `PlanReplanning`, `PlanReplanned`, `PlanRecoveryExhausted` |
 
 ## Extension Points
 
@@ -252,7 +255,7 @@ src/
 │   └── auto_continue.rs         ─── AutoContinueTool
 │
 └── types/                       ─── Core domain types
-    ├── events.rs                ─── AgentEvent, RuntimeEvent, UserEvent
+    ├── events.rs                ─── RuntimeEvent, PlanEvent, UserEvent
     ├── message.rs               ─── ChatMessage, Message, MessageRole
     ├── config.rs                ─── AgentConfig, RetryConfig, Language
     ├── error.rs                 ─── AgentError, ErrorKind, AgentResult
@@ -288,11 +291,11 @@ This split lets you implement approval without modifying tool code, and test pol
 
 Tool execution has multiple cross-cutting concerns: policy hooks, timeout, output truncation, event emission. The `ToolExecutionPipeline` trait allows composable decorators (`EventEmittingPipeline`) and keeps each concern isolated. Both the ReAct loop and the Plan step executor share the same pipeline implementation.
 
-### Why three layers of events?
+### Event layers
 
-- `AgentEvent` (pub(crate)) — internal framework events, not exposed to users
-- `RuntimeEvent` (public) — unified event stream for consumers (UI, logging, monitoring)
-- `UserEvent` (public) — tool-produced events (progress, sub-agent status)
+- `RuntimeEvent` (public) — unified event stream emitted directly on the broadcast channel and consumed via `on_event` callback or `subscribe_runtime_events()`
+- `PlanEvent` (public) — aggregate enum extracted via `RuntimeEvent::as_plan_event()` for exhaustive matching on plan lifecycle events
+- `UserEvent` (public) — tool-produced events (progress, sub-agent status, structured data), wrapped in `RuntimeEvent::UserEvent`
 
 This separation ensures internal framework evolution doesn't break the public API.
 

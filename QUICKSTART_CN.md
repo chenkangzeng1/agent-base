@@ -110,7 +110,7 @@ impl Tool for DiskCheckTool {
 mod tools;
 
 use std::sync::Arc;
-use agent_base::{AgentBuilder, AgentEvent, AgentResult, OpenAiClient, RunOutcome, RetryOnError};
+use agent_base::{AgentBuilder, RuntimeEvent, AgentResult, OpenAiClient, RunOutcome, RetryOnError};
 use tools::DiskCheckTool;
 
 const SYSTEM_PROMPT: &str = r#"你是一个服务器健康检查助手。
@@ -146,14 +146,14 @@ async fn main() -> AgentResult<()> {
     // 4. 打印结果
     for event in &events {
         match event {
-            AgentEvent::TextDelta { text, .. } => print!("{}", text),
-            AgentEvent::ToolCallStarted { tool_name, .. } => {
+            RuntimeEvent::TextDelta { text, .. } => print!("{}", text),
+            RuntimeEvent::ToolCallStarted { tool_name, .. } => {
                 println!("\n🔧 调用工具: {}", tool_name);
             }
-            AgentEvent::ToolCallFinished { summary, .. } => {
+            RuntimeEvent::ToolCallFinished { summary, .. } => {
                 println!("✅ 结果: {}", summary);
             }
-            AgentEvent::RunFinished { .. } => println!("\n[完成]"),
+            RuntimeEvent::RunFinished { .. } => println!("\n[完成]"),
             _ => {}
         }
     }
@@ -345,19 +345,19 @@ let runtime = AgentBuilder::new(llm)
 
 ```rust
 use std::io::{self, Write};
-use agent_base::{AgentEvent, AgentResult};
+use agent_base::{RuntimeEvent, AgentResult};
 
 // 这是一个同步回调——每个事件触发时立即调用
-fn on_event(event: AgentEvent) -> AgentResult<()> {
+fn on_event(event: RuntimeEvent) -> AgentResult<()> {
     match event {
-        AgentEvent::TextDelta { text, .. } => {
+        RuntimeEvent::TextDelta { text, .. } => {
             print!("{}", text);
             io::stdout().flush().unwrap();
         }
-        AgentEvent::ToolCallStarted { tool_name, args_json, .. } => {
+        RuntimeEvent::ToolCallStarted { tool_name, args_json, .. } => {
             println!("\n🔧 {}({})", tool_name, args_json);
         }
-        AgentEvent::ToolCallFinished { summary, .. } => {
+        RuntimeEvent::ToolCallFinished { summary, .. } => {
             // 长输出截断显示
             let display = if summary.len() > 200 {
                 format!("{}...", &summary[..200])
@@ -366,7 +366,7 @@ fn on_event(event: AgentEvent) -> AgentResult<()> {
             };
             println!("  → {}", display);
         }
-        AgentEvent::RunFinished { .. } => {
+        RuntimeEvent::RunFinished { .. } => {
             println!("\n✅ 完成");
         }
         _ => {}
@@ -457,7 +457,7 @@ use std::sync::Arc;
 use std::io::{self, Write};
 
 use agent_base::{
-    AgentBuilder, AgentEvent, AgentResult, OpenAiClient, RunOutcome,
+    AgentBuilder, RuntimeEvent, AgentResult, OpenAiClient, RunOutcome,
     Tool, ToolContext, ToolOutput, ToolControlFlow,
 };
 use async_trait::async_trait;
@@ -497,12 +497,12 @@ impl Tool for CheckDiskTool {
     }
 }
 
-fn on_event(event: AgentEvent) -> AgentResult<()> {
+fn on_event(event: RuntimeEvent) -> AgentResult<()> {
     match event {
-        AgentEvent::TextDelta { text, .. } => { print!("{}", text); io::stdout().flush().unwrap(); }
-        AgentEvent::ToolCallStarted { tool_name, .. } => println!("\n🔧 {}", tool_name),
-        AgentEvent::ToolCallFinished { summary, .. } => println!("  → {}", summary),
-        AgentEvent::RunFinished { .. } => println!("\n✅"),
+        RuntimeEvent::TextDelta { text, .. } => { print!("{}", text); io::stdout().flush().unwrap(); }
+        RuntimeEvent::ToolCallStarted { tool_name, .. } => println!("\n🔧 {}", tool_name),
+        RuntimeEvent::ToolCallFinished { summary, .. } => println!("  → {}", summary),
+        RuntimeEvent::RunFinished { .. } => println!("\n✅"),
         _ => {}
     }
     Ok(())
@@ -564,7 +564,7 @@ cargo run
 | `ApprovalHandler` | 执行审批交互 | 和 ToolPolicy 配合使用 |
 | `Middleware` | 在 Agent 循环中插入自定义逻辑 | 输入输出过滤、防幻觉 |
 | `ToolErrorRecovery` | 工具失败后的行为策略 | `StopOnError`（默认）或 `RetryOnError` |
-| `AgentEvent` 流 | 运行时实时事件 | UI 更新、日志、调试 |
+| `RuntimeEvent` 流 | 运行时实时事件 | UI 更新、日志、调试 |
 | `SessionId` | 多轮对话句柄 | REPL 或聊天 UI |
 | `SubAgentTool` | 把另一个 Agent 包装成工具 | 任务委派、专家 Agent |
 

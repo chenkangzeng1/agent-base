@@ -9,6 +9,7 @@ use crate::types::{AgentError, AgentResult, MessageRole, SessionId, SessionIdGen
 use crate::engine::session_store::SessionStore;
 use crate::engine::AgentSession;
 
+#[derive(Clone)]
 pub struct SessionManager {
     session_id_generator: Arc<dyn SessionIdGenerator>,
     sessions: Arc<RwLock<HashMap<SessionId, AgentSession>>>,

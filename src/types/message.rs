@@ -139,3 +139,26 @@ impl ChatMessage {
         }
     }
 }
+
+impl From<&ChatMessage> for Message {
+    fn from(cm: &ChatMessage) -> Self {
+        match cm {
+            ChatMessage::System { content } => Message {
+                role: MessageRole::System,
+                content: content.clone(),
+            },
+            ChatMessage::User { content, .. } => Message {
+                role: MessageRole::User,
+                content: content.clone(),
+            },
+            ChatMessage::Assistant { content, .. } => Message {
+                role: MessageRole::Assistant,
+                content: content.clone().unwrap_or_default(),
+            },
+            ChatMessage::Tool { content, .. } => Message {
+                role: MessageRole::Tool,
+                content: content.clone(),
+            },
+        }
+    }
+}

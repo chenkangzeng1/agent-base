@@ -5,7 +5,7 @@ use crate::engine::recovery::ToolErrorAction;
 use crate::engine::runtime::event_bus::EventBus;
 use crate::engine::runtime::llm_engine::LlmTurnResult;
 use crate::types::{
-    AgentError, AgentEvent, AgentResult, CheckpointData, CheckpointStep, 
+    AgentError, AgentResult, CheckpointData, CheckpointStep, 
     MessageRole, RunOutcome, RuntimeEvent, SessionId
 };
 
@@ -43,7 +43,7 @@ impl PlanRunner {
 
         if let Err(e) = self.validate_session(&session_id).await {
             tracing::warn!(session_id = session_id.id, error = %e, "session validation failed");
-            self.event_bus.emit(AgentEvent::RunFinished { session_id: session_id.clone() });
+            self.event_bus.emit(RuntimeEvent::RunFinished { session_id: session_id.clone() });
             EventBus::drain_async_events(&mut event_rx, &mut on_event)?;
             return Err(e);
         }
@@ -87,7 +87,7 @@ impl PlanRunner {
                 on_event(RuntimeEvent::RunCancelled { session_id: session_id.clone() })?;
             }
             _ => {
-                self.event_bus.emit(AgentEvent::RunFinished { session_id: session_id.clone() });
+                self.event_bus.emit(RuntimeEvent::RunFinished { session_id: session_id.clone() });
                 EventBus::drain_async_events(&mut event_rx, &mut on_event)?;
             }
         }
@@ -133,7 +133,7 @@ impl PlanRunner {
         }).await?;
         tracing::debug!(session_id = session_id.id, "run_turn: user message pushed");
 
-        self.event_bus.emit(AgentEvent::Checkpoint {
+        self.event_bus.emit(RuntimeEvent::Checkpoint {
             session_id: session_id.clone(),
             checkpoint: CheckpointData {
                 session_id: session_id.clone(),
@@ -209,7 +209,7 @@ impl PlanRunner {
             match self.handle_tool_calls(&session_id, &tool_calls, &mut event_rx, &mut on_event).await {
                 Ok(ToolCallResult::Continue) => {}
                 Ok(ToolCallResult::Break) => {
-                    self.event_bus.emit(AgentEvent::RunFinished { session_id: session_id.clone() });
+                    self.event_bus.emit(RuntimeEvent::RunFinished { session_id: session_id.clone() });
                     EventBus::drain_async_events(&mut event_rx, &mut on_event)?;
                     return Ok(RunOutcome::Completed);
                 }
@@ -330,7 +330,7 @@ impl PlanRunner {
         session_id: &SessionId,
         tool_calls: &[(String, String, String)],
         e: AgentError,
-        event_rx: &mut broadcast::Receiver<AgentEvent>,
+        event_rx: &mut broadcast::Receiver<RuntimeEvent>,
         on_event: &mut F,
     ) -> AgentResult<Option<RunOutcome>>
     where
@@ -367,7 +367,7 @@ impl PlanRunner {
                 self.with_session_mut(session_id, |session| {
                     session.close_dangling_tool_calls(&error_summary);
                 }).await?;
-                self.event_bus.emit(AgentEvent::RunFinished { session_id: session_id.clone() });
+                self.event_bus.emit(RuntimeEvent::RunFinished { session_id: session_id.clone() });
                 EventBus::drain_async_events(event_rx, on_event)?;
                 let session = self.session_manager.session_or_err(session_id).await?;
                 if let Err(e) = self.session_manager.session_store().save(&session).await {
@@ -412,7 +412,7 @@ impl PlanRunner {
         user_input_owned: &str,
         tool_definitions: &[serde_json::Value],
         mut turn_count: u32,
-        event_rx: &mut broadcast::Receiver<AgentEvent>,
+        event_rx: &mut broadcast::Receiver<RuntimeEvent>,
         on_event: &mut F,
     ) -> AgentResult<(RunOutcome, u32)>
     where
@@ -434,7 +434,7 @@ impl PlanRunner {
 
             if turn_count > max_turns {
                 tracing::warn!(session_id = session_id.id, turn_count, max_turns, "max turns exceeded");
-                self.event_bus.emit(AgentEvent::RunFinished {
+                self.event_bus.emit(RuntimeEvent::RunFinished {
                     session_id: session_id.clone(),
                 });
                 EventBus::drain_async_events(event_rx, on_event)?;
@@ -458,7 +458,7 @@ impl PlanRunner {
 
             let (messages, tools_for_turn) = self.apply_pre_llm_mw(session_id, messages, tools_for_turn).await?;
 
-            self.event_bus.emit(AgentEvent::Checkpoint {
+            self.event_bus.emit(RuntimeEvent::Checkpoint {
                 session_id: session_id.clone(),
                 checkpoint: CheckpointData {
                     session_id: session_id.clone(),
@@ -553,7 +553,7 @@ impl PlanRunner {
 
                     if result.is_tool_call && !result.tool_calls.is_empty() {
                         tracing::info!(session_id = session_id.id, turn = turn_count, tool_count = result.tool_calls.len(), "handling tool calls");
-                        self.event_bus.emit(AgentEvent::Checkpoint {
+                        self.event_bus.emit(RuntimeEvent::Checkpoint {
                             session_id: session_id.clone(),
                             checkpoint: CheckpointData {
                                 session_id: session_id.clone(),
@@ -572,7 +572,7 @@ impl PlanRunner {
                                 self.with_session_mut(session_id, |session| {
                                     session.total_tool_calls += n;
                                 }).await?;
-                                self.event_bus.emit(AgentEvent::Checkpoint {
+                                self.event_bus.emit(RuntimeEvent::Checkpoint {
                                     session_id: session_id.clone(),
                                     checkpoint: CheckpointData {
                                         session_id: session_id.clone(),
@@ -592,7 +592,7 @@ impl PlanRunner {
                                 self.with_session_mut(session_id, |session| {
                                     session.total_tool_calls += n;
                                 }).await?;
-                                self.event_bus.emit(AgentEvent::RunFinished { session_id: session_id.clone() });
+                                self.event_bus.emit(RuntimeEvent::RunFinished { session_id: session_id.clone() });
                                 EventBus::drain_async_events(event_rx, on_event)?;
                                 return Ok((RunOutcome::Completed, turn_count));
                             }
@@ -609,7 +609,7 @@ impl PlanRunner {
                     }
 
                     tracing::info!(session_id = session_id.id, turn = turn_count, "text-only response, run completed");
-                    self.event_bus.emit(AgentEvent::RunFinished { session_id: session_id.clone() });
+                    self.event_bus.emit(RuntimeEvent::RunFinished { session_id: session_id.clone() });
                     EventBus::drain_async_events(event_rx, on_event)?;
                     return Ok((RunOutcome::Completed, turn_count));
                 }
@@ -630,7 +630,7 @@ impl PlanRunner {
         &self,
         session_id: &SessionId,
         tool_calls: &[(String, String, String)],
-        event_rx: &mut broadcast::Receiver<AgentEvent>,
+        event_rx: &mut broadcast::Receiver<RuntimeEvent>,
         on_event: &mut F,
     ) -> AgentResult<ToolCallResult>
     where
@@ -639,64 +639,40 @@ impl PlanRunner {
         let tool_names: Vec<&str> = tool_calls.iter().map(|(_, name, _)| name.as_str()).collect();
         tracing::debug!(session_id = session_id.id, ?tool_names, "handle tool calls start");
 
-        let mut parsed_calls: Vec<(String, String, String, serde_json::Value)> = Vec::new();
-        for (id, name, args_str) in tool_calls {
-            let args: serde_json::Value = serde_json::from_str(args_str).map_err(|_| AgentError::ToolArgsInvalid {
-                name: name.clone(),
-                raw: args_str.clone(),
-            })?;
+        let config = self.config_snapshot_async().await;
 
-            self.tool_engine.process_approval(
-                session_id, name, &args, args_str, event_rx, on_event, &self.session_manager,
-                &self.cancel_token(),
-            ).await?;
+        let ctx = super::tool_engine::ExecutionContext {
+            session_manager: self.session_manager.clone(),
+            llm_client: Some(self.llm_engine.get_client()),
+            language: config.language.clone(),
+            tool_timeout_ms: config.tool.tool_timeout_ms,
+            max_output_chars: config.tool.max_tool_output_chars,
+            cancel_token: self.cancel_token(),
+        };
 
-            parsed_calls.push((id.clone(), name.clone(), args_str.clone(), args));
-        }
+        // Orchestrate: approval check + execution for all tool calls.
+        // Approval denial is handled inside process_approval (pushes fake tool state
+        // and returns Err). We only push real tool calls on success.
+        let results = self.tool_engine.orchestrate(
+            session_id, tool_calls, &ctx, event_rx, on_event,
+        ).await?;
 
+        // Push assistant tool calls to session after all approvals pass
         {
-            let tc: Vec<(String, String, String)> = parsed_calls
-                .iter()
-                .map(|(id, name, args_json, _)| (id.clone(), name.clone(), args_json.clone()))
-                .collect();
+            let tc: Vec<(String, String, String)> = tool_calls.to_vec();
             self.with_session_mut(session_id, |session| {
                 session.push_assistant_tool_calls(&tc);
             }).await?;
         }
 
-        let config = self.config_snapshot_async().await;
+        // Process results: push to session, check for Break
+        for result in results {
+            self.with_session_mut(session_id, |session| {
+                session.push_tool_result(&result.id, result.output.summary.clone());
+            }).await?;
 
-        for (id, name, args_str, args) in parsed_calls {
-            let cancel_token = self.cancel_token();
-            let tool_result = self.tool_engine.execute_tool(
-                session_id,
-                &id,
-                &name,
-                &args,
-                &args_str,
-                event_rx,
-                on_event,
-                &self.session_manager,
-                Some(self.llm_engine.get_client()),
-                config.language.clone(),
-                config.tool.tool_timeout_ms,
-                config.tool.max_tool_output_chars,
-                &cancel_token,
-            ).await;
-
-            match tool_result {
-                Ok(result) => {
-                    self.with_session_mut(session_id, |session| {
-                        session.push_tool_result(&result.id, result.output.summary.clone());
-                    }).await?;
-
-                    if matches!(result.output.control_flow, crate::tool::ToolControlFlow::Break) {
-                        return Ok(ToolCallResult::Break);
-                    }
-                }
-                Err(e) => {
-                    return Err(e);
-                }
+            if matches!(result.output.control_flow, crate::tool::ToolControlFlow::Break) {
+                return Ok(ToolCallResult::Break);
             }
         }
 

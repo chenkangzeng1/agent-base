@@ -357,6 +357,10 @@ pub struct PlanConfig {
     /// When set, the progressive recovery pipeline is activated:
     /// Level 0 (retry) → Level 1/2 (adaptive) → Level 3 (fallback to `recovery`).
     pub adaptive_recovery: Option<Arc<dyn traits::AdaptiveRecoveryStrategy>>,
+    /// Optional circuit breaker for fault isolation during plan execution.
+    /// When set and the breaker opens (too many consecutive failures), remaining
+    /// steps are skipped to avoid cascading failures.
+    pub circuit_breaker: Option<Arc<crate::engine::CircuitBreaker>>,
 }
 
 impl PlanConfig {
@@ -371,6 +375,7 @@ impl PlanConfig {
             max_alternatives: 2,
             max_replans: 1,
             adaptive_recovery: None,
+            circuit_breaker: None,
         }
     }
 
@@ -430,6 +435,12 @@ impl PlanConfig {
     /// Set the adaptive recovery strategy.
     pub fn adaptive_recovery(mut self, s: Arc<dyn traits::AdaptiveRecoveryStrategy>) -> Self {
         self.adaptive_recovery = Some(s);
+        self
+    }
+
+    /// Set a circuit breaker for fault isolation during plan execution.
+    pub fn circuit_breaker(mut self, cb: Arc<crate::engine::CircuitBreaker>) -> Self {
+        self.circuit_breaker = Some(cb);
         self
     }
 }

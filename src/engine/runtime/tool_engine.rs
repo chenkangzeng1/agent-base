@@ -9,7 +9,7 @@ use crate::engine::recovery::ToolErrorRecovery;
 use crate::engine::runtime::event_bus::EventBus;
 use crate::engine::runtime::session_manager::SessionManager;
 use crate::tool::{ToolContext, ToolControlFlow, ToolOutput, ToolPolicy, ToolRegistry};
-use crate::types::{AgentError, AgentEvent, AgentResult, Language, RuntimeEvent, SessionId, UserEvent};
+use crate::types::{AgentError, RuntimeEvent, AgentResult, Language, SessionId, UserEvent};
 
 pub(crate) struct ToolEngine {
     tools: Arc<RwLock<ToolRegistry>>,
@@ -71,14 +71,9 @@ impl ToolEngine {
         name: &str,
         args: &Value,
         tool_args_json: &str,
-        event_rx: &mut broadcast::Receiver<AgentEvent>,
+        ctx: &ExecutionContext,
+        event_rx: &mut broadcast::Receiver<RuntimeEvent>,
         on_event: &mut F,
-        session_manager: &SessionManager,
-        llm_client: Option<Arc<dyn crate::llm::LlmClient>>,
-        language: Language,
-        tool_timeout_ms: Option<u64>,
-        max_output_chars: Option<usize>,
-        cancel_token: &tokio_util::sync::CancellationToken,
     ) -> AgentResult<ToolExecutionResult>
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
@@ -86,7 +81,7 @@ impl ToolEngine {
         tracing::debug!(session_id = session_id.id, tool = name, args_len = tool_args_json.len(), "execute tool start");
 
         // Emit ToolCallStarted via internal EventBus
-        self.event_bus.emit(AgentEvent::ToolCallStarted {
+        self.event_bus.emit(RuntimeEvent::ToolCallStarted {
             session_id: session_id.clone(),
             tool_name: name.to_string(),
             args_json: tool_args_json.to_string(),
@@ -98,10 +93,10 @@ impl ToolEngine {
         let tool_context = ToolContext {
             session_id: session_id.clone(),
             user_event_tx,
-            llm_client: llm_client.clone(),
-            session_store: Some(session_manager.session_store().clone()),
-            language: language.clone(),
-            cancel_token: cancel_token.clone(),
+            llm_client: ctx.llm_client.clone(),
+            session_store: Some(ctx.session_manager.session_store().clone()),
+            language: ctx.language.clone(),
+            cancel_token: ctx.cancel_token.clone(),
         };
 
         // Lookup tool and execute via pipeline.
@@ -116,8 +111,8 @@ impl ToolEngine {
                 // Per-call pipeline: inherits policy from self.pipeline, adds caller's timeout/truncation.
                 let pipeline = DefaultPipeline::new(
                     self.pipeline.policy(),
-                    tool_timeout_ms,
-                    max_output_chars,
+                    ctx.tool_timeout_ms,
+                    ctx.max_output_chars,
                 );
 
                 let future = pipeline.execute(tool.as_ref(), args, &tool_context);
@@ -133,7 +128,7 @@ impl ToolEngine {
                                 event: user_event,
                             })?;
                         }
-                        _ = cancel_token.cancelled() => {
+                        _ = ctx.cancel_token.cancelled() => {
                             tracing::info!(session_id = session_id.id, tool = name, "tool execution cancelled");
                             return Err(crate::types::AgentError::Cancelled);
                         }
@@ -153,12 +148,12 @@ impl ToolEngine {
                     Err(e) => {
                         tracing::error!(session_id = session_id.id, tool_name = name, error = %e, "Tool execution failed");
                         // Emit ToolCallFinished with error summary before returning error
-                        let error_summary = if language == Language::Zh {
+                        let error_summary = if ctx.language == Language::Zh {
                             format!("❌ 执行失败: {}", e)
                         } else {
                             format!("❌ Tool execution failed: {}", e)
                         };
-                        self.event_bus.emit(AgentEvent::ToolCallFinished {
+                        self.event_bus.emit(RuntimeEvent::ToolCallFinished {
                             session_id: session_id.clone(),
                             tool_name: name.to_string(),
                             summary: error_summary,
@@ -176,7 +171,7 @@ impl ToolEngine {
             None => {
                 tracing::warn!(session_id = session_id.id, tool = name, "tool not found in registry");
                 ToolOutput {
-                    summary: if language == Language::Zh {
+                    summary: if ctx.language == Language::Zh {
                         format!("工具 {} 未找到", name)
                     } else {
                         format!("Tool {} not found", name)
@@ -189,7 +184,7 @@ impl ToolEngine {
         };
 
         // Emit ToolCallFinished via internal EventBus
-        self.event_bus.emit(AgentEvent::ToolCallFinished {
+        self.event_bus.emit(RuntimeEvent::ToolCallFinished {
             session_id: session_id.clone(),
             tool_name: name.to_string(),
             summary: tool_result.summary.clone(),
@@ -209,10 +204,9 @@ impl ToolEngine {
         tool_name: &str,
         args: &Value,
         tool_args_json: &str,
-        event_rx: &mut broadcast::Receiver<AgentEvent>,
+        ctx: &ExecutionContext,
+        event_rx: &mut broadcast::Receiver<RuntimeEvent>,
         on_event: &mut F,
-        session_manager: &SessionManager,
-        cancel_token: &tokio_util::sync::CancellationToken,
     ) -> AgentResult<()>
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
@@ -227,7 +221,7 @@ impl ToolEngine {
         };
 
         let approved = if let Some(key) = request.action_key.as_deref() {
-            session_manager.cached_approval(session_id, key).await
+            ctx.session_manager.cached_approval(session_id, key).await
         } else {
             false
         };
@@ -239,7 +233,7 @@ impl ToolEngine {
 
         tracing::debug!(session_id = session_id.id, tool = tool_name, risk = ?request.risk_level, "requesting approval");
 
-        self.event_bus.emit(AgentEvent::AwaitingApproval {
+        self.event_bus.emit(RuntimeEvent::AwaitingApproval {
             session_id: session_id.clone(),
             request: request.clone(),
         });
@@ -250,7 +244,7 @@ impl ToolEngine {
                 let timeout = std::time::Duration::from_secs(300);
                 let result = tokio::time::timeout(
                     timeout,
-                    handler.approve(request.clone(), cancel_token.clone()),
+                    handler.approve(request.clone(), ctx.cancel_token.clone()),
                 ).await;
                 match result {
                     Ok(result) => result.map_err(|e| AgentError::internal(format!("Approval handler failed: {e}")))?,
@@ -270,17 +264,17 @@ impl ToolEngine {
             crate::types::ApprovalDecision::AllowAlways => {
                 tracing::info!(session_id = session_id.id, tool = tool_name, decision = "AllowAlways", "approval granted (cached)");
                 if let Some(action_key) = request.action_key.clone() {
-                    session_manager.cache_approval(session_id, action_key).await;
+                    ctx.session_manager.cache_approval(session_id, action_key).await;
                 }
             }
             crate::types::ApprovalDecision::Deny => {
                 tracing::warn!(session_id = session_id.id, tool = tool_name, decision = "Deny", "approval denied");
                 let denial_summary = format!("[Action Denied]: tool {} rejected by approval", tool_name);
-                session_manager.with_session_mut(session_id, |session| {
+                ctx.session_manager.with_session_mut(session_id, |session| {
                     session.push_assistant_tool_call("", tool_name, tool_args_json);
                     session.push_tool_result("", denial_summary.clone());
                 }).await?;
-                self.event_bus.emit(AgentEvent::ToolCallFinished {
+                self.event_bus.emit(RuntimeEvent::ToolCallFinished {
                     session_id: session_id.clone(),
                     tool_name: tool_name.to_string(),
                     summary: denial_summary,
@@ -293,6 +287,43 @@ impl ToolEngine {
         }
 
         Ok(())
+    }
+
+    /// Orchestrate a batch of tool calls: parse args, check approval, execute.
+    /// Returns results in order. The caller handles session push and control flow.
+    pub async fn orchestrate<F>(
+        &self,
+        session_id: &SessionId,
+        tool_calls: &[(String, String, String)],
+        ctx: &ExecutionContext,
+        event_rx: &mut broadcast::Receiver<RuntimeEvent>,
+        on_event: &mut F,
+    ) -> AgentResult<Vec<ToolExecutionResult>>
+    where
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
+    {
+        let mut results = Vec::with_capacity(tool_calls.len());
+
+        for (id, name, args_str) in tool_calls {
+            let args: Value = serde_json::from_str(args_str).map_err(|_| {
+                AgentError::ToolArgsInvalid {
+                    name: name.clone(),
+                    raw: args_str.clone(),
+                }
+            })?;
+
+            self.process_approval(
+                session_id, name, &args, args_str, ctx, event_rx, on_event,
+            ).await?;
+
+            let result = self.execute_tool(
+                session_id, id, name, &args, args_str, ctx, event_rx, on_event,
+            ).await?;
+
+            results.push(result);
+        }
+
+        Ok(results)
     }
 
     pub fn error_recovery(&self) -> &Arc<dyn ToolErrorRecovery> {
@@ -312,4 +343,15 @@ pub struct ToolExecutionResult {
     pub id: String,
     pub name: String,
     pub output: ToolOutput,
+}
+
+/// Grouped context passed through the tool execution call chain.
+/// Reduces parameter count on `execute_tool` and `process_approval`.
+pub(crate) struct ExecutionContext {
+    pub session_manager: SessionManager,
+    pub llm_client: Option<Arc<dyn crate::llm::LlmClient>>,
+    pub language: Language,
+    pub tool_timeout_ms: Option<u64>,
+    pub max_output_chars: Option<usize>,
+    pub cancel_token: tokio_util::sync::CancellationToken,
 }

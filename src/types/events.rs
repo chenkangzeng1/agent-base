@@ -7,125 +7,6 @@ use super::plan::ExecutionPlan;
 use super::session::SessionId;
 
 // ---------------------------------------------------------------------------
-// AgentEvent — framework-internal events (pub(crate))
-// ---------------------------------------------------------------------------
-
-/// Framework-internal events produced by the runtime kernel.
-///
-/// These are emitted on the internal broadcast channel and mapped to
-/// [`RuntimeEvent`] before reaching external consumers.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "camelCase")]
-pub(crate) enum AgentEvent {
-    TextDelta {
-        session_id: SessionId,
-        text: String,
-    },
-    ThoughtDelta {
-        session_id: SessionId,
-        text: String,
-    },
-    ToolCallStarted {
-        session_id: SessionId,
-        tool_name: String,
-        args_json: String,
-    },
-    ToolCallFinished {
-        session_id: SessionId,
-        tool_name: String,
-        summary: String,
-    },
-    AwaitingApproval {
-        session_id: SessionId,
-        request: ApprovalRequest,
-    },
-    Checkpoint {
-        session_id: SessionId,
-        checkpoint: CheckpointData,
-    },
-    RunFinished {
-        session_id: SessionId,
-    },
-    RunCancelled {
-        session_id: SessionId,
-    },
-    PlanGenerated {
-        session_id: SessionId,
-        plan: ExecutionPlan,
-    },
-    PlanStepStarted {
-        session_id: SessionId,
-        step_id: String,
-        step_description: String,
-        payload: Option<Value>,
-    },
-    PlanStepCompleted {
-        session_id: SessionId,
-        step_id: String,
-        success: bool,
-        result: Option<String>,
-        payload: Option<Value>,
-    },
-    PlanCompleted {
-        session_id: SessionId,
-        plan_id: String,
-        success: bool,
-    },
-    PlanGenerating {
-        session_id: SessionId,
-        plan_id: String,
-    },
-    PlanStepParsed {
-        session_id: SessionId,
-        plan_id: String,
-        step_index: usize,
-        step_id: String,
-        step_description: String,
-    },
-    PlanFailed {
-        session_id: SessionId,
-        plan_id: String,
-        error: String,
-    },
-    PlanStepWaitingConfirmation {
-        session_id: SessionId,
-        step_id: String,
-        step_description: String,
-        payload: Option<Value>,
-    },
-    // --- Adaptive recovery events ---
-    StepRetry {
-        session_id: SessionId,
-        step_id: String,
-        retry_count: usize,
-        backoff_ms: u64,
-    },
-    StepAlternativeTrying {
-        session_id: SessionId,
-        original_step_id: String,
-        alternative_step_id: String,
-        alternative_count: usize,
-    },
-    PlanReplanning {
-        session_id: SessionId,
-        plan_id: String,
-        replan_count: usize,
-    },
-    PlanReplanned {
-        session_id: SessionId,
-        plan_id: String,
-        new_steps: usize,
-    },
-    PlanRecoveryExhausted {
-        session_id: SessionId,
-        step_id: String,
-        retries: usize,
-        alternatives: usize,
-        replans: usize,
-    },
-}
-
-// ---------------------------------------------------------------------------
 // UserEvent — user-space events produced by tools
 // ---------------------------------------------------------------------------
 
@@ -146,14 +27,11 @@ pub enum UserEvent {
 }
 
 // ---------------------------------------------------------------------------
-// RuntimeEvent — unified event stream for external consumers
+// RuntimeEvent — unified event stream for all consumers
 // ---------------------------------------------------------------------------
 
-/// Unified runtime event — the single event type exposed to external consumers
-/// (frontends, CLIs, tests).
-///
-/// All framework-internal [`AgentEvent`]s and user-space [`UserEvent`]s are
-/// mapped to this enum before delivery.
+/// Unified runtime event — the single event type for both internal and external
+/// consumers (frontends, CLIs, tests).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "runtimeEventType", rename_all = "camelCase")]
 pub enum RuntimeEvent {
@@ -213,33 +91,97 @@ impl RuntimeEvent {
             RuntimeEvent::UserEvent { session_id, .. } => session_id,
         }
     }
+
+    /// Extract this event as a [`PlanEvent`] if it is plan-related.
+    /// Returns `None` for non-plan events (TextDelta, ToolCallStarted, etc.).
+    pub fn as_plan_event(&self) -> Option<PlanEvent> {
+        PlanEvent::try_from_event(self)
+    }
 }
 
-/// Convert an internal `AgentEvent` into a public `RuntimeEvent`.
-impl From<AgentEvent> for RuntimeEvent {
-    fn from(event: AgentEvent) -> Self {
+// ---------------------------------------------------------------------------
+// PlanEvent — plan lifecycle aggregate enum
+// ---------------------------------------------------------------------------
+
+/// Aggregate enum grouping all plan-related [`RuntimeEvent`] variants.
+///
+/// Consumers can match exhaustively on `PlanEvent` instead of filtering
+/// through the full `RuntimeEvent` enum.  If a new plan event variant is
+/// added to `RuntimeEvent`, the consumer gets a compile error instead of
+/// silently ignoring it through a wildcard arm.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "planEventType", rename_all = "camelCase")]
+pub enum PlanEvent {
+    PlanGenerating { session_id: SessionId, plan_id: String },
+    PlanGenerated { session_id: SessionId, plan: ExecutionPlan },
+    PlanStepParsed { session_id: SessionId, plan_id: String, step_index: usize, step_id: String, step_description: String },
+    PlanStepStarted { session_id: SessionId, step_id: String, step_description: String, payload: Option<Value> },
+    PlanStepCompleted { session_id: SessionId, step_id: String, success: bool, result: Option<String>, payload: Option<Value> },
+    PlanStepWaitingConfirmation { session_id: SessionId, step_id: String, step_description: String, payload: Option<Value> },
+    PlanCompleted { session_id: SessionId, plan_id: String, success: bool },
+    PlanFailed { session_id: SessionId, plan_id: String, error: String },
+    // --- Adaptive recovery events ---
+    StepRetry { session_id: SessionId, step_id: String, retry_count: usize, backoff_ms: u64 },
+    StepAlternativeTrying { session_id: SessionId, original_step_id: String, alternative_step_id: String, alternative_count: usize },
+    PlanReplanning { session_id: SessionId, plan_id: String, replan_count: usize },
+    PlanReplanned { session_id: SessionId, plan_id: String, new_steps: usize },
+    PlanRecoveryExhausted { session_id: SessionId, step_id: String, retries: usize, alternatives: usize, replans: usize },
+}
+
+impl PlanEvent {
+    /// Try to convert a [`RuntimeEvent`] reference into a [`PlanEvent`].
+    /// Returns `None` for non-plan events.
+    pub fn try_from_event(event: &RuntimeEvent) -> Option<Self> {
         match event {
-            AgentEvent::TextDelta { session_id, text } => RuntimeEvent::TextDelta { session_id, text },
-            AgentEvent::ThoughtDelta { session_id, text } => RuntimeEvent::ThoughtDelta { session_id, text },
-            AgentEvent::ToolCallStarted { session_id, tool_name, args_json } => RuntimeEvent::ToolCallStarted { session_id, tool_name, args_json },
-            AgentEvent::ToolCallFinished { session_id, tool_name, summary } => RuntimeEvent::ToolCallFinished { session_id, tool_name, summary },
-            AgentEvent::AwaitingApproval { session_id, request } => RuntimeEvent::AwaitingApproval { session_id, request },
-            AgentEvent::Checkpoint { session_id, checkpoint } => RuntimeEvent::Checkpoint { session_id, checkpoint },
-            AgentEvent::RunFinished { session_id } => RuntimeEvent::RunFinished { session_id },
-            AgentEvent::RunCancelled { session_id } => RuntimeEvent::RunCancelled { session_id },
-            AgentEvent::PlanGenerated { session_id, plan } => RuntimeEvent::PlanGenerated { session_id, plan },
-            AgentEvent::PlanStepStarted { session_id, step_id, step_description, payload } => RuntimeEvent::PlanStepStarted { session_id, step_id, step_description, payload },
-            AgentEvent::PlanStepCompleted { session_id, step_id, success, result, payload } => RuntimeEvent::PlanStepCompleted { session_id, step_id, success, result, payload },
-            AgentEvent::PlanCompleted { session_id, plan_id, success } => RuntimeEvent::PlanCompleted { session_id, plan_id, success },
-            AgentEvent::PlanGenerating { session_id, plan_id } => RuntimeEvent::PlanGenerating { session_id, plan_id },
-            AgentEvent::PlanStepParsed { session_id, plan_id, step_index, step_id, step_description } => RuntimeEvent::PlanStepParsed { session_id, plan_id, step_index, step_id, step_description },
-            AgentEvent::PlanFailed { session_id, plan_id, error } => RuntimeEvent::PlanFailed { session_id, plan_id, error },
-            AgentEvent::PlanStepWaitingConfirmation { session_id, step_id, step_description, payload } => RuntimeEvent::PlanStepWaitingConfirmation { session_id, step_id, step_description, payload },
-            AgentEvent::StepRetry { session_id, step_id, retry_count, backoff_ms } => RuntimeEvent::StepRetry { session_id, step_id, retry_count, backoff_ms },
-            AgentEvent::StepAlternativeTrying { session_id, original_step_id, alternative_step_id, alternative_count } => RuntimeEvent::StepAlternativeTrying { session_id, original_step_id, alternative_step_id, alternative_count },
-            AgentEvent::PlanReplanning { session_id, plan_id, replan_count } => RuntimeEvent::PlanReplanning { session_id, plan_id, replan_count },
-            AgentEvent::PlanReplanned { session_id, plan_id, new_steps } => RuntimeEvent::PlanReplanned { session_id, plan_id, new_steps },
-            AgentEvent::PlanRecoveryExhausted { session_id, step_id, retries, alternatives, replans } => RuntimeEvent::PlanRecoveryExhausted { session_id, step_id, retries, alternatives, replans },
+            RuntimeEvent::PlanGenerating { session_id, plan_id } => {
+                Some(PlanEvent::PlanGenerating { session_id: session_id.clone(), plan_id: plan_id.clone() })
+            }
+            RuntimeEvent::PlanGenerated { session_id, plan } => {
+                Some(PlanEvent::PlanGenerated { session_id: session_id.clone(), plan: plan.clone() })
+            }
+            RuntimeEvent::PlanStepParsed { session_id, plan_id, step_index, step_id, step_description } => {
+                Some(PlanEvent::PlanStepParsed { session_id: session_id.clone(), plan_id: plan_id.clone(), step_index: *step_index, step_id: step_id.clone(), step_description: step_description.clone() })
+            }
+            RuntimeEvent::PlanStepStarted { session_id, step_id, step_description, payload } => {
+                Some(PlanEvent::PlanStepStarted { session_id: session_id.clone(), step_id: step_id.clone(), step_description: step_description.clone(), payload: payload.clone() })
+            }
+            RuntimeEvent::PlanStepCompleted { session_id, step_id, success, result, payload } => {
+                Some(PlanEvent::PlanStepCompleted { session_id: session_id.clone(), step_id: step_id.clone(), success: *success, result: result.clone(), payload: payload.clone() })
+            }
+            RuntimeEvent::PlanStepWaitingConfirmation { session_id, step_id, step_description, payload } => {
+                Some(PlanEvent::PlanStepWaitingConfirmation { session_id: session_id.clone(), step_id: step_id.clone(), step_description: step_description.clone(), payload: payload.clone() })
+            }
+            RuntimeEvent::PlanCompleted { session_id, plan_id, success } => {
+                Some(PlanEvent::PlanCompleted { session_id: session_id.clone(), plan_id: plan_id.clone(), success: *success })
+            }
+            RuntimeEvent::PlanFailed { session_id, plan_id, error } => {
+                Some(PlanEvent::PlanFailed { session_id: session_id.clone(), plan_id: plan_id.clone(), error: error.clone() })
+            }
+            RuntimeEvent::StepRetry { session_id, step_id, retry_count, backoff_ms } => {
+                Some(PlanEvent::StepRetry { session_id: session_id.clone(), step_id: step_id.clone(), retry_count: *retry_count, backoff_ms: *backoff_ms })
+            }
+            RuntimeEvent::StepAlternativeTrying { session_id, original_step_id, alternative_step_id, alternative_count } => {
+                Some(PlanEvent::StepAlternativeTrying { session_id: session_id.clone(), original_step_id: original_step_id.clone(), alternative_step_id: alternative_step_id.clone(), alternative_count: *alternative_count })
+            }
+            RuntimeEvent::PlanReplanning { session_id, plan_id, replan_count } => {
+                Some(PlanEvent::PlanReplanning { session_id: session_id.clone(), plan_id: plan_id.clone(), replan_count: *replan_count })
+            }
+            RuntimeEvent::PlanReplanned { session_id, plan_id, new_steps } => {
+                Some(PlanEvent::PlanReplanned { session_id: session_id.clone(), plan_id: plan_id.clone(), new_steps: *new_steps })
+            }
+            RuntimeEvent::PlanRecoveryExhausted { session_id, step_id, retries, alternatives, replans } => {
+                Some(PlanEvent::PlanRecoveryExhausted { session_id: session_id.clone(), step_id: step_id.clone(), retries: *retries, alternatives: *alternatives, replans: *replans })
+            }
+            // Non-plan events
+            RuntimeEvent::TextDelta { .. }
+            | RuntimeEvent::ThoughtDelta { .. }
+            | RuntimeEvent::ToolCallStarted { .. }
+            | RuntimeEvent::ToolCallFinished { .. }
+            | RuntimeEvent::AwaitingApproval { .. }
+            | RuntimeEvent::Checkpoint { .. }
+            | RuntimeEvent::RunFinished { .. }
+            | RuntimeEvent::RunCancelled { .. }
+            | RuntimeEvent::UserEvent { .. } => None,
         }
     }
 }

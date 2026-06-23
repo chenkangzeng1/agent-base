@@ -335,7 +335,7 @@ async fn main() -> AgentResult<()> {
     let _session_id = runtime.create_session().await; // 预留, 实际每轮都会创建新 session
 
     // 获取全部工具定义 —— 生成 plan 时全部暴露
-    let tool_defs: Vec<Value> = runtime.tools_mut().blocking_read().definitions();
+    let tool_defs: Vec<Value> = runtime.tools_mut().read().await.definitions();
 
     let objective = "查询本月销售数据";
 
@@ -583,7 +583,7 @@ async fn main() -> AgentResult<()> {
                         println!("  📋 构造确定性 Plan (1 步，通过 executor 执行): query_database\n");
 
                         let session_id = runtime.create_session().await;
-                        let executor = Arc::new(runtime.create_step_executor());
+                        let executor = Arc::new(runtime.create_step_executor().await);
                         println!("  --- 执行 (deterministic) ---\n");
                         let outcome = runtime
                             .run_plan(

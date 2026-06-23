@@ -9,11 +9,8 @@ use crate::types::SessionId;
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct AgentSession {
     id: Option<SessionId>,
-    /// Simplified message history for internal logic and debugging.
-    /// Each entry corresponds to a `ChatMessage` in `chat_messages`.
-    messages: Vec<Message>,
     /// LLM API format messages, sent directly to the provider.
-    /// This is the source of truth for the conversation state.
+    /// This is the single source of truth for the conversation state.
     chat_messages: Vec<ChatMessage>,
     always_allowed_actions: HashSet<String>,
     /// Total number of tool calls made in this session (across all turns).
@@ -29,7 +26,6 @@ impl AgentSession {
     pub fn new(id: SessionId) -> Self {
         Self {
             id: Some(id),
-            messages: Vec::new(),
             chat_messages: Vec::new(),
             always_allowed_actions: HashSet::new(),
             total_tool_calls: 0,
@@ -41,8 +37,24 @@ impl AgentSession {
         self.id.clone()
     }
 
-    pub fn messages(&self) -> &[Message] {
-        &self.messages
+    /// Derive a simplified `Vec<Message>` view from the canonical `chat_messages`.
+    /// Assistant messages that contain only tool_calls (no text content) are
+    /// skipped, since they have no corresponding simplified representation.
+    pub fn simple_messages(&self) -> Vec<Message> {
+        self.chat_messages
+            .iter()
+            .filter_map(|cm| match cm {
+                ChatMessage::Assistant {
+                    content: None, ..
+                } => None,
+                ChatMessage::Assistant {
+                    content: Some(c),
+                    tool_calls: Some(tc),
+                    ..
+                } if c.is_empty() && !tc.is_empty() => None,
+                _ => Some(Message::from(cm)),
+            })
+            .collect()
     }
 
     pub fn chat_messages(&self) -> &[ChatMessage] {
@@ -59,10 +71,6 @@ impl AgentSession {
 
     pub fn push_message(&mut self, role: MessageRole, content: impl Into<String>) {
         let content = content.into();
-        self.messages.push(Message {
-            role: role.clone(),
-            content: content.clone(),
-        });
         let chat_msg = match role {
             MessageRole::System => ChatMessage::system(content),
             MessageRole::User => ChatMessage::user(content),
@@ -77,11 +85,6 @@ impl AgentSession {
         content: impl Into<String>,
         images: Vec<ImageAttachment>,
     ) {
-        let content = content.into();
-        self.messages.push(Message {
-            role: MessageRole::User,
-            content: content.clone(),
-        });
         self.chat_messages
             .push(ChatMessage::user_with_images(content, images));
     }
@@ -116,15 +119,8 @@ impl AgentSession {
     }
 
     pub fn push_tool_result(&mut self, tool_call_id: &str, content: impl Into<String>) {
-        let content = content.into();
-        self.messages.push(Message {
-            role: MessageRole::Tool,
-            content: content.clone(),
-        });
-        self.chat_messages.push(ChatMessage::tool(
-            tool_call_id,
-            content,
-        ));
+        self.chat_messages
+            .push(ChatMessage::tool(tool_call_id, content));
     }
 
     /// Count the number of conversation turns.
@@ -138,7 +134,6 @@ impl AgentSession {
 
     /// Remove the oldest turns from the front until turn count ≤ max_turns.
     /// Preserves the System message at index 0 if present.
-    /// Keeps `messages` and `chat_messages` in sync.
     pub fn trim_oldest_turns(&mut self, max_turns: usize) {
         let current_turns = self.turn_count();
         if current_turns <= max_turns {
@@ -171,41 +166,13 @@ impl AgentSession {
             return; // nothing to drain after system messages
         }
 
-        // Count how many messages entries correspond to the drained chat_messages range
-        let mut msg_remove_count = 0;
-        for chat_msg in &self.chat_messages[system_prefix..drain_end] {
-            let has_msg_entry = match chat_msg {
-                ChatMessage::Assistant { tool_calls, content, .. } => {
-                    content.is_some() && tool_calls.as_ref().is_none_or(|tc| tc.is_empty())
-                }
-                _ => true,
-            };
-            if has_msg_entry {
-                msg_remove_count += 1;
-            }
-        }
-
-        // Drain from both lists, preserving the system prefix
         self.chat_messages.drain(system_prefix..drain_end);
-        let msg_drain = msg_remove_count.min(self.messages.len());
-        self.messages.drain(system_prefix..system_prefix + msg_drain);
     }
 
-    /// Remove the last message from both `chat_messages` and `messages`.
+    /// Remove the last message from `chat_messages`.
     /// Used by the max_message_tokens safety valve to discard oversized messages.
     pub fn pop_last_message(&mut self) {
-        if let Some(last) = self.chat_messages.pop() {
-            // Only pop from messages if the last chat_message had a corresponding messages entry
-            let has_msg_entry = match &last {
-                ChatMessage::Assistant { tool_calls, content, .. } => {
-                    content.is_some() && tool_calls.as_ref().is_none_or(|tc| tc.is_empty())
-                }
-                _ => true,
-            };
-            if has_msg_entry && !self.messages.is_empty() {
-                self.messages.pop();
-            }
-        }
+        self.chat_messages.pop();
     }
 
     pub fn close_dangling_tool_calls(&mut self, error_summary: &str) {
@@ -312,7 +279,7 @@ mod tests {
     #[test]
     fn test_trim_oldest_turns_with_tool_calls() {
         let mut s = make_session();
-        // Turn 1 with tool call (only in chat_messages, not in messages)
+        // Turn 1 with tool call
         s.push_message(MessageRole::User, "u1");
         s.push_assistant_tool_calls(&[("id1".into(), "t".into(), "{}".into())]);
         s.push_tool_result("id1", "r1");
@@ -321,14 +288,14 @@ mod tests {
         s.push_message(MessageRole::User, "u2");
         s.push_message(MessageRole::Assistant, "a2");
 
-        let msg_before = s.messages().len();
+        let msg_before = s.simple_messages().len();
         let chat_before = s.chat_messages().len();
         s.trim_oldest_turns(1);
         assert_eq!(s.turn_count(), 1);
         // chat_messages should have lost 4 entries (User, Assistant(tool), Tool, Assistant(text))
         assert_eq!(s.chat_messages().len(), chat_before - 4);
-        // messages should have lost 3 entries (User, Tool, Assistant(text)) — not the tool_calls-only Assistant
-        assert_eq!(s.messages().len(), msg_before - 3);
+        // simple_messages (derived from chat_messages, tool_calls-only filtered) loses 3 entries
+        assert_eq!(s.simple_messages().len(), msg_before - 3);
     }
 
     #[test]
@@ -339,7 +306,7 @@ mod tests {
         assert_eq!(s.chat_messages().len(), 2);
         s.pop_last_message();
         assert_eq!(s.chat_messages().len(), 1);
-        assert_eq!(s.messages().len(), 1);
+        assert_eq!(s.simple_messages().len(), 1);
     }
 
     #[test]
@@ -348,10 +315,10 @@ mod tests {
         s.push_message(MessageRole::User, "do it");
         s.push_assistant_tool_calls(&[("id1".into(), "t".into(), "{}".into())]);
         assert_eq!(s.chat_messages().len(), 2);
-        assert_eq!(s.messages().len(), 1); // only User in messages
+        assert_eq!(s.simple_messages().len(), 1); // only User in simple_messages (tool_calls-only filtered)
         s.pop_last_message();
         assert_eq!(s.chat_messages().len(), 1);
-        assert_eq!(s.messages().len(), 1); // messages unchanged
+        assert_eq!(s.simple_messages().len(), 1); // simple_messages unchanged (still just User)
     }
 
     #[test]

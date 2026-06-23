@@ -4,6 +4,8 @@
 [![Documentation](https://docs.rs/agent-base/badge.svg)](https://docs.rs/agent-base)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
+[English](README.md) | [中文](README_CN.md)
+
 A lightweight **Agent Runtime Kernel** for building AI agents in Rust.
 
 `agent-base` provides the minimal orchestration layer needed to build custom AI agents — LLM integration, tool dispatch, multi-turn conversation, approval flows, event streaming, and error recovery — all with zero business assumptions.
@@ -28,7 +30,7 @@ agent-base = "0.1.2"
 - **Tool System** — `Tool` trait + `ToolRegistry` for registration and dispatch
 - **Approval Flow** — `ApprovalHandler` trait with `AllowOnce` / `AllowAlways` / `Deny` decisions
 - **Error Recovery** — `ToolErrorRecovery` trait; defaults to `StopOnError`, opt-in `RetryOnError`
-- **Event Streaming** — Structured `AgentEvent` stream for UI, logging, auditing, and debugging
+- **Event Streaming** — Structured `RuntimeEvent` stream for UI, logging, auditing, and debugging
 - **Multi-turn Sessions** — `AgentSession` manages message history; `SessionStore` for optional persistence
 - **Sub-Agents** — `SubAgentTool` with `Ephemeral` (default) or `Persistent` session policies
 - **Context Management** — configurable `ContextWindowManager` for token budget control
@@ -87,7 +89,7 @@ impl Tool for WeatherTool {
 ```rust
 use std::sync::Arc;
 use agent_base::{
-    AgentBuilder, AgentEvent, AgentResult, RunOutcome,
+    AgentBuilder, RuntimeEvent, AgentResult, RunOutcome,
     OpenAiClient, StopOnError,
 };
 
@@ -112,14 +114,14 @@ async fn main() -> AgentResult<()> {
 
     for event in &events {
         match event {
-            AgentEvent::TextDelta { text, .. } => print!("{}", text),
-            AgentEvent::ToolCallStarted { tool_name, .. } => {
+            RuntimeEvent::TextDelta { text, .. } => print!("{}", text),
+            RuntimeEvent::ToolCallStarted { tool_name, .. } => {
                 println!("\n[Calling tool: {}]", tool_name);
             }
-            AgentEvent::ToolCallFinished { summary, .. } => {
+            RuntimeEvent::ToolCallFinished { summary, .. } => {
                 println!("[Tool result: {}]", summary);
             }
-            AgentEvent::RunFinished { .. } => println!("\n[Done]"),
+            RuntimeEvent::RunFinished { .. } => println!("\n[Done]"),
             _ => {}
         }
     }
@@ -252,10 +254,14 @@ ops-agent / agent-works / ...          ← Business agents / Enhanced toolkits
 | Convention | Meaning |
 |---|---|
 | `run_turn_*` → `AgentResult<RunOutcome>` | `Ok(Completed)` = success, `Ok(Failed)` = finished with error |
-| `AgentEvent::RunFinished` | Process ended — final status is in `RunOutcome` |
+| `RuntimeEvent::RunFinished` | Process ended — final status is in `RunOutcome` |
 | Tool failure → defaults to `StopOnError` | Inject `RetryOnError` for self-healing agents |
 | SubAgent → defaults to `Ephemeral` | Use `with_persistent()` for shared context |
 | Session → memory is source of truth | `SessionStore` is an optional persistence adapter |
+
+## Acknowledgments
+
+The unified tool orchestration pattern in `ToolEngine::orchestrate()` draws inspiration from the Codex CLI project. Thanks to the OpenAI Codex team for their clean architecture.
 
 ## Stability
 

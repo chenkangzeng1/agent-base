@@ -110,7 +110,7 @@ The **AgentBuilder** is your entry point. It configures the LLM, registers tools
 mod tools;
 
 use std::sync::Arc;
-use agent_base::{AgentBuilder, AgentEvent, AgentResult, OpenAiClient, RunOutcome, RetryOnError};
+use agent_base::{AgentBuilder, RuntimeEvent, AgentResult, OpenAiClient, RunOutcome, RetryOnError};
 use tools::DiskCheckTool;
 
 const SYSTEM_PROMPT: &str = r#"You are a server health check assistant.
@@ -146,14 +146,14 @@ async fn main() -> AgentResult<()> {
     // 4. Print results
     for event in &events {
         match event {
-            AgentEvent::TextDelta { text, .. } => print!("{}", text),
-            AgentEvent::ToolCallStarted { tool_name, .. } => {
+            RuntimeEvent::TextDelta { text, .. } => print!("{}", text),
+            RuntimeEvent::ToolCallStarted { tool_name, .. } => {
                 println!("\n🔧 Calling: {}", tool_name);
             }
-            AgentEvent::ToolCallFinished { summary, .. } => {
+            RuntimeEvent::ToolCallFinished { summary, .. } => {
                 println!("✅ Result: {}", summary);
             }
-            AgentEvent::RunFinished { .. } => println!("\n[Done]"),
+            RuntimeEvent::RunFinished { .. } => println!("\n[Done]"),
             _ => {}
         }
     }
@@ -345,19 +345,19 @@ Instead of collecting all events and printing at the end, stream them live using
 
 ```rust
 use std::io::{self, Write};
-use agent_base::{AgentEvent, AgentResult};
+use agent_base::{RuntimeEvent, AgentResult};
 
 // This is a synchronous callback — called for each event as it happens
-fn on_event(event: AgentEvent) -> AgentResult<()> {
+fn on_event(event: RuntimeEvent) -> AgentResult<()> {
     match event {
-        AgentEvent::TextDelta { text, .. } => {
+        RuntimeEvent::TextDelta { text, .. } => {
             print!("{}", text);
             io::stdout().flush().unwrap();
         }
-        AgentEvent::ToolCallStarted { tool_name, args_json, .. } => {
+        RuntimeEvent::ToolCallStarted { tool_name, args_json, .. } => {
             println!("\n🔧 {}({})", tool_name, args_json);
         }
-        AgentEvent::ToolCallFinished { summary, .. } => {
+        RuntimeEvent::ToolCallFinished { summary, .. } => {
             // Truncate long outputs for display
             let display = if summary.len() > 200 {
                 format!("{}...", &summary[..200])
@@ -366,7 +366,7 @@ fn on_event(event: AgentEvent) -> AgentResult<()> {
             };
             println!("  → {}", display);
         }
-        AgentEvent::RunFinished { .. } => {
+        RuntimeEvent::RunFinished { .. } => {
             println!("\n✅ Done");
         }
         _ => {}
@@ -457,7 +457,7 @@ use std::sync::Arc;
 use std::io::{self, Write};
 
 use agent_base::{
-    AgentBuilder, AgentEvent, AgentResult, OpenAiClient, RunOutcome,
+    AgentBuilder, RuntimeEvent, AgentResult, OpenAiClient, RunOutcome,
     Tool, ToolContext, ToolOutput, ToolControlFlow,
 };
 use async_trait::async_trait;
@@ -497,12 +497,12 @@ impl Tool for CheckDiskTool {
     }
 }
 
-fn on_event(event: AgentEvent) -> AgentResult<()> {
+fn on_event(event: RuntimeEvent) -> AgentResult<()> {
     match event {
-        AgentEvent::TextDelta { text, .. } => { print!("{}", text); io::stdout().flush().unwrap(); }
-        AgentEvent::ToolCallStarted { tool_name, .. } => println!("\n🔧 {}", tool_name),
-        AgentEvent::ToolCallFinished { summary, .. } => println!("  → {}", summary),
-        AgentEvent::RunFinished { .. } => println!("\n✅"),
+        RuntimeEvent::TextDelta { text, .. } => { print!("{}", text); io::stdout().flush().unwrap(); }
+        RuntimeEvent::ToolCallStarted { tool_name, .. } => println!("\n🔧 {}", tool_name),
+        RuntimeEvent::ToolCallFinished { summary, .. } => println!("  → {}", summary),
+        RuntimeEvent::RunFinished { .. } => println!("\n✅"),
         _ => {}
     }
     Ok(())
@@ -564,7 +564,7 @@ cargo run
 | `ApprovalHandler` | Execute the approval UI/flow | Always paired with ToolPolicy |
 | `Middleware` | Hook into the agent loop | Input/output filtering, nudging |
 | `ToolErrorRecovery` | What happens when a tool fails | `StopOnError` (default) or `RetryOnError` |
-| `AgentEvent` stream | Real-time events from the runtime | UI updates, logging, debugging |
+| `RuntimeEvent` stream | Real-time events from the runtime | UI updates, logging, debugging |
 | `SessionId` | Multi-turn conversation handle | Every REPL or chat UI |
 | `SubAgentTool` | Wrap another agent as a tool | Delegation, specialist agents |
 

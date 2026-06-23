@@ -1,0 +1,25 @@
+---
+source: tests/snapshot_tests.rs
+expression: definitions
+---
+[
+  {
+    "function": {
+      "description": "Echo back the input message",
+      "name": "echo",
+      "parameters": {
+        "properties": {
+          "message": {
+            "description": "The message to echo",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message"
+        ],
+        "type": "object"
+      }
+    },
+    "type": "function"
+  }
+]

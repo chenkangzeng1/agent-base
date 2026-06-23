@@ -1,0 +1,9 @@
+---
+source: tests/snapshot_tests.rs
+expression: json
+---
+{
+  "System": {
+    "content": "You are a helpful assistant."
+  }
+}

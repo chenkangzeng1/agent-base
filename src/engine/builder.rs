@@ -218,6 +218,8 @@ impl AgentBuilder {
     }
 
     pub fn build(self) -> crate::types::AgentResult<AgentRuntime> {
+        self.config.validate()?;
+
         tracing::info!(
             tool_count = self.tools.len(),
             middleware_count = self.middlewares.len(),

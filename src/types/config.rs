@@ -142,6 +142,40 @@ impl Default for AgentConfig {
     }
 }
 
+impl AgentConfig {
+
+    /// Validate the configuration, returning an error for invalid values.
+    pub fn validate(&self) -> crate::types::AgentResult<()> {
+        use crate::types::AgentError;
+
+        if let Some(max_turns) = self.execution.max_turns {
+            if max_turns == 0 {
+                return Err(AgentError::config_error(
+                    "execution.max_turns must be > 0".to_string(),
+                ));
+            }
+        }
+
+        if let Some(max_sessions) = self.session.max_sessions {
+            if max_sessions == 0 {
+                return Err(AgentError::config_error(
+                    "session.max_sessions must be > 0".to_string(),
+                ));
+            }
+        }
+
+        if let Some(tool_timeout_ms) = self.tool.tool_timeout_ms {
+            if tool_timeout_ms == 0 {
+                return Err(AgentError::config_error(
+                    "tool.tool_timeout_ms must be > 0".to_string(),
+                ));
+            }
+        }
+
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ExecutionConfig {
     pub max_turns: Option<u32>,

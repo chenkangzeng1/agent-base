@@ -1,0 +1,9 @@
+---
+source: tests/snapshot_tests.rs
+expression: json
+---
+{
+  "User": {
+    "content": "Hello, world!"
+  }
+}

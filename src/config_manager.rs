@@ -26,6 +26,7 @@ pub enum ConfigError {
 }
 
 /// 基础配置项
+#[deprecated(since = "0.2.0", note = "Use AgentConfig instead. AppConfig is unused by AgentBuilder.")]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     pub llm_timeout: u64,           // LLM 调用超时时间（毫秒）
@@ -60,6 +61,7 @@ impl Default for AppConfig {
 }
 
 /// 配置管理器
+#[deprecated(since = "0.2.0", note = "Use config_core::ConfigManager instead. The agent-base ConfigManager is unused by AgentBuilder and will be removed in a future release.")]
 #[derive(Debug, Clone)]
 pub struct ConfigManager {
     config: AppConfig,

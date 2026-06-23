@@ -7,6 +7,12 @@ use crate::types::AgentResult;
 #[cfg(test)]
 use serde_json::json;
 
+/// Adaptive failure recovery — analyse failures, suggest alternatives, decide retries.
+///
+/// This trait is fully defined but has no built-in implementor yet.
+/// Consumers can implement it to integrate an LLM-based or heuristic reflection loop
+/// into plan step recovery.
+#[allow(dead_code)]
 #[async_trait]
 pub trait ReflexionHandler: Send + Sync {
     async fn reflect_on_failure(

@@ -303,8 +303,8 @@ async fn main() -> AgentResult<()> {
 
     let session_id = runtime.create_session().await;
     let plan_store = Arc::new(InMemoryPlanStore::new());
-    let step_executor = Arc::new(runtime.create_step_executor());
-    let tool_defs: Vec<Value> = runtime.tools_mut().blocking_read().definitions();
+    let step_executor = Arc::new(runtime.create_step_executor().await);
+    let tool_defs: Vec<Value> = runtime.tools_mut().read().await.definitions();
 
     let objective = "检查服务器健康状况: 依次检查磁盘、内存、nginx 进程状态, 如果 nginx 不在运行则重启 nginx";
 

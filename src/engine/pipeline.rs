@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use crate::engine::EventBus;
 use crate::tool::{Tool, ToolContext, ToolControlFlow, ToolOutput, ToolPolicy, TruncationInfo};
-use crate::types::{AgentEvent, AgentResult};
+use crate::types::{RuntimeEvent, AgentResult};
 
 /// Pure execution pipeline — cares about *how* to safely execute a tool.
 ///
@@ -147,7 +147,7 @@ impl<P: ToolExecutionPipeline + Send + Sync> ToolExecutionPipeline for EventEmit
         args: &Value,
         ctx: &ToolContext,
     ) -> AgentResult<ToolOutput> {
-        self.event_bus.emit(AgentEvent::ToolCallStarted {
+        self.event_bus.emit(RuntimeEvent::ToolCallStarted {
             session_id: ctx.session_id.clone(),
             tool_name: tool.name().to_string(),
             args_json: args.to_string(),
@@ -159,7 +159,7 @@ impl<P: ToolExecutionPipeline + Send + Sync> ToolExecutionPipeline for EventEmit
             Ok(output) => output.summary.clone(),
             Err(e) => e.to_string(),
         };
-        self.event_bus.emit(AgentEvent::ToolCallFinished {
+        self.event_bus.emit(RuntimeEvent::ToolCallFinished {
             session_id: ctx.session_id.clone(),
             tool_name: tool.name().to_string(),
             summary,
@@ -354,11 +354,11 @@ mod tests {
         assert_eq!(events.len(), 2);
 
         match &events[0] {
-            AgentEvent::ToolCallStarted { tool_name, .. } => assert_eq!(tool_name, "echo"),
+            RuntimeEvent::ToolCallStarted { tool_name, .. } => assert_eq!(tool_name, "echo"),
             _ => panic!("expected ToolCallStarted"),
         }
         match &events[1] {
-            AgentEvent::ToolCallFinished { tool_name, summary, .. } => {
+            RuntimeEvent::ToolCallFinished { tool_name, summary, .. } => {
                 assert_eq!(tool_name, "echo");
                 assert_eq!(summary, "test");
             }
@@ -382,7 +382,7 @@ mod tests {
         assert_eq!(events.len(), 2);
 
         match &events[1] {
-            AgentEvent::ToolCallFinished { summary, .. } => {
+            RuntimeEvent::ToolCallFinished { summary, .. } => {
                 assert!(summary.contains("intentional"));
             }
             _ => panic!("expected ToolCallFinished"),

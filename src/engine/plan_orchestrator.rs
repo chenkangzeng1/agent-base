@@ -8,7 +8,7 @@ use crate::engine::plan::{RecoveryPolicy, PlanConfig};
 use crate::engine::circuit_breaker::CircuitBreaker;
 use crate::engine::runtime::PlanRunner;
 use crate::tool::{FrameworkTool, Tool, ToolContext, ToolControlFlow, ToolOutput};
-use crate::types::{AgentError, AgentEvent, AgentResult, RuntimeEvent};
+use crate::types::{AgentError, AgentResult, RuntimeEvent};
 use crate::types::{ExecutionPlan, StepStatus};
 
 /// Build a step-by-step result summary from a completed plan for LLM consumption.
@@ -204,12 +204,12 @@ impl Tool for PlanOrchestrator {
                 if let Some(bus) = self.event_bus.get() {
                     while let Ok(event) = plan_event_rx.try_recv() {
                         let agent_event = match event {
-                            RuntimeEvent::PlanGenerating { .. } => AgentEvent::PlanGenerating {
+                            RuntimeEvent::PlanGenerating { .. } => RuntimeEvent::PlanGenerating {
                                 session_id: ctx.session_id.clone(),
                                 plan_id: plan_id.clone(),
                             },
                             RuntimeEvent::PlanStepParsed { step_index, step_id, step_description, .. } => {
-                                AgentEvent::PlanStepParsed {
+                                RuntimeEvent::PlanStepParsed {
                                     session_id: ctx.session_id.clone(),
                                     plan_id: plan_id.clone(),
                                     step_index,
@@ -217,7 +217,7 @@ impl Tool for PlanOrchestrator {
                                     step_description,
                                 }
                             }
-                            RuntimeEvent::ThoughtDelta { text, .. } => AgentEvent::ThoughtDelta {
+                            RuntimeEvent::ThoughtDelta { text, .. } => RuntimeEvent::ThoughtDelta {
                                 session_id: ctx.session_id.clone(),
                                 text,
                             },
@@ -231,7 +231,9 @@ impl Tool for PlanOrchestrator {
                     .save_plan(&plan, json!({"session_id": ctx.session_id.to_string()}))
                     .await?;
 
-                let _ = self.event_bus.get().expect("EventBus must be injected by AgentBuilder::build()").emit(AgentEvent::PlanGenerated {
+                let bus = self.event_bus.get()
+                    .ok_or_else(|| AgentError::internal("EventBus not injected. Call AgentBuilder::build() first."))?;
+                bus.emit(RuntimeEvent::PlanGenerated {
                     session_id: ctx.session_id.clone(),
                     plan: plan.clone(),
                 });
@@ -371,7 +373,9 @@ impl Tool for PlanOrchestrator {
                 })
             }
             Err(e) => {
-                let _ = self.event_bus.get().expect("EventBus must be injected by AgentBuilder::build()").emit(AgentEvent::PlanFailed {
+                let bus = self.event_bus.get()
+                    .ok_or_else(|| AgentError::internal("EventBus not injected. Call AgentBuilder::build() first."))?;
+                bus.emit(RuntimeEvent::PlanFailed {
                     session_id: ctx.session_id.clone(),
                     plan_id: plan_id.clone(),
                     error: e.to_string(),
@@ -544,7 +548,12 @@ impl Tool for PlanExecTool {
         if let Some(ref policy) = self.recovery_policy {
             config = config.recovery_policy(policy.clone());
         }
-        
+
+        // Wire circuit breaker if configured
+        if let Some(cb) = self.circuit_breaker.as_ref().and_then(|w| w.upgrade()) {
+            config = config.circuit_breaker(cb);
+        }
+
         // Use the runner to execute the plan steps with full adaptive recovery support
         let mut event_rx = runner.event_bus.subscribe();
         

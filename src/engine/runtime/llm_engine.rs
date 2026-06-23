@@ -8,7 +8,7 @@ use serde_json::Value;
 use tracing::Span;
 
 use crate::llm::{LlmClient, ReasoningConfig, StreamChunk, UsageInfo};
-use crate::types::{AgentEvent, AgentResult, ChatMessage, RuntimeEvent, SessionId};
+use crate::types::{RuntimeEvent, AgentResult, ChatMessage, SessionId};
 use crate::engine::runtime::event_bus::EventBus;
 
 pub struct LlmEngine {
@@ -89,7 +89,7 @@ impl LlmEngine {
         session_id: &SessionId,
         mut stream: Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>,
         span: Span,
-        event_rx: &mut tokio::sync::broadcast::Receiver<AgentEvent>,
+        event_rx: &mut tokio::sync::broadcast::Receiver<RuntimeEvent>,
         on_event: &mut F,
         cancel_token: &tokio_util::sync::CancellationToken,
     ) -> AgentResult<LlmTurnResult>
@@ -128,7 +128,7 @@ impl LlmEngine {
                                 first_token = false;
                             }
                             if !text.is_empty() && !aggregator.is_tool_call {
-                                self.event_bus.emit(AgentEvent::TextDelta {
+                                self.event_bus.emit(RuntimeEvent::TextDelta {
                                     session_id: session_id.clone(),
                                     text: text.clone(),
                                 });
@@ -138,7 +138,7 @@ impl LlmEngine {
                         Ok(StreamChunk::Thought(text)) => {
                             tracing::debug!(session_id = session_id.id, len = text.len(), "llm thought chunk");
                             if !text.is_empty() && !aggregator.is_tool_call {
-                                self.event_bus.emit(AgentEvent::ThoughtDelta {
+                                self.event_bus.emit(RuntimeEvent::ThoughtDelta {
                                     session_id: session_id.clone(),
                                     text,
                                 });
@@ -224,7 +224,7 @@ impl LlmEngine {
     }
 
     pub fn emit_text_delta(&self, session_id: &SessionId, text: String) {
-        self.event_bus.emit(AgentEvent::TextDelta {
+        self.event_bus.emit(RuntimeEvent::TextDelta {
             session_id: session_id.clone(),
             text,
         });

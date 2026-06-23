@@ -3,7 +3,7 @@ use tokio::sync::{broadcast, mpsc};
 use std::sync::Arc;
 
 use crate::types::{
-    AgentError, AgentEvent, AgentResult, ExecutionPlan, MessageRole, PlanStatus,
+    AgentError, AgentResult, ExecutionPlan, MessageRole, PlanStatus,
     RecoveryAction, RecoveryContext, RunOutcome, RuntimeEvent, SessionId, StepResult, StepStatus,
 };
 use crate::tool::ToolContext;
@@ -67,7 +67,7 @@ impl PlanRunner {
         let mut event_rx = self.event_bus.subscribe();
 
         self.emit_and_drain(
-            AgentEvent::PlanGenerated {
+            RuntimeEvent::PlanGenerated {
                 session_id: session_id.clone(),
                 plan: plan.clone(),
             },
@@ -154,7 +154,7 @@ impl PlanRunner {
         }
 
         self.emit_and_drain(
-            AgentEvent::PlanGenerated {
+            RuntimeEvent::PlanGenerated {
                 session_id: session_id.clone(),
                 plan: plan.clone(),
             },
@@ -195,7 +195,7 @@ impl PlanRunner {
         session_id: &SessionId,
         plan: &mut ExecutionPlan,
         config: &PlanConfig,
-        event_rx: &mut broadcast::Receiver<AgentEvent>,
+        event_rx: &mut broadcast::Receiver<RuntimeEvent>,
         on_event: &mut F,
         parent_user_event_tx: Option<tokio::sync::mpsc::UnboundedSender<crate::types::UserEvent>>,
     ) -> AgentResult<RunOutcome>
@@ -240,10 +240,25 @@ impl PlanRunner {
                 let step_desc = plan.phases[phase_idx].steps[step_idx].description.clone();
                 let step_payload = plan.phases[phase_idx].steps[step_idx].payload.clone();
 
+                // Circuit breaker check — skip remaining steps if breaker is open
+                if let Some(ref cb) = config.circuit_breaker {
+                    if !cb.is_available() {
+                        tracing::warn!(
+                            session_id = session_id.id,
+                            step_id = %step_id,
+                            consecutive_failures = cb.consecutive_failures(),
+                            "circuit breaker open, skipping remaining steps"
+                        );
+                        plan.phases[phase_idx].steps[step_idx].status = StepStatus::Skipped;
+                        step_idx += 1;
+                        continue;
+                    }
+                }
+
                 tracing::debug!(session_id = session_id.id, %step_id, "step running");
 
                 self.emit_and_drain(
-                    AgentEvent::PlanStepStarted {
+                    RuntimeEvent::PlanStepStarted {
                         session_id: session_id.clone(),
                         step_id: step_id.clone(),
                         step_description: step_desc.clone(),
@@ -290,13 +305,16 @@ impl PlanRunner {
 
                         if success {
                             plan.phases[phase_idx].steps[step_idx].status = StepStatus::Completed;
+                            if let Some(ref cb) = config.circuit_breaker {
+                                cb.record_success();
+                            }
                             tracing::debug!(session_id = session_id.id, %step_id, "step completed");
 
                             let output = plan.phases[phase_idx].steps[step_idx]
                                 .result.as_ref().unwrap().output.clone();
 
                             self.emit_and_drain(
-                                AgentEvent::PlanStepCompleted {
+                                RuntimeEvent::PlanStepCompleted {
                                     session_id: session_id.clone(),
                                     step_id: step_id.clone(),
                                     success: true,
@@ -309,6 +327,9 @@ impl PlanRunner {
 
                             step_idx += 1;
                         } else {
+                            if let Some(ref cb) = config.circuit_breaker {
+                                cb.record_failure();
+                            }
                             match self.handle_step_failure_progressive(
                                 session_id, plan, phase_idx, step_idx,
                                 &step_id, &error, &step_payload,
@@ -328,6 +349,9 @@ impl PlanRunner {
                         }
                     }
                     Err(e) => {
+                        if let Some(ref cb) = config.circuit_breaker {
+                            cb.record_failure();
+                        }
                         match self.handle_step_failure_progressive(
                             session_id, plan, phase_idx, step_idx,
                             &step_id, &e.to_string(), &step_payload,
@@ -355,7 +379,7 @@ impl PlanRunner {
         plan.status = PlanStatus::Completed;
 
         self.emit_and_drain(
-            AgentEvent::PlanCompleted {
+            RuntimeEvent::PlanCompleted {
                 session_id: session_id.clone(),
                 plan_id: plan.id.clone(),
                 success: true,
@@ -382,7 +406,7 @@ impl PlanRunner {
         recovery: &Option<Arc<dyn RecoveryStrategy>>,
         recovery_policy: &Option<Arc<crate::engine::plan::RecoveryPolicy>>,
         step_outputs: &serde_json::Value,
-        event_rx: &mut broadcast::Receiver<AgentEvent>,
+        event_rx: &mut broadcast::Receiver<RuntimeEvent>,
         on_event: &mut F,
     ) -> AgentResult<StepFailureAction>
     where
@@ -408,7 +432,7 @@ impl PlanRunner {
                 );
 
                 self.emit_and_drain(
-                    AgentEvent::StepRetry {
+                    RuntimeEvent::StepRetry {
                         session_id: session_id.clone(),
                         step_id: step_id.to_string(),
                         retry_count: retry + 1,
@@ -464,7 +488,7 @@ impl PlanRunner {
                     );
 
                     self.emit_and_drain(
-                        AgentEvent::StepAlternativeTrying {
+                        RuntimeEvent::StepAlternativeTrying {
                             session_id: session_id.clone(),
                             original_step_id: step_id.to_string(),
                             alternative_step_id: new_step_id.clone(),
@@ -498,7 +522,7 @@ impl PlanRunner {
                     );
 
                     self.emit_and_drain(
-                        AgentEvent::PlanReplanning {
+                        RuntimeEvent::PlanReplanning {
                             session_id: session_id.clone(),
                             plan_id: plan.id.clone(),
                             replan_count: ctx.replan_count,
@@ -523,7 +547,7 @@ impl PlanRunner {
                     }
 
                     self.emit_and_drain(
-                        AgentEvent::PlanReplanned {
+                        RuntimeEvent::PlanReplanned {
                             session_id: session_id.clone(),
                             plan_id: plan.id.clone(),
                             new_steps: new_steps.len(),
@@ -544,7 +568,7 @@ impl PlanRunner {
                     plan.phases[phase_idx].steps[step_idx].status = StepStatus::Skipped;
                     tracing::debug!(session_id = session_id.id, %step_id, "adaptive: skip");
                     self.emit_and_drain(
-                        AgentEvent::PlanStepCompleted {
+                        RuntimeEvent::PlanStepCompleted {
                             session_id: session_id.clone(),
                             step_id: step_id.to_string(),
                             success: false,
@@ -596,7 +620,7 @@ impl PlanRunner {
                 tracing::debug!(session_id = session_id.id, %step_id, "Level 3: fallback skip");
 
                 self.emit_and_drain(
-                    AgentEvent::PlanStepCompleted {
+                    RuntimeEvent::PlanStepCompleted {
                         session_id: session_id.clone(),
                         step_id: step_id.to_string(),
                         success: false,
@@ -615,7 +639,7 @@ impl PlanRunner {
                 tracing::warn!(session_id = session_id.id, %step_id, "recovery exhausted, abort");
 
                 self.emit_and_drain(
-                    AgentEvent::PlanRecoveryExhausted {
+                    RuntimeEvent::PlanRecoveryExhausted {
                         session_id: session_id.clone(),
                         step_id: step_id.to_string(),
                         retries: ctx.retry_counts.get(&root_id).copied().unwrap_or(0),
@@ -627,7 +651,7 @@ impl PlanRunner {
                 );
 
                 self.emit_and_drain(
-                    AgentEvent::PlanStepCompleted {
+                    RuntimeEvent::PlanStepCompleted {
                         session_id: session_id.clone(),
                         step_id: step_id.to_string(),
                         success: false,
@@ -639,7 +663,7 @@ impl PlanRunner {
                 );
 
                 self.emit_and_drain(
-                    AgentEvent::PlanCompleted {
+                    RuntimeEvent::PlanCompleted {
                         session_id: session_id.clone(),
                         plan_id: plan.id.clone(),
                         success: false,
@@ -663,7 +687,7 @@ impl PlanRunner {
         plan: &ExecutionPlan,
         step_outputs: &serde_json::Value,
         on_event: &mut F,
-        event_rx: &mut broadcast::Receiver<AgentEvent>,
+        event_rx: &mut broadcast::Receiver<RuntimeEvent>,
         parent_user_event_tx: &Option<tokio::sync::mpsc::UnboundedSender<crate::types::UserEvent>>,
     ) -> AgentResult<StepResult>
     where
@@ -743,8 +767,8 @@ impl PlanRunner {
 
     pub(super) fn emit_and_drain<F>(
         &self,
-        event: AgentEvent,
-        event_rx: &mut broadcast::Receiver<AgentEvent>,
+        event: RuntimeEvent,
+        event_rx: &mut broadcast::Receiver<RuntimeEvent>,
         on_event: &mut F,
     ) where
         F: FnMut(RuntimeEvent) -> AgentResult<()>,

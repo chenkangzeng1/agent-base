@@ -4,11 +4,11 @@ use std::sync::Mutex;
 
 use agent_base::{
     AbortOnFailure, AgentBuilder, AgentError, AgentResult, ApprovalDecision, ApprovalHandler,
-    ApprovalRequest, ChatMessage, ExecutionPlan, InMemoryPlanStore, LlmCapabilities, LlmClient,
-    PlanConfig, PlanGenerator, PlanStatus, PlanStep, PlanStore, RecoveryAction, ResponseFormat,
-    RetryOnError, RiskLevel, RunOutcome, RuntimeEvent, StepExecutor, StepResult, StepStatus,
-    StreamChunk, Tool, ToolContext, ToolControlFlow, ToolOutput, ToolPolicy, AlwaysContinue,
-    StepContinuePolicy, RecoveryStrategy,
+    ApprovalRequest, ChatMessage, CircuitBreaker, ExecutionPlan, InMemoryPlanStore, LlmCapabilities,
+    LlmClient, PlanConfig, PlanGenerator, PlanStatus, PlanStep, PlanStore, RecoveryAction,
+    ResponseFormat, RetryOnError, RiskLevel, RunOutcome, RuntimeEvent, SkipOnFailure,
+    StepExecutor, StepResult, StepStatus, StreamChunk, Tool, ToolContext, ToolControlFlow,
+    ToolOutput, ToolPolicy, RecoveryStrategy,
 };
 use async_trait::async_trait;
 use futures_core::Stream;
@@ -647,7 +647,7 @@ fn test_session_push_user_with_images() {
         _ => panic!("expected User variant"),
     }
 
-    let msgs = session.messages();
+    let msgs = session.simple_messages();
     assert_eq!(msgs.len(), 1);
     assert_eq!(msgs[0].role, MessageRole::User);
     assert_eq!(msgs[0].content, "describe this image");
@@ -1637,6 +1637,163 @@ fn test_plan_serialization() {
     let deserialized: ExecutionPlan = serde_json::from_str(&json).unwrap();
     assert_eq!(deserialized.id, "test-id");
     assert_eq!(deserialized.objective, "test objective");
+}
+
+// ---------------------------------------------------------------------------
+// Circuit breaker integration tests
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_circuit_breaker_opens_and_skips_steps() {
+    let steps: Vec<PlanStep> = (0..5)
+        .map(|i| PlanStep::new(
+            &format!("step-{i}"),
+            &format!("Step {i}"),
+            json!({"type": "tool_call", "tool_name": "echo", "args": {"message": "hello"}}),
+        ))
+        .collect();
+
+    // First 2 steps fail, triggering the breaker (threshold=2). Remaining steps succeed
+    // but should be skipped because the breaker is open.
+    let results = vec![
+        StepResult::failure("Step 0 failed", 10),
+        StepResult::failure("Step 1 failed", 10),
+        StepResult::success("Step 2 done", 10),
+        StepResult::success("Step 3 done", 10),
+        StepResult::success("Step 4 done", 10),
+    ];
+
+    let generator = Arc::new(MockPlanGenerator::new(steps));
+    let executor = Arc::new(MockStepExecutor::with_results(results));
+    let plan_store = Arc::new(InMemoryPlanStore::new());
+    let circuit_breaker = Arc::new(CircuitBreaker::new(2, 60_000)); // 2 failures → open
+
+    let llm = Arc::new(MockLlmClient::new(vec![]));
+    let runtime = AgentBuilder::new(llm.clone())
+        .register_tool(EchoTool)
+        .build().unwrap();
+
+    let session_id = runtime.create_session().await;
+    let result = runtime
+        .run_plan_with_generator(
+            session_id,
+            "Circuit breaker test",
+            generator,
+            PlanConfig::new()
+                .with_executor(executor)
+                .recovery(Arc::new(SkipOnFailure)) // skip on failure so we can test the breaker
+                .store(plan_store.clone())
+                .circuit_breaker(circuit_breaker.clone()),
+            |_| Ok(()),
+        )
+        .await;
+
+    // Plan should complete (not abort), but with failures
+    assert!(result.is_ok(), "Plan should return ok: {result:?}");
+    let stored = plan_store.load_plan("test-plan-1").await.unwrap().unwrap();
+    let plan = stored.plan;
+
+    // After 2 consecutive failures, breaker should be open
+    assert_eq!(circuit_breaker.consecutive_failures(), 2);
+    assert!(!circuit_breaker.is_available(), "Breaker should be open after 2 failures");
+
+    // Steps after the threshold should be skipped by the breaker
+    let all_steps: Vec<_> = plan.all_steps().collect();
+    let skipped: Vec<_> = all_steps.iter()
+        .filter(|s| s.status == StepStatus::Skipped)
+        .collect();
+    assert!(!skipped.is_empty(), "Some steps should be skipped by breaker");
+    assert!(skipped.len() >= 3, "At least steps 2-4 should be skipped (got {} skipped)", skipped.len());
+}
+
+#[tokio::test]
+async fn test_circuit_breaker_success_resets() {
+    let steps: Vec<PlanStep> = (0..3)
+        .map(|i| PlanStep::new(
+            &format!("step-{i}"),
+            &format!("Step {i}"),
+            json!({"type": "tool_call", "tool_name": "echo", "args": {"message": "hello"}}),
+        ))
+        .collect();
+
+    // All steps succeed — breaker should stay closed
+    let results = vec![
+        StepResult::success("Step 0 done", 10),
+        StepResult::success("Step 1 done", 10),
+        StepResult::success("Step 2 done", 10),
+    ];
+
+    let generator = Arc::new(MockPlanGenerator::new(steps));
+    let executor = Arc::new(MockStepExecutor::with_results(results));
+    let plan_store = Arc::new(InMemoryPlanStore::new());
+    let circuit_breaker = Arc::new(CircuitBreaker::new(2, 60_000));
+
+    let llm = Arc::new(MockLlmClient::new(vec![]));
+    let runtime = AgentBuilder::new(llm.clone())
+        .register_tool(EchoTool)
+        .build().unwrap();
+
+    let session_id = runtime.create_session().await;
+    let result = runtime
+        .run_plan_with_generator(
+            session_id,
+            "Success test",
+            generator,
+            PlanConfig::new()
+                .with_executor(executor)
+                .recovery(Arc::new(AbortOnFailure))
+                .store(plan_store.clone())
+                .circuit_breaker(circuit_breaker.clone()),
+            |_| Ok(()),
+        )
+        .await;
+
+    assert!(result.is_ok());
+    assert!(matches!(result.unwrap(), RunOutcome::Completed));
+    assert_eq!(circuit_breaker.consecutive_failures(), 0);
+    assert!(circuit_breaker.is_available());
+}
+
+// ---------------------------------------------------------------------------
+// Streaming plan generation test
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn test_generate_plan_streaming_emits_events() {
+    let steps = vec![
+        PlanStep::new("step-1", "First step", json!({"type": "tool_call", "tool_name": "echo", "args": {"message": "hello"}})),
+        PlanStep::new("step-2", "Second step", json!({"type": "tool_call", "tool_name": "echo", "args": {"message": "world"}})),
+    ];
+
+    let generator = Arc::new(MockPlanGenerator::new(steps));
+    let llm = Arc::new(MockLlmClient::new(vec![]));
+    let runtime = AgentBuilder::new(llm.clone())
+        .register_tool(EchoTool)
+        .build().unwrap();
+
+    let session_id = runtime.create_session().await;
+    let mut events = Vec::new();
+
+    let plan = runtime
+        .generate_plan_streaming(
+            &session_id,
+            "Streaming test",
+            "",
+            generator,
+            &mut |event| {
+                events.push(event);
+                Ok(())
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(plan.id, "test-plan-1");
+    assert_eq!(plan.total_steps(), 2);
+
+    // At minimum, PlanGenerated should be emitted
+    let has_plan_generated = events.iter().any(|e| matches!(e, RuntimeEvent::PlanGenerated { .. }));
+    assert!(has_plan_generated, "Should emit PlanGenerated event");
 }
 
 // =========================================================================

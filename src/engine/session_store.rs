@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use tokio::sync::Mutex;
 
-use crate::types::{AgentResult, AgentError, SessionId};
+use crate::types::{AgentResult, AgentError, RuntimeEvent, SessionId};
 use super::AgentSession;
 
 /// Session Persistence Adapter
@@ -29,6 +29,13 @@ pub trait SessionStore: Send + Sync {
 
     /// Delete a specific session
     async fn delete(&self, session_id: &SessionId) -> AgentResult<()>;
+
+    /// Optionally persist a runtime event for audit/replay.
+    /// Default implementation is a no-op — override to implement
+    /// append-log style persistence (e.g. JSONL file, database event log).
+    async fn append_event(&self, _session_id: &SessionId, _event: &RuntimeEvent) -> AgentResult<()> {
+        Ok(())
+    }
 }
 
 pub struct InMemorySessionStore {
