@@ -97,7 +97,11 @@ impl ToolExecutionPipeline for DefaultPipeline {
                 let suffix = "...(truncated)";
                 let keep = max_chars.saturating_sub(suffix.len());
                 if keep > 0 {
-                    output.summary.truncate(keep);
+                    // Use floor_char_boundary to avoid panicking on multi-byte
+                    // UTF-8 characters (e.g. CJK, emoji) where `keep` falls
+                    // in the middle of a character.
+                    let truncate_at = output.summary.floor_char_boundary(keep);
+                    output.summary.truncate(truncate_at);
                     output.summary.push_str(suffix);
                 } else {
                     output.summary = suffix[..max_chars].to_string();
@@ -319,6 +323,19 @@ mod tests {
         let output = pipeline.execute(&EchoTool, &json!({"msg": "short"}), &test_ctx()).await.unwrap();
         assert_eq!(output.summary, "short");
         assert!(output.truncation.is_none());
+    }
+
+    #[tokio::test]
+    async fn truncation_cjk_no_panic() {
+        // CJK chars are 3 bytes each. With max_chars=20, keep=6 bytes,
+        // which falls inside a 3-byte CJK char. floor_char_boundary
+        // should round down to the nearest char boundary.
+        let pipeline = DefaultPipeline::new(None, None, Some(20));
+        let output = pipeline.execute(&EchoTool, &json!({"msg": "这是一个很长的中文消息，用于测试多字节字符的截断处理"}), &test_ctx()).await.unwrap();
+        assert!(output.summary.len() <= 20);
+        assert!(output.summary.ends_with("...(truncated)") || output.summary.len() <= 20);
+        assert!(output.truncation.is_some());
+        // Must not panic — that's the main assertion
     }
 
     #[tokio::test]
