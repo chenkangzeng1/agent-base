@@ -231,6 +231,21 @@ impl AgentRuntime {
         Ok(session.chat_messages().to_vec())
     }
 
+    /// Replace the chat messages for a session — only for persistence restore.
+    /// Validates message sequence before applying.
+    ///
+    /// 仅供持久化恢复使用。
+    pub async fn set_messages(
+        &self,
+        session_id: &SessionId,
+        messages: Vec<crate::types::ChatMessage>,
+    ) -> AgentResult<()> {
+        self.with_session_mut(session_id, |session| {
+            session.set_chat_messages(messages)
+        }).await?
+        .map_err(|e| AgentError::internal(e))
+    }
+
     pub async fn validate_session(&self, session_id: &SessionId) -> AgentResult<()> {
         if self.runner.session_manager.session(session_id).await.is_none() {
             return Err(AgentError::session_not_found(session_id.id));

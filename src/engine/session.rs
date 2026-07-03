@@ -204,15 +204,91 @@ impl AgentSession {
             }
         }
     }
+
+    /// Replace chat messages — only for persistence restore.
+    /// Validates message sequence before replacing.
+    ///
+    /// 仅供持久化恢复使用。调用方必须保证 messages 序列合法。
+    pub fn set_chat_messages(&mut self, messages: Vec<ChatMessage>) -> Result<(), String> {
+        validate_message_sequence(&messages)?;
+        // Recalculate total_tool_calls from the incoming messages so middleware
+        // decisions (e.g. first_turn_only enforcement) see the correct count.
+        self.total_tool_calls = messages
+            .iter()
+            .filter_map(|m| match m {
+                ChatMessage::Assistant {
+                    tool_calls: Some(tc), ..
+                } => Some(tc.len()),
+                _ => None,
+            })
+            .sum();
+        self.chat_messages = messages;
+        Ok(())
+    }
+}
+
+/// Validate that a chat message sequence is well-formed for LLM API consumption.
+///
+/// Checks:
+/// - No Tool message without a preceding Assistant with matching tool_call
+/// - No duplicate Tool messages for the same tool_call_id
+/// - All tool_calls in an Assistant batch must be answered before the next Assistant batch
+/// - No unanswered tool calls at the end of the sequence
+pub fn validate_message_sequence(messages: &[ChatMessage]) -> Result<(), String> {
+    let mut pending_tool_call_ids: HashSet<String> = HashSet::new();
+
+    for (i, msg) in messages.iter().enumerate() {
+        match msg {
+            ChatMessage::Tool { tool_call_id, .. } => {
+                if pending_tool_call_ids.is_empty() {
+                    return Err(format!(
+                        "message[{}]: Tool message with call_id '{}' has no preceding tool_call",
+                        i, tool_call_id
+                    ));
+                }
+                // Remove the ID on match — also detects duplicates (second remove returns false)
+                if !pending_tool_call_ids.remove(tool_call_id) {
+                    return Err(format!(
+                        "message[{}]: Tool message with call_id '{}' does not match any pending tool_call (already answered or unknown)",
+                        i, tool_call_id
+                    ));
+                }
+            }
+            ChatMessage::Assistant {
+                tool_calls: Some(tc), ..
+            } => {
+                // Previous batch must be fully answered before a new batch starts
+                if !pending_tool_call_ids.is_empty() {
+                    return Err(format!(
+                        "message[{}]: Assistant message with new tool_calls appears before pending calls were answered: {:?}",
+                        i, pending_tool_call_ids
+                    ));
+                }
+                pending_tool_call_ids = tc.iter().map(|t| t.id.clone()).collect();
+            }
+            _ => {}
+        }
+    }
+
+    // All tool calls must be answered by the end of the sequence
+    if !pending_tool_call_ids.is_empty() {
+        return Err(format!(
+            "message sequence ends with unanswered tool calls: {:?}",
+            pending_tool_call_ids
+        ));
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+fn make_session() -> AgentSession {
+    AgentSession::new(SessionId::new(1))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn make_session() -> AgentSession {
-        AgentSession::new(SessionId::new(1))
-    }
 
     #[test]
     fn test_turn_count_empty() {
@@ -326,5 +402,98 @@ mod tests {
         let mut s = make_session();
         s.pop_last_message(); // should not panic
         assert_eq!(s.chat_messages().len(), 0);
+    }
+}
+
+#[cfg(test)]
+mod validate_tests {
+    use super::*;
+
+    #[test]
+    fn test_valid_simple_sequence() {
+        let msgs = vec![
+            ChatMessage::user("hello"),
+            ChatMessage::assistant("hi"),
+        ];
+        assert!(validate_message_sequence(&msgs).is_ok());
+    }
+
+    #[test]
+    fn test_valid_tool_call_sequence() {
+        let msgs = vec![
+            ChatMessage::user("run command"),
+            ChatMessage::assistant_tool_call("call_1", "bash", r#"{"cmd":"ls"}"#),
+            ChatMessage::tool("call_1", "file1 file2"),
+            ChatMessage::assistant("done"),
+        ];
+        assert!(validate_message_sequence(&msgs).is_ok());
+    }
+
+    #[test]
+    fn test_valid_multi_tool_call_sequence() {
+        let msgs = vec![
+            ChatMessage::user("run commands"),
+            ChatMessage::Assistant {
+                content: None,
+                reasoning_content: None,
+                tool_calls: Some(vec![
+                    crate::types::ToolCallMessage {
+                        id: "call_1".into(),
+                        name: "bash".into(),
+                        arguments: "{}".into(),
+                    },
+                    crate::types::ToolCallMessage {
+                        id: "call_2".into(),
+                        name: "read".into(),
+                        arguments: "{}".into(),
+                    },
+                ]),
+            },
+            ChatMessage::tool("call_1", "result1"),
+            ChatMessage::tool("call_2", "result2"),
+            ChatMessage::assistant("done"),
+        ];
+        assert!(validate_message_sequence(&msgs).is_ok());
+    }
+
+    #[test]
+    fn test_orphaned_tool_result() {
+        let msgs = vec![
+            ChatMessage::user("hello"),
+            ChatMessage::tool("call_1", "orphaned result"),
+        ];
+        let err = validate_message_sequence(&msgs).unwrap_err();
+        assert!(err.contains("no preceding tool_call"));
+    }
+
+    #[test]
+    fn test_mismatched_tool_call_id() {
+        let msgs = vec![
+            ChatMessage::user("run"),
+            ChatMessage::assistant_tool_call("call_1", "bash", "{}"),
+            ChatMessage::tool("call_2", "wrong id"),
+        ];
+        let err = validate_message_sequence(&msgs).unwrap_err();
+        assert!(err.contains("does not match"));
+    }
+
+    #[test]
+    fn test_set_chat_messages_valid() {
+        let mut s = make_session();
+        let msgs = vec![
+            ChatMessage::user("hello"),
+            ChatMessage::assistant("hi"),
+        ];
+        assert!(s.set_chat_messages(msgs.clone()).is_ok());
+        assert_eq!(s.chat_messages().len(), 2);
+    }
+
+    #[test]
+    fn test_set_chat_messages_invalid() {
+        let mut s = make_session();
+        let msgs = vec![
+            ChatMessage::tool("call_1", "orphaned"),
+        ];
+        assert!(s.set_chat_messages(msgs).is_err());
     }
 }

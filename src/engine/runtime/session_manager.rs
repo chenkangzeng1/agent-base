@@ -72,6 +72,11 @@ impl SessionManager {
         match self.session_store.load(session_id).await {
             Ok(Some(session)) => {
                 let msg_count = session.chat_messages().len();
+                // Validate the restored message sequence — corrupt persisted data
+                // would cause LLM API errors downstream, so warn early.
+                if let Err(e) = crate::engine::session::validate_message_sequence(session.chat_messages()) {
+                    tracing::warn!(session_id = session_id.id, error = %e, "restored session has invalid message sequence");
+                }
                 // Evict before inserting to make room if needed
                 self.evict_if_needed().await.ok();
                 {
