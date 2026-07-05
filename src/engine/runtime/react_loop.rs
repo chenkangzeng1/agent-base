@@ -502,7 +502,7 @@ impl PlanRunner {
             tracing::info!(session_id = session_id.id, turn = turn_count, is_err = result.is_err(), "LLM stream processed");
 
             match result {
-                Ok(LlmTurnResult { full_text, is_tool_call, tool_calls, usage: _ }) => {
+                Ok(LlmTurnResult { full_text, reasoning_text: _, is_tool_call, tool_calls, usage: _ }) => {
                     tracing::info!(
                         session_id = session_id.id,
                         turn = turn_count,

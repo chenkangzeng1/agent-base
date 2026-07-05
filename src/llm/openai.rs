@@ -74,6 +74,7 @@ impl OpenAiClient {
 
         if self.is_qwen_model() {
             // qwen 模型使用 enable_thinking 和 thinking_budget
+            // 对于 OpenAI 兼容接口，直接放在请求体顶层
             if let Some(enabled) = config.enabled {
                 if let Some(obj) = request_body.as_object_mut() {
                     obj.insert("enable_thinking".to_string(), json!(enabled));

@@ -137,6 +137,7 @@ impl LlmEngine {
                         }
                         Ok(StreamChunk::Thought(text)) => {
                             tracing::debug!(session_id = session_id.id, len = text.len(), "llm thought chunk");
+                            aggregator.reasoning_text.push_str(&text);
                             if !text.is_empty() && !aggregator.is_tool_call {
                                 self.event_bus.emit(RuntimeEvent::ThoughtDelta {
                                     session_id: session_id.clone(),
@@ -197,7 +198,36 @@ impl LlmEngine {
         }
 
         let total_elapsed = start.elapsed();
-        tracing::info!(session_id = session_id.id, text_len = aggregator.full_text.len(), tool_calls = aggregator.partials.len(), elapsed_ms = total_elapsed.as_millis(), "LLM stream done");
+
+        // Fallback: some models (e.g. qwen3.7-max) put the final answer in
+        // reasoning_content instead of content when thinking is enabled.
+        // If we got reasoning but no text and no tool calls, use reasoning as the response.
+        // NOTE: this usually means tools were not provided — the model "thinks" about calling
+        // a tool but can't, so it only produces reasoning. Check your tool configuration.
+        let mut full_text = aggregator.full_text;
+        let reasoning_len = aggregator.reasoning_text.len();
+        if full_text.is_empty() && reasoning_len > 0 && !aggregator.is_tool_call {
+            tracing::warn!(
+                session_id = session_id.id,
+                reasoning_len,
+                "content empty but reasoning_content present — this usually means no tools were defined. \
+                 Using reasoning as fallback response. Check that tools are correctly passed to the LLM."
+            );
+            // Use reasoning as the response text so react_loop doesn't treat it as empty.
+            // Do NOT emit TextDelta here — the frontend already received the content as
+            // ThoughtDelta events during streaming. Emitting TextDelta would duplicate it.
+            // The session push in react_loop will persist the content for reload.
+            full_text = aggregator.reasoning_text.clone();
+        }
+
+        tracing::info!(
+            session_id = session_id.id,
+            text_len = full_text.len(),
+            reasoning_len,
+            tool_calls = aggregator.partials.len(),
+            elapsed_ms = total_elapsed.as_millis(),
+            "LLM stream done"
+        );
 
         let tool_calls = aggregator
             .partials
@@ -216,7 +246,8 @@ impl LlmEngine {
             .collect::<Vec<_>>();
 
         Ok(LlmTurnResult {
-            full_text: aggregator.full_text,
+            full_text,
+            reasoning_text: aggregator.reasoning_text,
             is_tool_call: aggregator.is_tool_call,
             tool_calls,
             usage: aggregator.usage,
@@ -233,6 +264,9 @@ impl LlmEngine {
 
 pub struct LlmTurnResult {
     pub full_text: String,
+    /// Reasoning/thinking content accumulated from Thought stream chunks.
+    /// Populated when the model uses thinking mode (e.g. qwen3.7-max).
+    pub reasoning_text: String,
     pub is_tool_call: bool,
     pub tool_calls: Vec<Value>,
     pub usage: Option<UsageInfo>,
@@ -240,6 +274,10 @@ pub struct LlmTurnResult {
 
 struct StreamAggregator {
     pub full_text: String,
+    /// Accumulated reasoning/thinking content (from StreamChunk::Thought).
+    /// Some models (e.g. qwen3.7-max) put the final answer in reasoning_content
+    /// instead of content when thinking is enabled.
+    pub reasoning_text: String,
     pub is_tool_call: bool,
     pub partials: std::collections::HashMap<usize, (String, String, String)>,
     pub usage: Option<UsageInfo>,
@@ -249,6 +287,7 @@ impl StreamAggregator {
     fn new() -> Self {
         Self {
             full_text: String::new(),
+            reasoning_text: String::new(),
             is_tool_call: false,
             partials: std::collections::HashMap::new(),
             usage: None,
