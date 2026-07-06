@@ -9,7 +9,7 @@ use crate::types::{
     MessageRole, RunOutcome, RuntimeEvent, SessionId
 };
 
-use super::plan_runner::PlanRunner;
+use super::plan_runner::RuntimeCore;
 
 pub(super) enum ToolCallResult {
     Continue,
@@ -24,7 +24,7 @@ pub(super) struct PostLlmMwResult {
     pub follow_up_message: Option<String>,
 }
 
-impl PlanRunner {
+impl RuntimeCore {
     pub async fn run<F>(
         &self,
         session_id: SessionId,

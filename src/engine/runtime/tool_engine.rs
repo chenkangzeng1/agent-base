@@ -39,14 +39,6 @@ impl ToolEngine {
         }
     }
 
-    /// Inject PlanRunner synchronously during build (before tokio runtime).
-    pub fn inject_plan_runner_sync(&self, runner: &Arc<crate::engine::PlanRunner>) {
-        // During build, we are the only holder of the Arc<RwLock<>>, so try_write is safe.
-        let mut tools = self.tools.try_write()
-            .expect("inject_plan_runner_sync: failed to acquire write lock");
-        tools.inject_plan_runner(runner);
-    }
-
     pub async fn definitions(&self) -> Vec<Value> {
         self.tools.read().await.definitions()
     }

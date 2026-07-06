@@ -10,7 +10,7 @@ use crate::engine::runtime::tool_engine::ToolEngine;
 use crate::engine::runtime::event_bus::EventBus;
 use crate::types::AgentConfig;
 
-pub(crate) struct PlanRunner {
+pub(crate) struct RuntimeCore {
     pub(crate) config: Arc<RwLock<AgentConfig>>,
     pub(crate) llm_engine: LlmEngine,
     pub(crate) tool_engine: ToolEngine,
@@ -21,7 +21,7 @@ pub(crate) struct PlanRunner {
     pub(crate) cancel_token: Mutex<CancellationToken>,
 }
 
-impl PlanRunner {
+impl RuntimeCore {
     pub fn new(
         config: AgentConfig,
         llm_engine: LlmEngine,
@@ -81,7 +81,7 @@ mod tests {
 
     #[test]
     fn test_cancel_token_initial_state() {
-        // Create a simple PlanRunner for testing
+        // Create a simple RuntimeCore for testing
         // Note: we only test the cancel_token field behavior
         let token = CancellationToken::new();
         assert!(!token.is_cancelled());

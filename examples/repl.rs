@@ -252,21 +252,6 @@ impl EventPrinter {
                 println!("[Run finished]");
             }
             RuntimeEvent::Checkpoint { .. } => {}
-            RuntimeEvent::PlanGenerated { plan, .. } => {
-                println!("[Plan generated] id={}, objective={}", plan.id, plan.objective);
-            }
-            RuntimeEvent::PlanStepStarted { step_id, step_description, .. } => {
-                println!("[Plan step started] {} - {}", step_id, step_description);
-            }
-            RuntimeEvent::PlanStepCompleted { step_id, success, .. } => {
-                println!("[Plan step completed] {} success={}", step_id, success);
-            }
-            RuntimeEvent::PlanCompleted { plan_id, success, .. } => {
-                println!("[Plan completed] {} success={}", plan_id, success);
-            }
-            RuntimeEvent::PlanStepWaitingConfirmation { step_id, step_description, .. } => {
-                println!("[Plan step waiting confirmation] {} - {}", step_id, step_description);
-            }
             _ => {}
         }
         Ok(())

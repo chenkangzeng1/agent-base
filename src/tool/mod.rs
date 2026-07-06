@@ -12,9 +12,11 @@ use crate::engine::SessionStore;
 pub mod auto_continue;
 pub mod policy;
 pub mod subagent;
+pub mod update_plan;
 
 pub use auto_continue::AutoContinueTool;
 pub use subagent::{SubAgentSessionPolicy, SubAgentTool};
+pub use update_plan::UpdatePlanTool;
 
 pub use policy::ToolPolicy;
 
@@ -82,7 +84,7 @@ pub trait Tool: Send + Sync {
 
 /// Marker trait for framework-internal tools that require engine infrastructure.
 ///
-/// Framework tools implement this trait to receive `EventBus` and `PlanRunner`
+/// Framework tools implement this trait to receive `EventBus`
 /// references during `AgentBuilder::build()`. User-defined tools do not need this.
 ///
 /// All methods have default no-op implementations so only the needed injection
@@ -90,9 +92,6 @@ pub trait Tool: Send + Sync {
 pub(crate) trait FrameworkTool: Tool {
     /// Inject the internal event bus. Called once during build.
     fn set_event_bus(&self, _event_bus: crate::engine::EventBus) {}
-
-    /// Inject the PlanRunner reference. Called once after PlanRunner construction.
-    fn set_plan_runner(&self, _runner: &Arc<crate::engine::PlanRunner>) {}
 }
 
 #[async_trait]
@@ -198,15 +197,6 @@ impl ToolRegistry {
         for tool in self.tools.values() {
             if let Some(fw) = tool.as_framework_tool() {
                 fw.set_event_bus(event_bus.clone());
-            }
-        }
-    }
-
-    /// Inject the `PlanRunner` into framework-provided tools (via `Weak` to avoid circular Arc).
-    pub fn inject_plan_runner(&self, runner: &Arc<crate::engine::PlanRunner>) {
-        for tool in self.tools.values() {
-            if let Some(fw) = tool.as_framework_tool() {
-                fw.set_plan_runner(runner);
             }
         }
     }
