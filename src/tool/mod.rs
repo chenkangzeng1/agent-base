@@ -76,7 +76,7 @@ pub trait Tool: Send + Sync {
     async fn call(&self, args: &Value, ctx: &ToolContext) -> AgentResult<ToolOutput>;
 
     /// Return `Some(&dyn FrameworkTool)` if this tool is a framework-internal tool
-    /// that needs engine infrastructure injection (EventBus, PlanRunner).
+    /// that needs engine infrastructure injection (EventBus).
     /// Default returns `None` — user-defined tools need not override this.
     #[allow(private_interfaces)]
     fn as_framework_tool(&self) -> Option<&dyn FrameworkTool> { None }

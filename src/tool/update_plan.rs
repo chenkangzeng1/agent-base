@@ -1,3 +1,4 @@
+use std::fmt::Write;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
@@ -23,14 +24,15 @@ pub struct UpdatePlanTool {
 
 /// Normalize step text from LLM output for consistent UI rendering.
 ///
-/// - Strips LLM-added numbering prefixes ("Step 1: ", "1. ", "1) ", "(1) ")
+/// - Strips LLM-added numbering prefixes ("Step 1: ", "1. ", "1) ", "(1) ",
+///   "第1步：", "第一步：")
 /// - Truncates to max 60 chars (terminal-friendly)
 /// - Strips leading/trailing whitespace
 /// - Falls back to raw text if normalization produces empty string
 fn normalize_step_text(raw: &str) -> String {
     let text = raw.trim();
 
-    // First try to strip "Step N: " / "step N. " prefix
+    // Step 1: Strip "Step N: " / "step N. " prefix (English)
     let text = if let Some(rest) = text.strip_prefix("Step").or_else(|| text.strip_prefix("step")) {
         let rest = rest.trim_start_matches(|c: char| c.is_ascii_digit() || c == ' ');
         rest.trim_start_matches(|c: char| c == ':' || c == '.' || c == ')' || c == ' ')
@@ -38,27 +40,43 @@ fn normalize_step_text(raw: &str) -> String {
         text
     };
 
-    // Strip number prefixes: "1. xxx", "1) xxx", "(1) xxx", "1、xxx"
+    // Step 2: Strip Chinese "第N步" / "第 N 步：" / "第一步：" patterns
+    let text = if let Some(rest) = text.strip_prefix('第') {
+        // Strip digits, spaces, and common Chinese number characters
+        let rest = rest.trim_start_matches(|c: char| {
+            c.is_ascii_digit()
+                || c == ' '
+                || matches!(c, '一' | '二' | '三' | '四' | '五' | '六' | '七' | '八' | '九' | '十')
+        });
+        // Strip "步" and following punctuation/whitespace
+        rest.strip_prefix('步')
+            .map(|r| r.trim_start_matches(|c: char| matches!(c, '：' | ':' | '、' | '.' | ')' | ' ')))
+            .unwrap_or(text)
+    } else {
+        text
+    };
+
+    // Step 3: Strip bare number prefixes: "1. ", "1) ", "(1) ", "1-2) ", "3/5) ", "1、"
     let text = text.trim_start_matches(|c: char| {
-        c.is_ascii_digit() || c == '.' || c == ')' || c == '(' || c == '、' || c == ' '
+        c.is_ascii_digit() || matches!(c, '.' | ')' | '(' | '、' | ' ' | '-' | '/')
     });
 
-    // Truncate to 60 chars max
-    let text: String = if text.chars().count() > 60 {
+    // Step 4: Truncate to 60 chars max
+    let mut text = if text.chars().count() > 60 {
         let truncated: String = text.chars().take(57).collect();
         format!("{truncated}...")
     } else {
         text.to_string()
     };
 
-    // Strip remaining whitespace
-    let text = text.trim();
-
-    // Fallback: don't return empty
-    if text.is_empty() {
+    // Step 5: Final trim — avoid redundant allocation when no trimming needed
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
         raw.trim().to_string()
+    } else if trimmed.len() < text.len() {
+        trimmed.to_string()
     } else {
-        text.to_string()
+        text
     }
 }
 
@@ -113,7 +131,7 @@ impl Tool for UpdatePlanTool {
                                 "properties": {
                                     "step": {
                                         "type": "string",
-                                        "description": "Short description of this step (5-7 words)."
+                                        "description": "Short description of this step (5-7 words). Example: '安装 Docker 引擎'"
                                     },
                                     "status": {
                                         "type": "string",
@@ -173,20 +191,10 @@ impl Tool for UpdatePlanTool {
             .filter(|item| item.status == crate::types::PlanStepStatus::InProgress)
             .count();
 
-        // Broadcast PlanUpdated event
-        {
-            let guard = self.event_bus.lock().unwrap();
-            if let Some(ref event_bus) = *guard {
-                event_bus.emit(RuntimeEvent::PlanUpdated {
-                    session_id: _ctx.session_id.clone(),
-                    objective: plan_args.objective.clone(),
-                    explanation: plan_args.explanation.clone(),
-                    plan: normalized_plan.clone(),
-                });
-            }
-        }
+        // Build summary and raw output BEFORE emitting event (so we can move
+        // normalized_plan into the event instead of cloning it).
+        let raw = Some(serde_json::to_value(&normalized_plan).unwrap_or_default());
 
-        // Build a human-readable summary
         let mut summary = format!(
             "📋 {}: {}/{} steps completed",
             plan_args.objective, completed, total
@@ -196,17 +204,30 @@ impl Tool for UpdatePlanTool {
                 item.status == crate::types::PlanStepStatus::InProgress
             });
             if let Some(item) = current {
-                summary.push_str(&format!(". Current: \"{}\"", item.step));
+                write!(summary, ". Current: \"{}\"", item.step).unwrap();
             }
         }
         if total == completed {
             summary = format!("📋 {} — all steps completed!", plan_args.objective);
         }
 
+        // Broadcast PlanUpdated event (normalized_plan is moved here, not cloned)
+        {
+            let guard = self.event_bus.lock().unwrap();
+            if let Some(ref event_bus) = *guard {
+                event_bus.emit(RuntimeEvent::PlanUpdated {
+                    session_id: _ctx.session_id.clone(),
+                    objective: plan_args.objective.clone(),
+                    explanation: plan_args.explanation.clone(),
+                    plan: normalized_plan,
+                });
+            }
+        }
+
         Ok(ToolOutput {
             summary,
-            raw: Some(serde_json::to_value(&normalized_plan).unwrap_or_default()),
-            control_flow: crate::tool::ToolControlFlow::Break,
+            raw,
+            control_flow: crate::tool::ToolControlFlow::Continue,
             truncation: None,
         })
     }
@@ -280,6 +301,19 @@ mod tests {
         assert_eq!(normalize_step_text("Step 1: 安装 Docker"), "安装 Docker");
         assert_eq!(normalize_step_text("step 2: 更新包列表"), "更新包列表");
         assert_eq!(normalize_step_text("1、配置仓库"), "配置仓库");
+
+        // Strip hyphenated and slashed number prefixes
+        assert_eq!(normalize_step_text("1-2) Install Docker"), "Install Docker");
+        assert_eq!(normalize_step_text("3/5) Verify config"), "Verify config");
+
+        // Strip Chinese numbering prefixes
+        assert_eq!(normalize_step_text("第一步：安装 Docker"), "安装 Docker");
+        assert_eq!(normalize_step_text("第1步：添加 GPG 密钥"), "添加 GPG 密钥");
+        assert_eq!(normalize_step_text("第 3 步: 更新包列表"), "更新包列表");
+        assert_eq!(normalize_step_text("第二步、配置仓库"), "配置仓库");
+
+        // Strip "第" without "步" gracefully (revert to original)
+        assert_eq!(normalize_step_text("第一个任务：安装"), "第一个任务：安装");
 
         // Truncate long text
         let long = "使用 apt install -y docker-ce docker-ce-cli containerd.io 命令来安装 Docker 引擎以及相关组件";

@@ -231,7 +231,7 @@ impl AgentRuntime {
 
     // --- Cancellation support ---
 
-    /// Cancel the currently executing run_turn / run / run_plan.
+    /// Cancel the currently executing run_turn / run.
     /// No-op if there is no current execution.
     pub fn cancel(&self) {
         self.runner.cancel();

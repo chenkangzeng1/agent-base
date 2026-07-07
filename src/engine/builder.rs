@@ -12,9 +12,6 @@ use super::recovery::{StopOnError, ToolErrorRecovery};
 use super::session_store::{InMemorySessionStore, SessionStore};
 use super::AgentRuntime;
 
-#[cfg(feature = "skill")]
-use crate::skill::{LazySkillPrompter, Skill, SkillDetailTool, SkillPrompter};
-
 pub struct AgentBuilder {
     client: Arc<dyn LlmClient>,
     config: AgentConfig,
@@ -28,14 +25,6 @@ pub struct AgentBuilder {
     error_recovery: Option<Arc<dyn ToolErrorRecovery>>,
     event_bus_capacity: usize,
     session_id_generator: Option<Arc<dyn SessionIdGenerator>>,
-    #[cfg(feature = "skill")]
-    skills: Vec<Arc<dyn Skill>>,
-    #[cfg(feature = "skill")]
-    skill_prompter: Option<Arc<dyn SkillPrompter>>,
-    #[cfg(feature = "skill")]
-    skill_detail_tool_name: String,
-    #[cfg(feature = "skill")]
-    disable_skill_prompt_injection: bool,
 }
 
 impl AgentBuilder {
@@ -53,14 +42,6 @@ impl AgentBuilder {
             error_recovery: None,
             event_bus_capacity: 2048,
             session_id_generator: None,
-            #[cfg(feature = "skill")]
-            skills: Vec::new(),
-            #[cfg(feature = "skill")]
-            skill_prompter: None,
-            #[cfg(feature = "skill")]
-            skill_detail_tool_name: "get_skill_detail".to_string(),
-            #[cfg(feature = "skill")]
-            disable_skill_prompt_injection: false,
         }
     }
 
@@ -231,7 +212,7 @@ impl AgentBuilder {
         let event_bus = super::runtime::EventBus::new(self.event_bus_capacity);
 
         // Inject EventBus into framework-provided tools that need it
-        // (PlanOrchestrator, PlanExecTool)
+        // (e.g., UpdatePlanTool via FrameworkTool::set_event_bus)
         self.tools.inject_event_bus(&event_bus);
 
         let session_store = self

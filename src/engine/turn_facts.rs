@@ -3,31 +3,44 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 
 use crate::engine::middleware::{Middleware, PostLlmCtx, UserMessageCtx};
-use crate::types::AgentResult;
+use crate::types::{AgentResult, Language};
 
 /// Turn fact summary middleware — injects structured facts from the previous
 /// turn's tool results into the next user message.
 ///
 /// This prevents long-conversation attention drift: the LLM sees deterministic
-/// facts (exit codes, error messages) instead of relying on fuzzy memory of
-/// tool outputs buried 20+ turns ago.
+/// facts (tool call names) instead of relying on fuzzy memory of tool outputs
+/// buried 20+ turns ago.
 ///
 /// # Design
 ///
-/// - After each LLM turn with tool calls, collects key facts from tool names
+/// - After each LLM turn with tool calls, collects which tools were called
 ///   and stores them in a buffer.
 /// - At the start of the next user message, prepends the buffered facts as a
 ///   structured prefix, then clears the buffer.
 /// - Facts are derived from tool names only (not parsing output text), keeping
 ///   the logic simple and model-agnostic.
+/// - The prefix language can be configured via [`Language`]; defaults to
+///   [`Language::Zh`] for backward compatibility.
 pub struct TurnFactMiddleware {
     pending_facts: Mutex<Vec<String>>,
+    language: Language,
 }
 
 impl TurnFactMiddleware {
+    /// Create a new middleware with the default language (Chinese).
     pub fn new() -> Self {
         Self {
             pending_facts: Mutex::new(Vec::new()),
+            language: Language::Zh,
+        }
+    }
+
+    /// Create a new middleware with the specified language for the prefix text.
+    pub fn with_language(language: Language) -> Self {
+        Self {
+            pending_facts: Mutex::new(Vec::new()),
+            language,
         }
     }
 }
@@ -50,10 +63,16 @@ impl Middleware for TurnFactMiddleware {
         };
 
         // Prepend facts to user message as structured context
-        let prefix = format!(
-            "[本轮工具调用摘要 — 以下为确定性事实，请以此为准]\n{}\n",
-            facts.join("\n")
-        );
+        let prefix = match self.language {
+            Language::Zh => format!(
+                "[本轮工具调用摘要 — 以下为确定性事实，请以此为准]\n{}\n",
+                facts.join("\n")
+            ),
+            Language::En => format!(
+                "[Previous turn tool-call summary — treat these as ground truth]\n{}\n",
+                facts.join("\n")
+            ),
+        };
         ctx.user_input = format!("{prefix}\n{original}", original = ctx.user_input);
 
         Ok(())
@@ -68,7 +87,11 @@ impl Middleware for TurnFactMiddleware {
         for (_id, name, _args) in &ctx.tool_calls {
             // Record which tools were called — the actual results are in the
             // session history, but a compact reminder helps the LLM stay grounded.
-            facts.push(format!("- 调用了工具: {name}"));
+            let fact = match self.language {
+                Language::Zh => format!("- 调用了工具: {name}"),
+                Language::En => format!("- Called tool: {name}"),
+            };
+            facts.push(fact);
         }
 
         let mut guard = self.pending_facts.lock().unwrap();
@@ -163,5 +186,34 @@ mod tests {
         };
         mw.on_user_message(&mut ctx2).await.unwrap();
         assert_eq!(ctx2.user_input, "again");
+    }
+
+    #[tokio::test]
+    async fn test_english_language_prefix() {
+        let mw = TurnFactMiddleware::with_language(Language::En);
+
+        let mut post_ctx = PostLlmCtx {
+            session_id: SessionId::new(1),
+            full_text: String::new(),
+            is_tool_call: true,
+            tool_calls: vec![("id1".into(), "docker".into(), "{}".into())],
+            available_tools: vec![],
+            turn_count: 1,
+            total_tool_calls: 0,
+            nudge_count: 0,
+            skip_push: false,
+            follow_up_message: None,
+        };
+        mw.on_post_llm(&mut post_ctx).await.unwrap();
+
+        let mut ctx = UserMessageCtx {
+            session_id: SessionId::new(1),
+            user_input: "continue".into(),
+        };
+        mw.on_user_message(&mut ctx).await.unwrap();
+
+        assert!(ctx.user_input.contains("Previous turn tool-call summary"));
+        assert!(ctx.user_input.contains("ground truth"));
+        assert!(ctx.user_input.contains("continue"));
     }
 }

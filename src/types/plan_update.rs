@@ -40,18 +40,29 @@ impl UpdatePlanArgs {
     /// Validate the plan arguments.
     ///
     /// Rules:
-    /// - `plan` must not be empty.
+    /// - `objective` must be non-empty after trimming and at most 200 chars.
+    /// - `plan` must contain 1–50 steps.
     /// - Each `step` must be non-empty.
     /// - At most one step may be `InProgress`.
     pub fn validate(&self) -> Result<(), String> {
-        if self.objective.trim().is_empty() {
+        let objective_trimmed = self.objective.trim();
+        if objective_trimmed.is_empty() {
             return Err("objective must not be empty".to_string());
         }
-        if self.objective.len() > 200 {
-            return Err("objective must be at most 200 characters".to_string());
+        if objective_trimmed.chars().count() > 200 {
+            return Err(format!(
+                "objective must be at most 200 characters, got {}",
+                objective_trimmed.chars().count()
+            ));
         }
         if self.plan.is_empty() {
             return Err("plan must contain at least one step".to_string());
+        }
+        if self.plan.len() > 50 {
+            return Err(format!(
+                "plan must contain at most 50 steps, got {}",
+                self.plan.len()
+            ));
         }
 
         let in_progress_count = self
