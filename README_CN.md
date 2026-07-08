@@ -35,8 +35,11 @@ agent-base = "0.1.2"
 - **子 Agent** — `SubAgentTool`，支持 `Ephemeral`（默认）或 `Persistent` 会话策略
 - **上下文管理** — 可配置的 `ContextWindowManager` 控制 token 预算
 - **中间件** — `on_user_message`、`on_pre_llm`、`on_post_llm` 三个钩子用于扩展
+- **临时消息（Ephemeral Messages）** — 消息可标记为临时，LLM 本轮可见，turn 结束后自动从内存清理且不持久化
+- **Plan 检查清单** — `UpdatePlanTool` 内置工具，支持多步骤任务追踪（灵感来自 OpenAI Codex 的 `update_plan`）
 - **检查点** — 结构化 `Checkpoint` 事件支持未来的重放、调试和恢复
 - **工具执行强制** — `ToolEnforcementMiddleware` 促使 LLM 调用工具而非仅描述操作
+- **Turn 工具限制** — `TurnToolLimitMiddleware` 可按 turn 限制工具调用次数
 
 ## 快速上手
 
@@ -261,7 +264,8 @@ ops-agent / agent-works / ...          ← 业务 Agent / 增强工具集
 
 ## 致谢
 
-`ToolEngine::orchestrate()` 的统一工具编排模式借鉴了 Codex CLI 项目的设计。感谢 OpenAI Codex 团队的优秀架构。
+- `UpdatePlanTool` 的设计灵感来自 **OpenAI Codex** 的 `update_plan` 工具——将任务计划以检查清单形式展示给用户，与 LLM 的执行解耦，简单而优雅。
+- `ToolEngine::orchestrate()` 的统一工具编排模式借鉴了 Codex CLI 项目的设计。
 
 ## 稳定性
 

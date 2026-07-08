@@ -35,8 +35,11 @@ agent-base = "0.1.2"
 - **Sub-Agents** — `SubAgentTool` with `Ephemeral` (default) or `Persistent` session policies
 - **Context Management** — configurable `ContextWindowManager` for token budget control
 - **Middleware** — hooks at `on_user_message`, `on_pre_llm`, and `on_post_llm` for extensions
+- **Ephemeral Messages** — messages can be marked ephemeral; visible to LLM during the current turn, automatically cleaned from memory after turn ends, excluded from persistence
+- **Plan Checklist** — built-in `UpdatePlanTool` for multi-step task tracking (inspired by OpenAI Codex's `update_plan`)
 - **Checkpoints** — structured `Checkpoint` events enable future replay, debugging, and resume
 - **Tool Enforcement** — `ToolEnforcementMiddleware` nudges the LLM to call tools instead of just describing actions
+- **Turn Tool Limit** — `TurnToolLimitMiddleware` caps tool calls per turn
 
 ## Quick Start
 
@@ -261,7 +264,8 @@ ops-agent / agent-works / ...          ← Business agents / Enhanced toolkits
 
 ## Acknowledgments
 
-The unified tool orchestration pattern in `ToolEngine::orchestrate()` draws inspiration from the Codex CLI project. Thanks to the OpenAI Codex team for their clean architecture.
+- `UpdatePlanTool` is inspired by **OpenAI Codex**'s `update_plan` tool — the idea of displaying a task plan as a checklist, decoupled from LLM execution, is simple and elegant.
+- The unified tool orchestration pattern in `ToolEngine::orchestrate()` draws inspiration from the Codex CLI project.
 
 ## Stability
 
