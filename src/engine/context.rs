@@ -55,8 +55,8 @@ impl ContextWindowManager {
 
     pub(crate) fn message_tokens(msg: &ChatMessage) -> usize {
         match msg {
-            ChatMessage::System { content } => Self::estimate_tokens(content),
-            ChatMessage::User { content, images } => {
+            ChatMessage::System { content, .. } => Self::estimate_tokens(content),
+            ChatMessage::User { content, images, .. } => {
                 let mut tokens = Self::estimate_tokens(content);
                 for img in images {
                     match img {

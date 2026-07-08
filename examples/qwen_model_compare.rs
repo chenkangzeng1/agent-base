@@ -39,8 +39,8 @@ async fn probe_model(
     println!("{}", "=".repeat(70));
 
     let messages = vec![
-        ChatMessage::System { content: system_prompt.to_string() },
-        ChatMessage::User { content: user_input.to_string(), images: vec![] },
+        ChatMessage::system(system_prompt),
+        ChatMessage::user(user_input),
     ];
 
     let tools: Vec<serde_json::Value> = vec![serde_json::json!({

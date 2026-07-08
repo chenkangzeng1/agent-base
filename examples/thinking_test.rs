@@ -23,13 +23,8 @@ async fn run_test(
     println!("{}", "=".repeat(60));
 
     let messages = vec![
-        ChatMessage::System {
-            content: system_prompt.to_string(),
-        },
-        ChatMessage::User {
-            content: user_input.to_string(),
-            images: vec![],
-        },
+        ChatMessage::system(system_prompt),
+        ChatMessage::user(user_input),
     ];
 
     let empty_tools: &[serde_json::Value] = &[];

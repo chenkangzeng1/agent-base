@@ -20,6 +20,7 @@ use crate::types::{AgentResult, RuntimeEvent, UpdatePlanArgs};
 /// This is a **display-only** protocol, inspired by Codex's `update_plan`.
 pub struct UpdatePlanTool {
     event_bus: Mutex<Option<EventBus>>,
+    custom_description: Option<String>,
 }
 
 /// Normalize step text from LLM output for consistent UI rendering.
@@ -84,7 +85,18 @@ impl UpdatePlanTool {
     pub fn new() -> Self {
         Self {
             event_bus: Mutex::new(None),
+            custom_description: None,
         }
+    }
+
+    /// Override the tool description with a custom string.
+    ///
+    /// The default description is written for the generic agent-base framework.
+    /// Consumers like ops-agent can use this to inject domain-specific usage
+    /// guidelines (e.g. step granularity rules, when to use/not use plans).
+    pub fn with_description(mut self, desc: String) -> Self {
+        self.custom_description = Some(desc);
+        self
     }
 }
 
@@ -107,11 +119,14 @@ impl Tool for UpdatePlanTool {
     }
 
     fn definition(&self) -> Value {
+        let description = self.custom_description.as_deref().unwrap_or(
+            "Record and display a structured plan / checklist to track progress on a complex task.\n\nUse this to show the user what steps you plan to take and update step statuses as you go.\n\nRules:\n- Always include the user's goal as `objective`\n- Plan must have at least one step\n- At most one step may be in_progress at a time\n- Step descriptions should be concise and human-readable\n- Call this again whenever step statuses change\n- Skip this for simple/trivial tasks"
+        );
         json!({
             "type": "function",
             "function": {
                 "name": "update_plan",
-                "description": "Record and display a structured plan / checklist to track progress on a complex task.\n\nUse this to show the user what steps you plan to take and update step statuses as you go.\n\nRules:\n- Always include the user's goal as `objective`\n- Plan must have at least one step\n- At most one step may be in_progress at a time\n- Step descriptions should be concise and human-readable\n- Call this again whenever step statuses change\n- Skip this for simple/trivial tasks",
+                "description": description,
                 "parameters": {
                     "type": "object",
                     "properties": {

@@ -15,13 +15,8 @@ async fn test_summarize(
 
     // 模拟 ops-omni 的多轮对话：用户问 → 模型调工具 → 工具返回结果 → 模型需要总结
     let messages = vec![
-        ChatMessage::System {
-            content: "你是运维工程师助手，回复简洁直接。".to_string(),
-        },
-        ChatMessage::User {
-            content: "看下磁盘空间".to_string(),
-            images: vec![],
-        },
+        ChatMessage::system("你是运维工程师助手，回复简洁直接。"),
+        ChatMessage::user("看下磁盘空间"),
         // 模型之前的回复（调了工具）
         ChatMessage::Assistant {
             content: None,

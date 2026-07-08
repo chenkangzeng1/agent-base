@@ -149,11 +149,11 @@ impl OpenAiClient {
 
     fn chat_message_to_json(msg: &ChatMessage) -> Value {
         match msg {
-            ChatMessage::System { content } => json!({
+            ChatMessage::System { content, .. } => json!({
                 "role": "system",
                 "content": content,
             }),
-            ChatMessage::User { content, images } => {
+            ChatMessage::User { content, images, .. } => {
                 if images.is_empty() {
                     json!({
                         "role": "user",

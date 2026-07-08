@@ -7,6 +7,7 @@ mod pipeline;
 
 mod recovery;
 mod runtime;
+mod safety;
 mod session;
 mod session_store;
 mod tool_enforcement;
@@ -20,8 +21,9 @@ pub use context::ContextWindowManager;
 pub use middleware::{Middleware, PostLlmCtx, PreLlmCtx, UserMessageCtx};
 pub use pipeline::{DefaultPipeline, ToolExecutionPipeline};
 
-pub use recovery::{RetryOnError, StopOnError, ToolErrorAction, ToolErrorRecovery};
+pub use recovery::{ConsecutiveFailureRecovery, RetryOnError, StopOnError, ToolErrorAction, ToolErrorRecovery};
 pub use runtime::AgentRuntime;
+pub use safety::{SafetyConfig, TurnToolLimitMiddleware};
 pub use session::AgentSession;
 pub use session_store::{InMemorySessionStore, SessionStore};
 pub use tool_enforcement::{ToolEnforcementConfig, ToolEnforcementMiddleware};

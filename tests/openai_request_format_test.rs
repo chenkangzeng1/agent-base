@@ -14,13 +14,8 @@ async fn test_openai_client_request_body_format() {
     );
 
     let messages = vec![
-        ChatMessage::System {
-            content: "你是一个助手".to_string(),
-        },
-        ChatMessage::User {
-            content: "你好".to_string(),
-            images: vec![],
-        },
+        ChatMessage::system("你是一个助手"),
+        ChatMessage::user("你好"),
     ];
 
     let tools: Vec<Value> = vec![];

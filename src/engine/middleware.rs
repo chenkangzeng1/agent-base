@@ -30,6 +30,9 @@ pub struct PostLlmCtx {
     /// Number of tool-enforcement nudges issued in the current turn.
     /// Read from session; middleware may increment this to track nudge attempts.
     pub nudge_count: usize,
+    /// Number of tool calls already executed in the current turn.
+    /// Used by `TurnToolLimitMiddleware` to enforce per-turn tool call limits.
+    pub turn_tool_calls: usize,
     pub skip_push: bool,
     pub follow_up_message: Option<String>,
 }
@@ -67,6 +70,7 @@ mod tests {
             turn_count: 0,
             total_tool_calls: 0,
             nudge_count: 0,
+            turn_tool_calls: 0,
             skip_push: false,
             follow_up_message: None,
         };
@@ -88,6 +92,7 @@ mod tests {
             turn_count: 1,
             total_tool_calls: 0,
             nudge_count: 0,
+            turn_tool_calls: 0,
             skip_push: true,
             follow_up_message: Some("Please call tools now.".to_string()),
         };
@@ -108,6 +113,7 @@ mod tests {
             turn_count: 5,
             total_tool_calls: 3,
             nudge_count: 0,
+            turn_tool_calls: 2,
             skip_push: true,
             follow_up_message: Some("nudge".to_string()),
         };
@@ -115,6 +121,7 @@ mod tests {
         assert_eq!(cloned.available_tools, vec!["add", "subtract"]);
         assert_eq!(cloned.turn_count, 5);
         assert_eq!(cloned.total_tool_calls, 3);
+        assert_eq!(cloned.turn_tool_calls, 2);
         assert!(cloned.skip_push);
         assert_eq!(cloned.follow_up_message, Some("nudge".to_string()));
     }

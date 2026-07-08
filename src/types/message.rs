@@ -33,11 +33,17 @@ pub struct Message {
 pub enum ChatMessage {
     System {
         content: String,
+        /// 临时消息：turn 结束后从内存清理，持久化时跳过。
+        #[serde(default, skip_serializing)]
+        ephemeral: bool,
     },
     User {
         content: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         images: Vec<ImageAttachment>,
+        /// 临时消息：turn 结束后从内存清理，持久化时跳过。
+        #[serde(default, skip_serializing)]
+        ephemeral: bool,
     },
     Assistant {
         content: Option<String>,
@@ -84,6 +90,15 @@ impl ChatMessage {
     pub fn system(content: impl Into<String>) -> Self {
         Self::System {
             content: content.into(),
+            ephemeral: false,
+        }
+    }
+
+    /// 创建临时 system 消息：turn 结束后自动清理，不持久化。
+    pub fn system_ephemeral(content: impl Into<String>) -> Self {
+        Self::System {
+            content: content.into(),
+            ephemeral: true,
         }
     }
 
@@ -91,6 +106,16 @@ impl ChatMessage {
         Self::User {
             content: content.into(),
             images: Vec::new(),
+            ephemeral: false,
+        }
+    }
+
+    /// 创建临时 user 消息：turn 结束后自动清理，不持久化。
+    pub fn user_ephemeral(content: impl Into<String>) -> Self {
+        Self::User {
+            content: content.into(),
+            images: Vec::new(),
+            ephemeral: true,
         }
     }
 
@@ -98,6 +123,16 @@ impl ChatMessage {
         Self::User {
             content: content.into(),
             images,
+            ephemeral: false,
+        }
+    }
+
+    /// 是否为临时消息（turn 结束后自动清理，不持久化）。
+    pub fn is_ephemeral(&self) -> bool {
+        match self {
+            Self::System { ephemeral, .. } => *ephemeral,
+            Self::User { ephemeral, .. } => *ephemeral,
+            _ => false,
         }
     }
 
@@ -143,7 +178,7 @@ impl ChatMessage {
 impl From<&ChatMessage> for Message {
     fn from(cm: &ChatMessage) -> Self {
         match cm {
-            ChatMessage::System { content } => Message {
+            ChatMessage::System { content, .. } => Message {
                 role: MessageRole::System,
                 content: content.clone(),
             },

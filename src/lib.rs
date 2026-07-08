@@ -66,6 +66,7 @@ pub use engine::{
     ApprovalDecision,
     ApprovalHandler,
     ApprovalRequest,
+    ConsecutiveFailureRecovery,
     DenyAllApprovalHandler,
     Middleware,
     PostLlmCtx,
@@ -74,12 +75,14 @@ pub use engine::{
     ContextWindowManager,
     RiskLevel,
     RetryOnError,
+    SafetyConfig,
     StopOnError,
     ToolEnforcementConfig,
     ToolEnforcementMiddleware,
     ToolErrorAction,
     ToolErrorRecovery,
     TurnFactMiddleware,
+    TurnToolLimitMiddleware,
 };
 
 // ---------------------------------------------------------------------------

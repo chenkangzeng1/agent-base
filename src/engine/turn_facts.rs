@@ -134,6 +134,7 @@ mod tests {
             turn_count: 1,
             total_tool_calls: 0,
             nudge_count: 0,
+            turn_tool_calls: 0,
             skip_push: false,
             follow_up_message: None,
         };
@@ -166,6 +167,7 @@ mod tests {
             turn_count: 1,
             total_tool_calls: 0,
             nudge_count: 0,
+            turn_tool_calls: 0,
             skip_push: false,
             follow_up_message: None,
         };
@@ -201,6 +203,7 @@ mod tests {
             turn_count: 1,
             total_tool_calls: 0,
             nudge_count: 0,
+            turn_tool_calls: 0,
             skip_push: false,
             follow_up_message: None,
         };

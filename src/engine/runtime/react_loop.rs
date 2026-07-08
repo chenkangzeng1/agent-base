@@ -5,7 +5,7 @@ use crate::engine::recovery::ToolErrorAction;
 use crate::engine::runtime::event_bus::EventBus;
 use crate::engine::runtime::llm_engine::LlmTurnResult;
 use crate::types::{
-    AgentError, AgentResult, CheckpointData, CheckpointStep, 
+    AgentError, AgentResult, ChatMessage, CheckpointData, CheckpointStep,
     MessageRole, RunOutcome, RuntimeEvent, SessionId
 };
 
@@ -62,9 +62,10 @@ impl RuntimeCore {
         // Apply user message middleware (same as run_turn)
         let user_input_owned = self.apply_user_message_mw(&session_id, user_input_owned).await?;
 
-        // Reset nudge_count for the new turn
+        // Reset nudge_count and turn_tool_calls for the new turn
         self.with_session_mut(&session_id, |session| {
             session.nudge_count = 0;
+            session.turn_tool_calls = 0;
         }).await?;
 
         let result = self
@@ -90,6 +91,13 @@ impl RuntimeCore {
                 self.event_bus.emit(RuntimeEvent::RunFinished { session_id: session_id.clone() });
                 EventBus::drain_async_events(&mut event_rx, &mut on_event)?;
             }
+        }
+
+        // Turn 结束：清理临时消息（包括错误路径，避免 ephemeral 残留到持久化）
+        if let Err(e) = self.with_session_mut(&session_id, |session| {
+            session.remove_ephemeral_messages();
+        }).await {
+            tracing::warn!(error = %e, "failed to clean up ephemeral messages");
         }
 
         let (outcome, _turn_count) = result?;
@@ -166,6 +174,13 @@ impl RuntimeCore {
             _ => {}
         }
 
+        // Turn 结束：清理临时消息（包括错误路径）
+        if let Err(e) = self.with_session_mut(&session_id, |session| {
+            session.remove_ephemeral_messages();
+        }).await {
+            tracing::warn!(error = %e, "failed to clean up ephemeral messages");
+        }
+
         let (outcome, turn_count) = result?;
         tracing::info!(session_id = session_id.id, turn_count, "agent turn completed");
         Ok(outcome)
@@ -206,7 +221,7 @@ impl RuntimeCore {
         let tool_definitions = self.tool_engine.definitions().await;
 
         if let CheckpointStep::BeforeToolCalls { tool_calls } = checkpoint.step {
-            match self.handle_tool_calls(&session_id, &tool_calls, &mut event_rx, &mut on_event).await {
+            match self.handle_tool_calls(&session_id, &tool_calls, &mut event_rx, &mut on_event, String::new()).await {
                 Ok(ToolCallResult::Continue) => {}
                 Ok(ToolCallResult::Break) => {
                     self.event_bus.emit(RuntimeEvent::RunFinished { session_id: session_id.clone() });
@@ -244,6 +259,13 @@ impl RuntimeCore {
                 on_event(RuntimeEvent::RunCancelled { session_id: session_id.clone() })?;
             }
             _ => {}
+        }
+
+        // Turn 结束：清理临时消息（包括错误路径）
+        if let Err(e) = self.with_session_mut(&session_id, |session| {
+            session.remove_ephemeral_messages();
+        }).await {
+            tracing::warn!(error = %e, "failed to clean up ephemeral messages");
         }
 
         let (outcome, _final_turn_count) = result?;
@@ -294,6 +316,7 @@ impl RuntimeCore {
         let session = self.session_manager.session_or_err(session_id).await?;
         let total_tool_calls = session.total_tool_calls;
         let nudge_count = session.nudge_count;
+        let turn_tool_calls = session.turn_tool_calls;
         drop(session);
         let mut ctx = PostLlmCtx {
             session_id: session_id.clone(),
@@ -304,6 +327,7 @@ impl RuntimeCore {
             turn_count,
             total_tool_calls,
             nudge_count,
+            turn_tool_calls,
             skip_push: false,
             follow_up_message: None,
         };
@@ -366,6 +390,7 @@ impl RuntimeCore {
                 };
                 self.with_session_mut(session_id, |session| {
                     session.close_dangling_tool_calls(&error_summary);
+                    session.remove_ephemeral_messages();
                 }).await?;
                 self.event_bus.emit(RuntimeEvent::RunFinished { session_id: session_id.clone() });
                 EventBus::drain_async_events(event_rx, on_event)?;
@@ -502,7 +527,7 @@ impl RuntimeCore {
             tracing::info!(session_id = session_id.id, turn = turn_count, is_err = result.is_err(), "LLM stream processed");
 
             match result {
-                Ok(LlmTurnResult { full_text, reasoning_text: _, is_tool_call, tool_calls, usage: _ }) => {
+                Ok(LlmTurnResult { full_text, reasoning_text, is_tool_call, tool_calls, usage: _ }) => {
                     tracing::info!(
                         session_id = session_id.id,
                         turn = turn_count,
@@ -534,8 +559,18 @@ impl RuntimeCore {
                         .await?;
 
                     if !result.skip_push && !result.full_text.is_empty() {
+                        // Preserve reasoning so the LLM can see its own prior thinking
+                        // in subsequent turns, avoiding "amnesia" re-derivation.
+                        let reasoning = reasoning_text.clone();
                         self.with_session_mut(session_id, |session| {
-                            session.push_message(MessageRole::Assistant, &result.full_text);
+                            if !reasoning.is_empty() {
+                                session.push_assistant_with_reasoning(
+                                    &result.full_text,
+                                    &reasoning,
+                                );
+                            } else {
+                                session.push_message(MessageRole::Assistant, &result.full_text);
+                            }
                         }).await?;
                     }
 
@@ -565,12 +600,13 @@ impl RuntimeCore {
                             },
                         });
 
-                        match self.handle_tool_calls(session_id, &result.tool_calls, event_rx, on_event).await {
+                        match self.handle_tool_calls(session_id, &result.tool_calls, event_rx, on_event, reasoning_text).await {
                             Ok(ToolCallResult::Continue) => {
                                 tracing::info!(session_id = session_id.id, turn = turn_count, "tool calls done, continuing loop");
                                 let n = result.tool_calls.len();
                                 self.with_session_mut(session_id, |session| {
                                     session.total_tool_calls += n;
+                                    session.turn_tool_calls += n;
                                 }).await?;
                                 self.event_bus.emit(RuntimeEvent::Checkpoint {
                                     session_id: session_id.clone(),
@@ -591,6 +627,7 @@ impl RuntimeCore {
                                 let n = result.tool_calls.len();
                                 self.with_session_mut(session_id, |session| {
                                     session.total_tool_calls += n;
+                                    session.turn_tool_calls += n;
                                 }).await?;
                                 self.event_bus.emit(RuntimeEvent::RunFinished { session_id: session_id.clone() });
                                 EventBus::drain_async_events(event_rx, on_event)?;
@@ -632,6 +669,7 @@ impl RuntimeCore {
         tool_calls: &[(String, String, String)],
         event_rx: &mut broadcast::Receiver<RuntimeEvent>,
         on_event: &mut F,
+        reasoning: String,
     ) -> AgentResult<ToolCallResult>
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
@@ -661,7 +699,8 @@ impl RuntimeCore {
         {
             let tc: Vec<(String, String, String)> = tool_calls.to_vec();
             self.with_session_mut(session_id, |session| {
-                session.push_assistant_tool_calls(&tc);
+                let r = if reasoning.is_empty() { None } else { Some(reasoning.clone()) };
+                session.push_assistant_tool_calls(&tc, r);
             }).await?;
         }
 

@@ -47,10 +47,10 @@ impl AnthropicClient {
 
         for msg in messages {
             match msg {
-                ChatMessage::System { content } => {
+                ChatMessage::System { content, .. } => {
                     system_prompt = Some(content.clone());
                 }
-                ChatMessage::User { content, images } => {
+                ChatMessage::User { content, images, .. } => {
                     let mut content_parts: Vec<Value> = Vec::new();
                     content_parts.push(json!({"type": "text", "text": content}));
                     for img in images {

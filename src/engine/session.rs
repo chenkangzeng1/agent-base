@@ -20,6 +20,10 @@ pub struct AgentSession {
     /// Reset to 0 at the start of each turn (when a new user message arrives).
     /// Used by `ToolEnforcementMiddleware` to cap nudge attempts per turn.
     pub nudge_count: usize,
+    /// Number of tool calls already executed in the current turn.
+    /// Reset to 0 at the start of each turn (when a new user message arrives).
+    /// Used by `TurnToolLimitMiddleware` to enforce per-turn tool call limits.
+    pub turn_tool_calls: usize,
 }
 
 impl AgentSession {
@@ -30,6 +34,7 @@ impl AgentSession {
             always_allowed_actions: HashSet::new(),
             total_tool_calls: 0,
             nudge_count: 0,
+            turn_tool_calls: 0,
         }
     }
 
@@ -61,6 +66,11 @@ impl AgentSession {
         &self.chat_messages
     }
 
+    /// 可变引用，仅用于需要直接操作消息的高级场景。
+    pub fn chat_messages_mut(&mut self) -> &mut Vec<ChatMessage> {
+        &mut self.chat_messages
+    }
+
     pub fn is_action_allowed(&self, action_key: &str) -> bool {
         self.always_allowed_actions.contains(action_key)
     }
@@ -78,6 +88,18 @@ impl AgentSession {
             MessageRole::Tool => ChatMessage::tool(String::new(), content),
         };
         self.chat_messages.push(chat_msg);
+    }
+
+    /// Push an assistant message with reasoning/thinking content preserved.
+    /// This allows the LLM to see its own prior reasoning in subsequent turns,
+    /// preventing it from re-deriving the same conclusions every turn.
+    pub fn push_assistant_with_reasoning(
+        &mut self,
+        content: impl Into<String>,
+        reasoning: impl Into<String>,
+    ) {
+        self.chat_messages
+            .push(ChatMessage::assistant_with_reasoning(content, reasoning));
     }
 
     pub fn push_user_message_with_images(
@@ -102,7 +124,11 @@ impl AgentSession {
         ));
     }
 
-    pub fn push_assistant_tool_calls(&mut self, tool_calls: &[(String, String, String)]) {
+    pub fn push_assistant_tool_calls(
+        &mut self,
+        tool_calls: &[(String, String, String)],
+        reasoning: Option<String>,
+    ) {
         let calls: Vec<ToolCallMessage> = tool_calls
             .iter()
             .map(|(id, name, args)| ToolCallMessage {
@@ -113,7 +139,7 @@ impl AgentSession {
             .collect();
         self.chat_messages.push(ChatMessage::Assistant {
             content: None,
-            reasoning_content: None,
+            reasoning_content: reasoning,
             tool_calls: Some(calls),
         });
     }
@@ -121,6 +147,18 @@ impl AgentSession {
     pub fn push_tool_result(&mut self, tool_call_id: &str, content: impl Into<String>) {
         self.chat_messages
             .push(ChatMessage::tool(tool_call_id, content));
+    }
+
+    /// 移除所有临时消息（ephemeral=true）。
+    ///
+    /// 在 turn 结束时调用，确保注入的临时内容不残留到下一轮。
+    pub fn remove_ephemeral_messages(&mut self) {
+        let before = self.chat_messages.len();
+        self.chat_messages.retain(|m| !m.is_ephemeral());
+        let removed = before - self.chat_messages.len();
+        if removed > 0 {
+            tracing::debug!(removed, remaining = self.chat_messages.len(), "ephemeral messages cleaned up");
+        }
     }
 
     /// Count the number of conversation turns.
@@ -313,7 +351,7 @@ mod tests {
     fn test_turn_count_with_tool_calls() {
         let mut s = make_session();
         s.push_message(MessageRole::User, "do something");
-        s.push_assistant_tool_calls(&[("id1".into(), "tool".into(), "{}".into())]);
+        s.push_assistant_tool_calls(&[("id1".into(), "tool".into(), "{}".into())], None);
         s.push_tool_result("id1", "result");
         s.push_message(MessageRole::Assistant, "done");
         // One user turn: User -> Assistant(tool_calls) -> Tool -> Assistant(text)
@@ -357,7 +395,7 @@ mod tests {
         let mut s = make_session();
         // Turn 1 with tool call
         s.push_message(MessageRole::User, "u1");
-        s.push_assistant_tool_calls(&[("id1".into(), "t".into(), "{}".into())]);
+        s.push_assistant_tool_calls(&[("id1".into(), "t".into(), "{}".into())], None);
         s.push_tool_result("id1", "r1");
         s.push_message(MessageRole::Assistant, "a1");
         // Turn 2
@@ -389,7 +427,7 @@ mod tests {
     fn test_pop_last_message_tool_calls_only() {
         let mut s = make_session();
         s.push_message(MessageRole::User, "do it");
-        s.push_assistant_tool_calls(&[("id1".into(), "t".into(), "{}".into())]);
+        s.push_assistant_tool_calls(&[("id1".into(), "t".into(), "{}".into())], None);
         assert_eq!(s.chat_messages().len(), 2);
         assert_eq!(s.simple_messages().len(), 1); // only User in simple_messages (tool_calls-only filtered)
         s.pop_last_message();
