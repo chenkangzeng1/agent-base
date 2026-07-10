@@ -56,7 +56,7 @@ impl AgentRuntime {
         self.runner.session_manager.with_session_mut(session_id, f).await
     }
 
-    pub(crate) fn emit_event(&self, event: RuntimeEvent) {
+    pub fn emit_event(&self, event: RuntimeEvent) {
         self.runner.event_bus.emit(event);
     }
 

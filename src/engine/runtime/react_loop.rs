@@ -130,9 +130,10 @@ impl RuntimeCore {
         let user_input_owned = self.apply_user_message_mw(&session_id, user_input.to_string()).await?;
         tracing::debug!(session_id = session_id.id, "run_turn: user message middleware applied");
 
-        // Reset nudge_count for the new turn
+        // Reset nudge_count and turn_tool_calls for the new turn
         self.with_session_mut(&session_id, |session| {
             session.nudge_count = 0;
+            session.turn_tool_calls = 0;
         }).await?;
 
         tracing::debug!(session_id = session_id.id, "run_turn: pushing user message to session");
