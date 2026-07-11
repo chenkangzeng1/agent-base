@@ -262,10 +262,7 @@ impl ToolEngine {
             crate::types::ApprovalDecision::Deny => {
                 tracing::warn!(session_id = session_id.id, tool = tool_name, decision = "Deny", "approval denied");
                 let denial_summary = format!("[Action Denied]: tool {} rejected by approval", tool_name);
-                ctx.session_manager.with_session_mut(session_id, |session| {
-                    session.push_assistant_tool_call("", tool_name, tool_args_json);
-                    session.push_tool_result("", denial_summary.clone());
-                }).await?;
+                // 不记录到 session 历史 — 用户拒绝是 UI 层交互，不需要 LLM 看到
                 self.event_bus.emit(RuntimeEvent::ToolCallFinished {
                     session_id: session_id.clone(),
                     tool_name: tool_name.to_string(),
