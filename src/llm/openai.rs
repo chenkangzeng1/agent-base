@@ -61,6 +61,18 @@ impl OpenAiClient {
         }
     }
 
+    /// 使用不同模型的变体。共享底层 HTTP 连接池，零额外成本。
+    ///
+    /// 类似 Claude Code 的 opus/sonnet/haiku — 同一 client，不同 model。
+    pub fn with_model(&self, model: impl Into<String>) -> Self {
+        Self {
+            api_key: self.api_key.clone(),
+            model: model.into(),
+            base_url: self.base_url.clone(),
+            client: self.client.clone(), // reqwest::Client 内部是 Arc
+        }
+    }
+
     fn is_qwen_model(&self) -> bool {
         self.model.starts_with("qwen")
     }
@@ -276,6 +288,7 @@ impl LlmClient for OpenAiClient {
             }
         }
 
+        tracing::info!(model = %self.model, msg_count = messages.len(), "llm chat request");
         tracing::debug!(request_body = %serde_json::to_string_pretty(&request_body).unwrap_or_default(), "llm request body");
 
         let response = self
