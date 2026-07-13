@@ -20,6 +20,7 @@ use crate::types::{AgentResult, RuntimeEvent, UpdatePlanArgs};
 /// This is a **display-only** protocol, inspired by Codex's `update_plan`.
 pub struct UpdatePlanTool {
     event_bus: Mutex<Option<EventBus>>,
+    last_objective: Mutex<Option<String>>,
     custom_description: Option<String>,
 }
 
@@ -85,6 +86,7 @@ impl UpdatePlanTool {
     pub fn new() -> Self {
         Self {
             event_bus: Mutex::new(None),
+            last_objective: Mutex::new(None),
             custom_description: None,
         }
     }
@@ -147,7 +149,7 @@ impl Tool for UpdatePlanTool {
                     "properties": {
                         "objective": {
                             "type": "string",
-                            "description": "One-sentence summary of the user's goal. Example: \"安装 Casdoor 身份认证系统\". Must reflect the user's original intent, not just the current sub-task."
+                            "description": "One-sentence summary of the user's goal. Example: \"安装 Casdoor 身份认证系统\". Must reflect the user's original intent, not just the current sub-task. Optional on subsequent calls — the tool remembers the last objective."
                         },
                         "explanation": {
                             "type": "string",
@@ -174,7 +176,7 @@ impl Tool for UpdatePlanTool {
                             }
                         }
                     },
-                    "required": ["objective", "plan"],
+                    "required": ["plan"],
                     "additionalProperties": false
                 }
             }
@@ -199,6 +201,21 @@ impl Tool for UpdatePlanTool {
                 raw: validation_err,
             });
         }
+
+        // Resolve objective: use provided value, or fall back to last known
+        let objective = match plan_args.objective {
+            Some(ref obj) => {
+                *self.last_objective.lock().unwrap() = Some(obj.clone());
+                obj.clone()
+            }
+            None => {
+                self.last_objective
+                    .lock()
+                    .unwrap()
+                    .clone()
+                    .unwrap_or_else(|| "(no objective specified)".to_string())
+            }
+        };
 
         // Normalize step text for consistent UI rendering
         let normalized_plan: Vec<crate::types::PlanItem> = plan_args
@@ -227,7 +244,7 @@ impl Tool for UpdatePlanTool {
 
         let mut summary = format!(
             "📋 {}: {}/{} steps completed",
-            plan_args.objective, completed, total
+            objective, completed, total
         );
         if in_progress > 0 {
             let current = normalized_plan.iter().find(|item| {
@@ -238,7 +255,7 @@ impl Tool for UpdatePlanTool {
             }
         }
         if total == completed {
-            summary = format!("📋 {} — all steps completed!", plan_args.objective);
+            summary = format!("📋 {} — all steps completed!", objective);
         }
 
         // Broadcast PlanUpdated event (normalized_plan is moved here, not cloned)
@@ -247,7 +264,7 @@ impl Tool for UpdatePlanTool {
             if let Some(ref event_bus) = *guard {
                 event_bus.emit(RuntimeEvent::PlanUpdated {
                     session_id: _ctx.session_id.clone(),
-                    objective: plan_args.objective.clone(),
+                    objective: objective.clone(),
                     explanation: plan_args.explanation.clone(),
                     plan: normalized_plan,
                 });
@@ -270,9 +287,9 @@ mod tests {
 
     #[test]
     fn test_update_plan_args_validation() {
-        // Valid plan
+        // Valid plan (with objective)
         let args = UpdatePlanArgs {
-            objective: "安装 Docker".into(),
+            objective: Some("安装 Docker".into()),
             explanation: None,
             plan: vec![
                 PlanItem { step: "Step 1".into(), status: PlanStepStatus::Completed },
@@ -282,9 +299,19 @@ mod tests {
         };
         assert!(args.validate().is_ok());
 
-        // Empty objective
+        // Valid plan (no objective — should be allowed)
         let args = UpdatePlanArgs {
-            objective: "".into(),
+            objective: None,
+            explanation: None,
+            plan: vec![
+                PlanItem { step: "Step 1".into(), status: PlanStepStatus::Pending },
+            ],
+        };
+        assert!(args.validate().is_ok());
+
+        // Empty objective (provided but blank — should fail)
+        let args = UpdatePlanArgs {
+            objective: Some("".into()),
             explanation: None,
             plan: vec![
                 PlanItem { step: "Step 1".into(), status: PlanStepStatus::Pending },
@@ -294,7 +321,7 @@ mod tests {
 
         // Empty plan
         let args = UpdatePlanArgs {
-            objective: "安装 Docker".into(),
+            objective: Some("安装 Docker".into()),
             explanation: None,
             plan: vec![],
         };
@@ -302,7 +329,7 @@ mod tests {
 
         // Multiple in_progress
         let args = UpdatePlanArgs {
-            objective: "安装 Docker".into(),
+            objective: Some("安装 Docker".into()),
             explanation: None,
             plan: vec![
                 PlanItem { step: "Step 1".into(), status: PlanStepStatus::InProgress },
@@ -313,7 +340,7 @@ mod tests {
 
         // Empty step text
         let args = UpdatePlanArgs {
-            objective: "安装 Docker".into(),
+            objective: Some("安装 Docker".into()),
             explanation: None,
             plan: vec![
                 PlanItem { step: "  ".into(), status: PlanStepStatus::Pending },

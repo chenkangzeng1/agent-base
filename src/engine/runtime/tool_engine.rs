@@ -233,7 +233,12 @@ impl ToolEngine {
 
         let decision = match self.approval_handler.as_ref() {
             Some(handler) => {
-                let timeout = std::time::Duration::from_secs(300);
+                let timeout = std::time::Duration::from_secs(
+                    std::env::var("APPROVAL_TIMEOUT_SECS")
+                        .ok()
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(300),
+                );
                 let result = tokio::time::timeout(
                     timeout,
                     handler.approve(request.clone(), ctx.cancel_token.clone()),

@@ -26,9 +26,10 @@ pub struct PlanItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdatePlanArgs {
     /// A one-sentence summary of the user's goal.
-    /// Required — forces the LLM to articulate and stay focused on the objective.
+    /// Optional on subsequent calls — the tool remembers the last objective.
     /// Example: "安装 Casdoor 身份认证系统"
-    pub objective: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub objective: Option<String>,
     /// Optional explanation of why the plan changed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub explanation: Option<String>,
@@ -40,20 +41,22 @@ impl UpdatePlanArgs {
     /// Validate the plan arguments.
     ///
     /// Rules:
-    /// - `objective` must be non-empty after trimming and at most 200 chars.
+    /// - `objective`, if provided, must be non-empty after trimming and at most 200 chars.
     /// - `plan` must contain 1–50 steps.
     /// - Each `step` must be non-empty.
     /// - At most one step may be `InProgress`.
     pub fn validate(&self) -> Result<(), String> {
-        let objective_trimmed = self.objective.trim();
-        if objective_trimmed.is_empty() {
-            return Err("objective must not be empty".to_string());
-        }
-        if objective_trimmed.chars().count() > 200 {
-            return Err(format!(
-                "objective must be at most 200 characters, got {}",
-                objective_trimmed.chars().count()
-            ));
+        if let Some(ref objective) = self.objective {
+            let objective_trimmed = objective.trim();
+            if objective_trimmed.is_empty() {
+                return Err("objective must not be empty when provided".to_string());
+            }
+            if objective_trimmed.chars().count() > 200 {
+                return Err(format!(
+                    "objective must be at most 200 characters, got {}",
+                    objective_trimmed.chars().count()
+                ));
+            }
         }
         if self.plan.is_empty() {
             return Err("plan must contain at least one step".to_string());
@@ -85,5 +88,30 @@ impl UpdatePlanArgs {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_optional_objective_deserialization() {
+        // objective present — should parse fine
+        let json = r#"{"objective": "Install Docker", "plan": [{"step": "Step 1", "status": "pending"}]}"#;
+        let args: UpdatePlanArgs = serde_json::from_str(json).unwrap();
+        assert_eq!(args.objective.as_deref(), Some("Install Docker"));
+        assert!(args.validate().is_ok());
+
+        // objective absent — should parse with None
+        let json = r#"{"plan": [{"step": "Step 1", "status": "pending"}]}"#;
+        let args: UpdatePlanArgs = serde_json::from_str(json).unwrap();
+        assert!(args.objective.is_none());
+        assert!(args.validate().is_ok());
+
+        // objective present but empty — should fail validation
+        let json = r#"{"objective": "  ", "plan": [{"step": "Step 1", "status": "pending"}]}"#;
+        let args: UpdatePlanArgs = serde_json::from_str(json).unwrap();
+        assert!(args.validate().is_err());
     }
 }
