@@ -23,7 +23,7 @@ pub use pipeline::{DefaultPipeline, ToolExecutionPipeline};
 
 pub use recovery::{ConsecutiveFailureRecovery, RetryOnError, StopOnError, ToolErrorAction, ToolErrorRecovery};
 pub use runtime::AgentRuntime;
-pub use safety::{SafetyConfig, TurnToolLimitMiddleware};
+pub use safety::TurnToolLimitMiddleware;
 pub use session::AgentSession;
 pub use session_store::{InMemorySessionStore, SessionStore};
 pub use tool_enforcement::{ToolEnforcementConfig, ToolEnforcementMiddleware};

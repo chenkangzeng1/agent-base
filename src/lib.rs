@@ -2,7 +2,6 @@ pub mod engine;
 pub mod llm;
 pub mod tool;
 pub mod types;
-pub mod config_manager;
 
 // ---------------------------------------------------------------------------
 // Prelude — most commonly used types for `use agent_base::prelude::*`
@@ -23,7 +22,6 @@ pub mod prelude {
         AgentConfig, AgentError, AgentResult, ChatMessage, Language,
         Message, MessageRole, RunOutcome, RuntimeEvent, SessionId, UserEvent,
     };
-    pub use crate::config_manager::AppConfig;
 }
 
 // ---------------------------------------------------------------------------
@@ -75,7 +73,6 @@ pub use engine::{
     ContextWindowManager,
     RiskLevel,
     RetryOnError,
-    SafetyConfig,
     StopOnError,
     ToolEnforcementConfig,
     ToolEnforcementMiddleware,
@@ -101,11 +98,6 @@ pub use tool::{
     TypedTool,
     UpdatePlanTool,
 };
-
-// ---------------------------------------------------------------------------
-// Config Manager
-// ---------------------------------------------------------------------------
-pub use config_manager::{AppConfig, ConfigManager, ConfigSource, ConfigError};
 
 // ---------------------------------------------------------------------------
 // Events
@@ -135,6 +127,7 @@ pub use types::{
     ResponseFormat,
     RetryConfig,
     RunOutcome,
+    SafetyConfig,
     SessionConfig,
     ToolCallMessage,
     ToolResultData,

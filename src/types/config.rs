@@ -99,6 +99,31 @@ impl ResponseFormat {
 
 use crate::llm::ReasoningConfig;
 
+/// Safety configuration for agent runtime guardrails.
+///
+/// These limits are hard constraints enforced by code, not prompt —
+/// the model cannot bypass them regardless of its capability.
+#[derive(Clone, Debug)]
+pub struct SafetyConfig {
+    /// Maximum number of tool calls allowed per turn.
+    /// When exceeded, tool calls are discarded and the LLM is forced to summarize.
+    /// Default: 128.
+    pub max_tool_calls_per_turn: usize,
+
+    /// Maximum consecutive failures for the same tool before stopping retries.
+    /// Default: 3.
+    pub max_consecutive_failures: usize,
+}
+
+impl Default for SafetyConfig {
+    fn default() -> Self {
+        Self {
+            max_tool_calls_per_turn: 128,
+            max_consecutive_failures: 3,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct AgentConfig {
     pub system_prompt: Option<String>,
@@ -125,6 +150,7 @@ pub struct AgentConfig {
     pub llm: LlmConfig,
     pub tool: ToolConfig,
     pub session: SessionConfig,
+    pub safety: SafetyConfig,
 }
 
 impl Default for AgentConfig {
@@ -138,6 +164,7 @@ impl Default for AgentConfig {
             llm: LlmConfig::default(),
             tool: ToolConfig::default(),
             session: SessionConfig::default(),
+            safety: SafetyConfig::default(),
         }
     }
 }
@@ -170,6 +197,12 @@ impl AgentConfig {
                     "tool.tool_timeout_ms must be > 0".to_string(),
                 ));
             }
+        }
+
+        if self.safety.max_tool_calls_per_turn == 0 {
+            return Err(AgentError::config_error(
+                "safety.max_tool_calls_per_turn must be > 0".to_string(),
+            ));
         }
 
         Ok(())

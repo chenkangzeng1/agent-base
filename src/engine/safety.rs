@@ -1,32 +1,7 @@
 use async_trait::async_trait;
 
 use crate::engine::middleware::{Middleware, PostLlmCtx};
-use crate::types::AgentResult;
-
-/// Safety configuration for agent runtime guardrails.
-///
-/// These limits are hard constraints enforced by code, not prompt —
-/// the model cannot bypass them regardless of its capability.
-#[derive(Clone, Debug)]
-pub struct SafetyConfig {
-    /// Maximum number of tool calls allowed per turn.
-    /// When exceeded, tool calls are discarded and the LLM is forced to summarize.
-    /// Default: 8 (qwen-plus normal is 5-7, leaves headroom).
-    pub max_tool_calls_per_turn: usize,
-
-    /// Maximum consecutive failures for the same tool before stopping retries.
-    /// Default: 3.
-    pub max_consecutive_failures: usize,
-}
-
-impl Default for SafetyConfig {
-    fn default() -> Self {
-        Self {
-            max_tool_calls_per_turn: 8,
-            max_consecutive_failures: 3,
-        }
-    }
-}
+use crate::types::{AgentResult, SafetyConfig};
 
 /// Middleware that enforces a hard limit on tool calls per turn.
 ///

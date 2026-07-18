@@ -10,7 +10,7 @@ mod session;
 
 pub use approval::{ApprovalDecision, ApprovalRequest, RiskLevel};
 pub use checkpoint::{CheckpointData, CheckpointStep, ToolResultData};
-pub use config::{AgentConfig, Language, ResponseFormat, RetryConfig, SessionConfig};
+pub use config::{AgentConfig, Language, ResponseFormat, RetryConfig, SafetyConfig, SessionConfig};
 pub use error::{AgentError, AgentResult, ErrorKind};
 
 pub use events::{RuntimeEvent, UserEvent};
