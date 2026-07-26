@@ -3,15 +3,20 @@ name = "phi-agent"
 version = "0.1.0"
 edition = "2024"
 description = "phi-agent — General-purpose AI Agent framework (builder factory, renderer, config, session management)"
+license = "MIT"
+repository = "https://github.com/chenkangzeng1/phi-agent"
+readme = "README.md"
+keywords = ["agent", "ai", "llm", "framework", "cli"]
+categories = ["development-tools", "command-line-utilities", "asynchronous"]
 
 [[bin]]
 name = "phi"
 path = "src/bin/forge/main.rs"
 
 [dependencies]
-agent-base = { path = "../agent-base" }
-agent-works = { path = "../agent-works" }
-phi-tools = { path = "../phi-tools" }
+agent-base = { version = "0.1.2", path = "../agent-base" }
+agent-works = { version = "0.1.1", path = "../agent-works" }
+phi-tools = { version = "0.1.0", path = "../phi-tools" }
 anyhow = "1"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
@@ -27,7 +32,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
 rustyline = "15"
-log-core = { path = "../log-core" }
+log-core = { version = "0.1.0", path = "../log-core" }
 
 [dev-dependencies]
 tempfile = "3"
