@@ -14,8 +14,8 @@ name = "phi"
 path = "src/bin/forge/main.rs"
 
 [dependencies]
-agent-base = { version = "0.1.2", path = "../agent-base" }
-agent-works = { version = "0.1.1", path = "../agent-works" }
+agent-base = { version = "0.1.3", path = "../agent-base" }
+agent-works = { version = "0.1.2", path = "../agent-works" }
 phi-tools = { version = "0.1.0", path = "../phi-tools" }
 anyhow = "1"
 async-trait = "0.1"
