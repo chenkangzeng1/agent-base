@@ -1,0 +1,19 @@
+# Rust build artifacts
+/target/
+
+# Environment files with secrets
+.env
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Session data (local runtime state)
+sessions/
