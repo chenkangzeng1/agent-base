@@ -43,9 +43,8 @@ jobs:
 
       - name: Prepare deploy directory
         run: |
-          mkdir -p deploy/en deploy/zh
-          cp book/index.html deploy/
-          cp -r book/en/html/* deploy/en/
+          mkdir -p deploy/zh
+          cp -r book/en/html/* deploy/
           cp -r book/zh/html/* deploy/zh/
 
       - name: Setup Pages

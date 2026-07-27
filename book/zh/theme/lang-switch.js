@@ -1,13 +1,17 @@
 (function () {
   var path = window.location.pathname;
-  var isEn = path.indexOf('/en/') !== -1;
-  var isZh = path.indexOf('/zh/') !== -1;
+  var isZh = path.indexOf('/zh/') === 0 || path === '/zh/' || path === '/zh';
 
-  if (!isEn && !isZh) return;
-
-  var targetPath = path.replace('/en/', '/x/').replace('/zh/', '/en/').replace('/x/', '/zh/');
-  var label = isEn ? '中文' : 'English';
-  var lang = isEn ? 'zh' : 'en';
+  var label, targetPath, lang;
+  if (isZh) {
+    targetPath = path.replace(/^\/zh/, '') || '/';
+    label = 'English';
+    lang = 'en';
+  } else {
+    targetPath = '/zh' + path;
+    label = '中文';
+    lang = 'zh';
+  }
 
   function inject() {
     var toolbar = document.querySelector('.right-buttons');
