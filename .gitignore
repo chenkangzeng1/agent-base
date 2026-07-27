@@ -24,3 +24,4 @@ docs/
 
 # mdBook build output
 book/html/
+.gstack/

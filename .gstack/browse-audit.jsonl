@@ -1,7 +1,0 @@
-{"ts":"2026-07-27T13:09:50.591Z","cmd":"goto","args":"http://localhost:3456/en/guide/custom-tool.html","origin":"http://localhost:3456/en/guide/custom-tool.html","durationMs":49,"status":"ok","hasCookies":false,"mode":"launched"}
-{"ts":"2026-07-27T13:09:50.619Z","cmd":"text","args":"","origin":"http://localhost:3456/en/guide/custom-tool.html","durationMs":1,"status":"ok","hasCookies":false,"mode":"launched"}
-{"ts":"2026-07-27T13:09:51.372Z","cmd":"screenshot","args":"/tmp/phi-custom-tool.png","origin":"http://localhost:3456/en/guide/custom-tool.html","durationMs":728,"status":"ok","hasCookies":false,"mode":"launched"}
-{"ts":"2026-07-27T13:10:03.294Z","cmd":"snapshot","args":"-i -a -o /tmp/phi-annotated.png","origin":"http://localhost:3456/en/guide/custom-tool.html","durationMs":212,"status":"ok","hasCookies":false,"mode":"launched"}
-{"ts":"2026-07-27T13:10:03.318Z","cmd":"console","args":"","origin":"http://localhost:3456/en/guide/custom-tool.html","durationMs":0,"status":"ok","hasCookies":false,"mode":"launched"}
-{"ts":"2026-07-27T13:14:46.544Z","cmd":"goto","args":"file:///tmp/phi-custom-tool.png","origin":"file:///tmp/phi-custom-tool.png","durationMs":40,"status":"ok","hasCookies":false,"mode":"launched"}
-{"ts":"2026-07-27T13:14:46.607Z","cmd":"screenshot","args":"/tmp/phi-custom-tool-viewed.png","origin":"file:///tmp/phi-custom-tool.png","durationMs":31,"status":"ok","hasCookies":false,"mode":"launched"}

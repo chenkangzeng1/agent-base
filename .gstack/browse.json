@@ -1,9 +1,0 @@
-{
-  "pid": 48056,
-  "port": 46161,
-  "token": "79db9e12-5e4f-4515-8e98-6c0f58fda6ed",
-  "startedAt": "2026-07-27T13:09:50.444Z",
-  "serverPath": "/Users/kangzengchen/.claude/skills/gstack/browse/src/server.ts",
-  "mode": "launched",
-  "configHash": "303a7eeccc03078b"
-}
