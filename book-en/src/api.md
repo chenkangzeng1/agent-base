@@ -26,7 +26,7 @@ phi-agent re-exports key types from [`agent-works`](https://docs.rs/agent-works)
 
 `Focus`, `FocusContext`, `FocusInput`, `FocusOutput`, `FocusError`.
 
-→ See the [Focus guide](./en/guide/focus.md) for usage examples.
+→ See the [Focus guide](./guide/focus.html) for usage examples.
 
 ---
 

@@ -1,0 +1,18 @@
+[book]
+title = "phi-agent"
+description = "Rust 通用 AI Agent 框架"
+authors = ["phi-agent Contributors"]
+language = "zh"
+
+[build]
+build-dir = "html"
+
+[output.html]
+git-repository-url = "https://github.com/hibuka-labs/phi-agent"
+additional-js = ["theme/lang-switch.js"]
+
+[output.html.playground]
+runnable = false
+
+[output.html.print]
+enable = false

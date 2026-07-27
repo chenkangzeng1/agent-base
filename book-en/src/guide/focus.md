@@ -1,0 +1,1 @@
+{{#include ../../../guide/focus.md}}

@@ -8,9 +8,9 @@ language = "en"
 build-dir = "html"
 
 [output.html]
-mathjax-support = false
 git-repository-url = "https://github.com/hibuka-labs/phi-agent"
-edit-url-template = "https://github.com/hibuka-labs/phi-agent/edit/master/{path}"
+edit-url-template = "https://github.com/hibuka-labs/phi-agent/edit/master/guide/{path}"
+additional-js = ["theme/lang-switch.js"]
 
 [output.html.playground]
 runnable = false

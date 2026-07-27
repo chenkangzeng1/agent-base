@@ -5,6 +5,8 @@ on:
     branches: [master, main]
     paths:
       - 'book/**'
+      - 'book-en/**'
+      - 'book-zh/**'
       - 'guide/**'
       - '.github/workflows/deploy-docs.yml'
   workflow_dispatch:
@@ -35,8 +37,18 @@ jobs:
           sudo mv mdbook /usr/local/bin/
           mdbook --version
 
-      - name: Build book
-        run: mdbook build book/
+      - name: Build book (EN)
+        run: mdbook build book-en/
+
+      - name: Build book (ZH)
+        run: mdbook build book-zh/
+
+      - name: Prepare deploy directory
+        run: |
+          mkdir -p deploy/en deploy/zh
+          cp book/index.html deploy/
+          cp -r book-en/html/* deploy/en/
+          cp -r book-zh/html/* deploy/zh/
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
@@ -44,7 +56,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: 'book/html'
+          path: 'deploy'
 
       - name: Deploy to GitHub Pages
         id: deployment
