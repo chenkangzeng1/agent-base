@@ -135,11 +135,27 @@ body {
     background: var(--apple-text-tertiary);
 }
 
-/* ── Skip hidden elements ──────────────────────────────── */
+/* ── Hide mdBook default chrome ──────────────────────── */
 
+#mdbook-menu-bar,
+#mdbook-menu-bar-hover-placeholder,
 #menu-bar,
-#menu-bar-hover-placeholder {
+#menu-bar-hover-placeholder,
+#mdbook-sidebar-resize-handle {
     display: none !important;
+}
+
+/* Remove top offset reserved for menu bar */
+#mdbook-page-wrapper,
+.page-wrapper {
+    padding-top: 0 !important;
+    margin-top: 0 !important;
+}
+
+/* Sidebar toggle — hidden unless mobile */
+#mdbook-body-container > .sidebar-toggle,
+#mdbook-sidebar-toggle {
+    display: none;
 }
 
 /* ── Page Wrapper ──────────────────────────────────────── */
