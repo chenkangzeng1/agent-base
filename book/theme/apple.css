@@ -96,7 +96,7 @@
 
 html {
     font-family: var(--apple-font);
-    font-size: 18px;
+    font-size: 17px;
     line-height: 1.5;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
@@ -200,10 +200,10 @@ body {
 .chapter li a,
 .chapter-item a {
     display: block;
-    padding: 8px 13px;
+    padding: 7px 12px;
     margin: 1px 0;
     border-radius: var(--apple-radius-sm);
-    font-size: 0.94rem;
+    font-size: 0.92rem;
     color: var(--apple-text-secondary);
     text-decoration: none;
     transition: all 0.15s ease;
@@ -246,7 +246,7 @@ body {
     flex: 1;
     min-width: 0;
     padding: var(--apple-space-3xl) var(--apple-space-2xl);
-    max-width: 820px;
+    max-width: 860px;
 }
 
 /* ── Typography ────────────────────────────────────────── */
@@ -268,20 +268,20 @@ h1 {
 }
 
 h2 {
-    font-size: 1.9rem;
+    font-size: 1.8rem;
     margin-top: var(--apple-space-3xl);
     margin-bottom: var(--apple-space-md);
     padding-bottom: 0;
 }
 
 h3 {
-    font-size: 1.4rem;
+    font-size: 1.35rem;
     margin-top: var(--apple-space-xl);
     margin-bottom: var(--apple-space-sm);
 }
 
 h4 {
-    font-size: 1.15rem;
+    font-size: 1.1rem;
     margin-top: var(--apple-space-lg);
     margin-bottom: var(--apple-space-xs);
 }
@@ -323,7 +323,7 @@ a:hover {
 
 code {
     font-family: var(--apple-font-mono);
-    font-size: 0.88em;
+    font-size: 0.84em;
     font-weight: 400;
     background: var(--apple-code-bg);
     color: var(--apple-text);
@@ -339,7 +339,7 @@ pre {
     border: 1px solid var(--apple-code-border);
     border-radius: var(--apple-radius-md);
     overflow-x: auto;
-    font-size: 0.92rem;
+    font-size: 0.88rem;
     line-height: 1.6;
     box-shadow: var(--apple-shadow-sm);
 }
@@ -364,7 +364,7 @@ table {
     border-collapse: separate;
     border-spacing: 0;
     margin: var(--apple-space-lg) 0;
-    font-size: 0.95rem;
+    font-size: 0.92rem;
     border: 1px solid var(--apple-border);
     border-radius: var(--apple-radius-md);
     overflow: hidden;
@@ -702,7 +702,7 @@ hr {
 }
 
 .feature-card h3 {
-    font-size: 1.1rem;
+    font-size: 1.05rem;
     font-weight: 700;
     letter-spacing: -0.02em;
     margin: 0 0 8px;
@@ -710,7 +710,7 @@ hr {
 }
 
 .feature-card p {
-    font-size: 0.95rem;
+    font-size: 0.9rem;
     color: var(--apple-text-secondary);
     margin: 0;
     line-height: 1.5;
