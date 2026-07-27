@@ -58,3 +58,15 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+
+      - name: Deploy to Gitee Pages
+        run: |
+          cd deploy
+          git init
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "deploy: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push -f "https://chenkangzeng_admin:${GITEE_TOKEN}@gitee.com/chenkangzeng_admin/phi-agent.git" HEAD:pages
+        env:
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
