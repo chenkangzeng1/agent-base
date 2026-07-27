@@ -25,8 +25,11 @@ cargo add anyhow
 ## 3. 配置 API Key
 
 ```bash
-echo 'LLM_API_KEY=sk-your-key-here' > .env
+cp .env.example .env
+# 编辑 .env，填入你的真实 API Key
 ```
+
+`.env.example` 中包含了 OpenAI、Anthropic、DeepSeek 等常见提供商的配置示例。详见[配置详解](configuration_CN.md)。
 
 ## 4. 编写代码
 

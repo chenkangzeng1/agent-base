@@ -25,8 +25,11 @@ cargo add anyhow
 ## 3. Set your API key
 
 ```bash
-echo 'LLM_API_KEY=sk-your-key-here' > .env
+cp .env.example .env
+# Edit .env with your actual API key
 ```
+
+`.env.example` contains common configurations for OpenAI, Anthropic, DeepSeek, and other providers. See [Configuration](configuration.md) for all options.
 
 ## 4. Write the code
 
