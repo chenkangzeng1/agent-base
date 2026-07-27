@@ -46,6 +46,16 @@ A general-purpose AI Agent framework in Rust, built on [agent-base](https://crat
 
 **Core principle**: phi-agent itself does **not** bundle any tools. It provides the agent builder factory, renderers, config resolution, and session management — tools are injected by consumers.
 
+## Why phi-agent
+
+**Simple.** A tool is 3 methods: `name()`, `definition()`, `call()`. No framework to learn, no abstractions to fight.
+
+**Rust.** Single binary, no runtime dependency. `cargo install` and you're done. Memory-safe, crash-resistant, fast.
+
+**Pure.** No built-in memory, no vector database, no hidden state. The agent doesn't remember anything you don't tell it to. Predictable, debuggable, and you control where your data goes.
+
+**Your tools, your rules.** phi-agent doesn't know what tools exist. You bring them, you own them. No vendor lock-in.
+
 ## Features
 
 - **Builder factory** — `base_agent_builder()` with sensible defaults (thinking, recovery, limits)
