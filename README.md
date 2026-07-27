@@ -1,9 +1,10 @@
-# phi-agent
+# <picture><source media="(prefers-color-scheme: dark)" srcset="assets/logo.svg"><img alt="phi-agent" src="assets/logo.svg" height="60"></picture>
 
 [![CI](https://github.com/hibuka-labs/phi-agent/workflows/CI/badge.svg)](https://github.com/hibuka-labs/phi-agent/actions)
 [![Crates.io](https://img.shields.io/crates/v/phi-agent.svg)](https://crates.io/crates/phi-agent)
 [![Docs.rs](https://docs.rs/phi-agent/badge.svg)](https://docs.rs/phi-agent)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Documentation](https://img.shields.io/badge/docs-book-green.svg)](https://hibuka-labs.github.io/phi-agent)
 
 A general-purpose AI Agent framework in Rust, built on [agent-base](https://crates.io/crates/agent-base) and [agent-works](https://crates.io/crates/agent-works).
 
@@ -169,13 +170,15 @@ Full guide: [guide/custom-tool.md](guide/custom-tool.md)
 
 ## Documentation
 
+📖 **Full documentation**: [hibuka-labs.github.io/phi-agent](https://hibuka-labs.github.io/phi-agent)
+
 | Document | Description |
 |----------|-------------|
 | [Getting Started](guide/getting-started.md) | 5-minute quick start |
 | [Custom Tools](guide/custom-tool.md) | How to write a Tool |
 | [Configuration](guide/configuration.md) | Config reference |
+| [Focus](guide/focus.md) | Structured single-purpose LLM calls |
 | [Advanced](guide/advanced.md) | Middleware, sessions, event log |
-| [Architecture Design](docs/design.md) | Full architecture document |
 
 ## FAQ
 

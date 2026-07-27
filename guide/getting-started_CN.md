@@ -88,5 +88,6 @@ cargo run
 ## 下一步
 
 - [自定义工具](custom-tool_CN.md) — 为 Agent 添加你自己的工具
+- [Focus 专注判断](focus_CN.md) — 结构化单任务 LLM 调用
 - [配置详解](configuration_CN.md) — 了解所有配置选项
-- [示例项目](/examples/) — 仓库中的可运行示例
+- [高级用法](advanced_CN.md) — 中间件、会话、事件日志

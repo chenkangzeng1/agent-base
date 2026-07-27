@@ -1,9 +1,10 @@
-# phi-agent
+# <picture><source media="(prefers-color-scheme: dark)" srcset="assets/logo.svg"><img alt="phi-agent" src="assets/logo.svg" height="60"></picture>
 
 [![CI](https://github.com/hibuka-labs/phi-agent/workflows/CI/badge.svg)](https://github.com/hibuka-labs/phi-agent/actions)
 [![Crates.io](https://img.shields.io/crates/v/phi-agent.svg)](https://crates.io/crates/phi-agent)
 [![Docs.rs](https://docs.rs/phi-agent/badge.svg)](https://docs.rs/phi-agent)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Documentation](https://img.shields.io/badge/docs-book-green.svg)](https://hibuka-labs.github.io/phi-agent)
 
 通用 AI Agent 框架，基于 Rust 构建，底层依赖 [agent-base](https://crates.io/crates/agent-base) 和 [agent-works](https://crates.io/crates/agent-works)。
 
@@ -174,13 +175,15 @@ impl Tool for HelloTool {
 
 ## 文档
 
+📖 **完整文档站**: [hibuka-labs.github.io/phi-agent](https://hibuka-labs.github.io/phi-agent)
+
 | 文档 | 说明 |
 |------|------|
 | [快速开始](guide/getting-started_CN.md) | 5 分钟上手 |
 | [自定义工具](guide/custom-tool_CN.md) | 如何编写 Tool |
 | [配置详解](guide/configuration_CN.md) | 配置参考 |
+| [Focus 专注判断](guide/focus_CN.md) | 结构化单任务 LLM 调用 |
 | [高级用法](guide/advanced_CN.md) | 中间件、会话、事件日志 |
-| [架构设计](docs/design.md) | 完整架构文档 |
 
 ## 常见问题
 

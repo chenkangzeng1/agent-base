@@ -1,0 +1,16 @@
+[book]
+title = "phi-agent"
+description = "General-purpose AI Agent Framework in Rust"
+authors = ["phi-agent Contributors"]
+language = "en"
+
+[build]
+build-dir = "html"
+
+[output.html]
+mathjax-support = false
+git-repository-url = "https://github.com/hibuka-labs/phi-agent"
+edit-url-template = "https://github.com/hibuka-labs/phi-agent/edit/master/{path}"
+
+[output.html.print]
+enable = false

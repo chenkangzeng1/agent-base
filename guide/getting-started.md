@@ -88,6 +88,6 @@ cargo run
 ## What's Next
 
 - [Custom Tools](custom-tool.md) — add your own tools to the agent
-- [Browser Tools](browser-tools.md) — automate browser interactions
+- [Focus](focus.md) — structured single-purpose LLM calls
 - [Configuration](configuration.md) — understand all config options
-- [Examples](/examples/) — runnable examples in the repo
+- [Advanced](advanced.md) — middleware, sessions, event log

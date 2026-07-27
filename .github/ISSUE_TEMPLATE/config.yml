@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 💬 Discussions
+    url: https://github.com/hibuka-labs/phi-agent/discussions
+    about: Ask questions, share ideas, or discuss use cases
+  - name: 📖 Documentation
+    url: https://hibuka-labs.github.io/phi-agent
+    about: Read the phi-agent documentation
