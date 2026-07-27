@@ -7,12 +7,12 @@ use std::sync::Arc;
 use anyhow::Result;
 use args::{CliArgs, OutputFormatArg};
 use clap::Parser;
-use phi_agent::{ApprovalMode, AutoApprovalHandler};
 use phi_agent::config::resolve_llm_config;
-use phi_agent::render::{create_stdout_renderer, OutputFormat};
+use phi_agent::render::{OutputFormat, create_stdout_renderer};
+use phi_agent::{ApprovalMode, AutoApprovalHandler};
 use phi_agent::{
-    base_agent_builder, build_system_prompt, save_turn_log, PhiAgent, OpenAiClient,
-    SafetyConfig, SessionContext, TurnFactMiddleware, TurnToolLimitMiddleware,
+    OpenAiClient, PhiAgent, SafetyConfig, SessionContext, TurnFactMiddleware, TurnToolLimitMiddleware,
+    base_agent_builder, build_system_prompt, save_turn_log,
 };
 
 use approval::CliApprovalHandler;
@@ -24,9 +24,7 @@ async fn main() -> Result<()> {
     let args = CliArgs::parse();
 
     // 1. Resolve log directory
-    let log_dir = args
-        .log_dir
-        .replace("~", &std::env::var("HOME").unwrap_or_default());
+    let log_dir = args.log_dir.replace("~", &std::env::var("HOME").unwrap_or_default());
     let log_dir_path = std::path::PathBuf::from(&log_dir);
 
     // 2. Clean up expired sessions
@@ -36,10 +34,10 @@ async fn main() -> Result<()> {
                 if count > 0 {
                     eprintln!("[phi] cleaned up {} expired session(s)", count);
                 }
-            }
+            },
             Err(e) => {
                 eprintln!("[phi] warning: failed to cleanup sessions: {}", e);
-            }
+            },
         }
     }
 
@@ -125,7 +123,8 @@ async fn main() -> Result<()> {
                 - Step text should be human-readable task descriptions only.\n\n\
                 [Update Conventions]\n\
                 - Update status promptly as you progress: pending → in_progress → completed.\n\
-                - If blocked, explain the reason honestly in the explanation field.".to_string(),
+                - If blocked, explain the reason honestly in the explanation field."
+                    .to_string(),
             ),
         )
         .approval_handler(approval_handler)
@@ -200,14 +199,14 @@ async fn run_one_shot(
         Ok(_) => {
             tracing::info!(duration_ms = turn_start.elapsed().as_millis() as u64, "one-shot completed");
             Ok(())
-        }
+        },
         Err(err) => {
             tracing::error!(error = %err, "one-shot failed");
             if matches!(format, OutputFormat::Terminal { .. }) {
                 eprintln!("\n❌ Error: {}", err);
             }
             Err(err.into())
-        }
+        },
     }
 }
 
@@ -228,9 +227,7 @@ async fn run_repl(
 
     let mut rl = rustyline::Editor::<(), rustyline::history::FileHistory>::new()?;
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    let history_path = std::path::PathBuf::from(home)
-        .join(".phi-agent")
-        .join("history");
+    let history_path = std::path::PathBuf::from(home).join(".phi-agent").join("history");
     let _ = rl.load_history(&history_path);
     let prompt = format!("\n{}Phi > {}", "\x1b[1m", "\x1b[0m");
 
@@ -242,7 +239,7 @@ async fn run_repl(
                     let _ = rl.add_history_entry(&trimmed);
                 }
                 trimmed
-            }
+            },
             Err(rustyline::error::ReadlineError::Eof) => break,
             Err(rustyline::error::ReadlineError::Interrupted) => continue,
             Err(_) => break,
@@ -304,7 +301,7 @@ async fn run_repl(
                         "turn completed"
                     );
                 }
-            }
+            },
             Err(err) => {
                 cancel_handle.abort();
                 renderer.finish_turn()?;
@@ -315,7 +312,7 @@ async fn run_repl(
                 if matches!(format, OutputFormat::Terminal { .. }) {
                     eprintln!("\n❌ Error: {}", err);
                 }
-            }
+            },
         }
     }
 
@@ -327,12 +324,9 @@ async fn run_repl(
 fn print_welcome_banner(agent: &PhiAgent, session_ctx: &SessionContext) {
     println!();
     println!("╔═══════════════════════════════════════════════════╗");
-    println!("║  {}phi{} — General-purpose AI Agent CLI                 ║", "\x1b[1m", "\x1b[0m");
+    println!("║  \x1b[1mphi\x1b[0m — General-purpose AI Agent CLI                 ║");
     println!("║                                                   ║");
-    println!(
-        "║  Model: {:<42}║",
-        if agent.config.model.is_empty() { "default" } else { &agent.config.model }
-    );
+    println!("║  Model: {:<42}║", if agent.config.model.is_empty() { "default" } else { &agent.config.model });
     println!("║  Session: {:<40}║", session_ctx.session_id);
     if session_ctx.is_new_session {
         println!("║  Status: New session                                ║");
@@ -369,11 +363,7 @@ async fn init_logging(session_ctx: &SessionContext, log_level: &str) -> Result<(
         _ => LogLevel::Info,
     };
 
-    let layer = LogCoreLayer::file(
-        session_log_path.to_str().unwrap_or("phi.log"),
-        level,
-    )
-    .await?;
+    let layer = LogCoreLayer::file(session_log_path.to_str().unwrap_or("phi.log"), level).await?;
 
     tracing_subscriber::registry()
         .with(

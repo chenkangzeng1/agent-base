@@ -31,11 +31,7 @@ pub trait EventRenderer: Send {
 #[derive(Clone, Debug)]
 pub enum OutputFormat {
     /// Rich terminal output (with colors and emoji)
-    Terminal {
-        show_thinking: bool,
-        show_tool_args: bool,
-        color: bool,
-    },
+    Terminal { show_thinking: bool, show_tool_args: bool, color: bool },
     /// One JSON object per line
     Json,
     /// No output
@@ -51,11 +47,11 @@ pub fn create_renderer(format: &OutputFormat, writer: Option<Box<dyn Write + Sen
         OutputFormat::Terminal { show_thinking, show_tool_args, color } => {
             let w = writer.unwrap_or_else(|| Box::new(io::stdout()));
             Box::new(TerminalRenderer::new(*show_thinking, *show_tool_args, *color, w))
-        }
+        },
         OutputFormat::Json => {
             let w = writer.unwrap_or_else(|| Box::new(io::stdout()));
             Box::new(JsonStreamRenderer::new(w))
-        }
+        },
         OutputFormat::Quiet => Box::new(NullRenderer),
     }
 }

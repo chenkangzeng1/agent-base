@@ -1,53 +1,110 @@
 # phi-agent
 
+[![CI](https://github.com/hibuka-labs/phi-agent/workflows/CI/badge.svg)](https://github.com/hibuka-labs/phi-agent/actions)
 [![Crates.io](https://img.shields.io/crates/v/phi-agent.svg)](https://crates.io/crates/phi-agent)
+[![Docs.rs](https://docs.rs/phi-agent/badge.svg)](https://docs.rs/phi-agent)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-A general-purpose AI Agent framework built on [agent-base](https://crates.io/crates/agent-base).
+A general-purpose AI Agent framework in Rust, built on [agent-base](https://crates.io/crates/agent-base) and [agent-works](https://crates.io/crates/agent-works).
 
-Provides builder factory, renderer, config resolution, and session management infrastructure. **Does not bundle any tools** — tools are injected by consumers.
+**phi-agent provides the infrastructure. You bring the tools.**
+
+## Architecture
+
+```
+                      ┌─────────────────────┐
+                      │     agent-base       │
+                      │  Tool trait · Runtime │
+                      │  LLM clients · Events  │
+                      └──────────┬──────────┘
+                                 │
+          ┌──────────────────────┼──────────────────────┐
+          │                      │                      │
+┌─────────▼─────────┐  ┌────────▼────────┐  ┌──────────▼──────────┐
+│    agent-works     │  │   phi-tools     │  │    your-tools       │
+│  MCP · Skills      │  │ LocalShellTool  │  │ Custom Tool impls   │
+│  Builtin tools     │  │                 │  │                     │
+└─────────┬─────────┘  └────────┬────────┘  └──────────┬──────────┘
+          │                      │                      │
+          └──────────────────────┼──────────────────────┘
+                                 │
+                      ┌──────────▼──────────┐
+                      │     phi-agent        │
+                      │  Builder factory     │
+                      │  Renderers (3)       │
+                      │  Config · Session    │
+                      │  CLI (forge)         │
+                      └──────────┬──────────┘
+                                 │
+                    ┌────────────┼────────────┐
+                    │            │            │
+              ┌─────▼────┐ ┌────▼─────┐ ┌────▼─────┐
+              │ Terminal  │ │  JSON    │ │   Web    │
+              │   REPL    │ │  Stream  │ │ Backend  │
+              └───────────┘ └──────────┘ └──────────┘
+```
+
+**Core principle**: phi-agent itself does **not** bundle any tools. It provides the agent builder factory, renderers, config resolution, and session management — tools are injected by consumers.
 
 ## Features
 
-- **Builder factory** — `base_agent_builder()` with sensible defaults
-- **Multiple renderers** — Terminal (rich), JSON stream, Null
-- **CLI-ready** — REPL and one-shot modes out of the box
-- **Session management** — auto-cleanup, file locking, turn logging
+- **Builder factory** — `base_agent_builder()` with sensible defaults (thinking, recovery, limits)
+- **Three renderers** — Terminal (rich, colored, streaming), JSON stream (JSONL), Null (silent)
+- **CLI-ready** — REPL and one-shot modes with 30+ configurable flags
+- **Session management** — auto-cleanup, file locking, JSONL turn logging
 - **Tool-agnostic** — no built-in tools; register your own via `AgentBuilder`
+- **Extensible** — middleware, approval handlers, custom renderers
 
 ## Quick Start
 
 ```rust
 use phi_agent::{
     base_agent_builder, build_system_prompt, PhiAgent, PhiAgentConfig,
-    OpenAiClient, SafetyConfig,
+    OpenAiClient, SafetyConfig, ReasoningEffort,
 };
 use std::sync::Arc;
 
-// 1. Create LLM client
-let llm_client = Arc::new(OpenAiClient::new(
-    api_key, model, Some(base_url),
-));
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // 1. Create LLM client
+    let llm_client = Arc::new(OpenAiClient::new(
+        std::env::var("LLM_API_KEY")?,
+        "opus".into(),
+        Some("https://api.openai.com/v1".into()),
+    ));
 
-// 2. Build agent (register your tools here)
-let builder = base_agent_builder(llm_client)
-    .system_prompt(build_system_prompt())
-    .register_tool(your_tool);
+    // 2. Build agent (register your tools here)
+    let builder = base_agent_builder(llm_client)
+        .system_prompt(build_system_prompt())
+        .register_tool(your_tool);
 
-let agent = PhiAgent::build(builder, PhiAgentConfig {
-    model: model.into(),
-    enable_thinking: true,
-    thinking_budget: None,
-    thinking_effort: ReasoningEffort::Medium,
-    safety: SafetyConfig::default(),
-})?;
+    let agent = PhiAgent::build(builder, PhiAgentConfig {
+        model: "opus".into(),
+        enable_thinking: true,
+        thinking_budget: None,
+        thinking_effort: ReasoningEffort::Medium,
+        safety: SafetyConfig::default(),
+    })?;
 
-// 3. Run
-let session = agent.create_session().await;
-agent.run_turn(session, "Hello!", |event| {
-    renderer.render(event)
-}).await?;
+    // 3. Run
+    let session = agent.create_session().await;
+    let renderer = phi_agent::create_stdout_renderer(
+        &phi_agent::OutputFormat::Terminal {
+            show_thinking: true,
+            show_tool_args: true,
+            color: true,
+        }
+    );
+
+    agent.run_turn(session, "Hello!", |event| {
+        renderer.render(event)
+    }).await?;
+
+    Ok(())
+}
 ```
+
+See [examples/](examples/) for more complete examples.
 
 ## CLI
 
@@ -56,8 +113,84 @@ cargo install phi-agent
 phi "What's in this directory?"
 ```
 
+```bash
+# REPL mode
+phi
+
+# JSON output for scripting
+phi --format json "list files"
+```
+
+## Custom Tool Example
+
+```rust
+use agent_base::{Tool, ToolContext, ToolOutput, ToolControlFlow, AgentResult};
+use serde_json::{Value, json};
+use async_trait::async_trait;
+
+struct HelloTool;
+
+#[async_trait]
+impl Tool for HelloTool {
+    fn name(&self) -> &'static str { "hello" }
+
+    fn definition(&self) -> Value {
+        json!({
+            "name": "hello",
+            "description": "Say hello to someone",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string", "description": "Who to greet" }
+                },
+                "required": ["name"]
+            }
+        })
+    }
+
+    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
+        let name = args["name"].as_str().unwrap_or("world");
+        Ok(ToolOutput { summary: format!("Hello, {}!", name), control_flow: ToolControlFlow::Continue, raw: None, truncation: None })
+    }
+}
+```
+
+Full guide: [guide/custom-tool.md](guide/custom-tool.md)
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Getting Started](guide/getting-started.md) | 5-minute quick start |
+| [Custom Tools](guide/custom-tool.md) | How to write a Tool |
+| [Configuration](guide/configuration.md) | Config reference |
+| [Advanced](guide/advanced.md) | Middleware, sessions, event log |
+| [Architecture Design](docs/design.md) | Full architecture document |
+
+## FAQ
+
+**Q: What's the difference between phi-agent and agent-base?**
+
+agent-base is the runtime kernel (LLM calls, tool orchestration, event stream). phi-agent wraps it with a builder factory, renderers, config resolution, and session management — plus a CLI binary.
+
+**Q: Can I use phi-agent without the CLI?**
+
+Yes. Import it as a library (`phi_agent`) and use `PhiAgent::build()` programmatically. The CLI is just one consumer.
+
+**Q: How do I add my own tools?**
+
+Implement the `Tool` trait from `agent-base` and register with `builder.register_tool(...)`. phi-agent has zero knowledge of what tools exist.
+
+**Q: Does phi-agent support Anthropic / other providers?**
+
+Yes. agent-base provides `AnthropicClient` and `OpenAiClient`. Any client implementing `LlmClient` works.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions and PR guidelines.
+
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE) for details.
 
 [中文文档](README_CN.md)

@@ -1,7 +1,7 @@
 use std::io::{self, Write};
 
 use agent_base::{AgentResult, RuntimeEvent, UserEvent};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::render::EventRenderer;
 
@@ -15,15 +15,12 @@ pub struct JsonStreamRenderer {
 }
 
 impl JsonStreamRenderer {
+    /// Create a new JSON stream renderer writing to the given writer.
     pub fn new(writer: Box<dyn Write + Send>) -> Self {
-        Self {
-            writer,
-            turn_start: None,
-            tool_call_count: 0,
-            last_assistant_text: String::new(),
-        }
+        Self { writer, turn_start: None, tool_call_count: 0, last_assistant_text: String::new() }
     }
 
+    /// Create a renderer that writes to stdout.
     pub fn stdout() -> Self {
         Self::new(Box::new(io::stdout()))
     }
@@ -31,8 +28,7 @@ impl JsonStreamRenderer {
     fn emit(&mut self, value: &Value) -> AgentResult<()> {
         let line = serde_json::to_string(value)
             .map_err(|e| agent_base::AgentError::internal(format!("JSON serialize error: {e}")))?;
-        writeln!(self.writer, "{}", line)
-            .map_err(|e| agent_base::AgentError::internal(format!("write error: {e}")))?;
+        writeln!(self.writer, "{}", line).map_err(|e| agent_base::AgentError::internal(format!("write error: {e}")))?;
         Ok(())
     }
 }
@@ -46,11 +42,11 @@ impl EventRenderer for JsonStreamRenderer {
         match &event {
             RuntimeEvent::ThoughtDelta { text, .. } => {
                 self.emit(&json!({ "type": "thought_delta", "text": text }))?;
-            }
+            },
             RuntimeEvent::TextDelta { text, .. } => {
                 self.last_assistant_text.push_str(text);
                 self.emit(&json!({ "type": "text_delta", "text": text }))?;
-            }
+            },
             RuntimeEvent::ToolCallStarted { tool_name, args_json, .. } => {
                 self.tool_call_count += 1;
                 let args: Value = serde_json::from_str(args_json).unwrap_or(Value::Null);
@@ -59,14 +55,14 @@ impl EventRenderer for JsonStreamRenderer {
                     "tool": tool_name,
                     "args": args,
                 }))?;
-            }
+            },
             RuntimeEvent::ToolCallFinished { tool_name, summary, .. } => {
                 self.emit(&json!({
                     "type": "tool_call_finished",
                     "tool": tool_name,
                     "summary": summary,
                 }))?;
-            }
+            },
             RuntimeEvent::AwaitingApproval { request, .. } => {
                 self.emit(&json!({
                     "type": "approval_request",
@@ -74,40 +70,34 @@ impl EventRenderer for JsonStreamRenderer {
                     "risk": format!("{:?}", request.risk_level),
                     "message": request.message,
                 }))?;
-            }
+            },
             RuntimeEvent::PlanUpdated { explanation, plan, .. } => {
                 self.emit(&json!({
                     "type": "plan_updated",
                     "explanation": explanation,
                     "plan": plan,
                 }))?;
-            }
-            RuntimeEvent::UserEvent {
-                event: UserEvent::Structured { event_type, data },
-                ..
-            } => {
+            },
+            RuntimeEvent::UserEvent { event: UserEvent::Structured { event_type, data }, .. } => {
                 self.emit(&json!({
                     "type": "user_event",
                     "event_type": event_type,
                     "data": data,
                 }))?;
-            }
-            RuntimeEvent::UserEvent { .. } => {}
-            RuntimeEvent::Checkpoint { .. } => {}
-            RuntimeEvent::RunFinished { .. } => {}
+            },
+            RuntimeEvent::UserEvent { .. } => {},
+            RuntimeEvent::Checkpoint { .. } => {},
+            RuntimeEvent::RunFinished { .. } => {},
             RuntimeEvent::RunCancelled { .. } => {
                 self.emit(&json!({ "type": "run_cancelled" }))?;
-            }
+            },
         }
 
         Ok(())
     }
 
     fn finish_turn(&mut self) -> AgentResult<()> {
-        let duration_ms = self
-            .turn_start
-            .map(|s| s.elapsed().as_millis() as u64)
-            .unwrap_or(0);
+        let duration_ms = self.turn_start.map(|s| s.elapsed().as_millis() as u64).unwrap_or(0);
 
         self.emit(&json!({
             "type": "turn_finished",

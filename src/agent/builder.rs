@@ -20,10 +20,7 @@ use agent_base::{AgentBuilder, ConsecutiveFailureRecovery, Language, ReasoningCo
 pub fn base_agent_builder(llm_client: Arc<dyn agent_base::LlmClient>) -> AgentBuilder {
     AgentBuilder::new(llm_client)
         .language(Language::En)
-        .reasoning(ReasoningConfig {
-            effort: Some(ReasoningEffort::Medium),
-            ..Default::default()
-        })
+        .reasoning(ReasoningConfig { effort: Some(ReasoningEffort::Medium), ..Default::default() })
         .enable_thought(true)
         .enable_thinking(true)
         .max_sessions(50)

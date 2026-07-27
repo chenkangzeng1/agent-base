@@ -35,3 +35,21 @@ After confirming results, report the conclusion concisely.
 "#
     .to_string()
 }
+
+/// Build system prompt for users in China (GFW-aware).
+///
+/// Appends network environment hints so the agent prefers domestic services
+/// when foreign sites are inaccessible.
+pub fn build_system_prompt_cn() -> String {
+    let mut prompt = build_system_prompt();
+    prompt.push_str("\n[Network Environment]\n");
+    prompt.push_str(
+        "You are operating in mainland China. Google, YouTube, Twitter, BBC, and many foreign sites are \
+         inaccessible. Prefer domestic alternatives:\n\
+         - Search: Bing (cn.bing.com) or Baidu (baidu.com)\n\
+         - News: Toutiao, Baidu News, The Paper (thepaper.cn), Zaobao (zaobao.com)\n\
+         - Dev: mirrors.tuna.tsinghua.edu.cn, gitee.com\n\
+         When a foreign site times out, switch to a domestic alternative immediately — don't retry.\n",
+    );
+    prompt
+}

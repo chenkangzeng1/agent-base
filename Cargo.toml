@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "phi-agent — General-purpose AI Agent framework (builder factory, renderer, config, session management)"
 license = "MIT"
-repository = "https://github.com/chenkangzeng1/phi-agent"
+repository = "https://github.com/hibuka-labs/phi-agent"
 readme = "README.md"
 keywords = ["agent", "ai", "llm", "framework", "cli"]
 categories = ["development-tools", "command-line-utilities", "asynchronous"]
@@ -36,3 +36,4 @@ log-core = { version = "0.1.0", path = "../log-core" }
 
 [dev-dependencies]
 tempfile = "3"
+futures-core = "0.3"

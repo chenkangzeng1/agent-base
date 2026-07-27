@@ -40,9 +40,7 @@ impl CliApprovalHandler {
             }
 
             eprint!("     Confirm execution? [y=allow / n=deny]: ");
-            io::stderr()
-                .flush()
-                .map_err(|e| AgentError::internal(format!("flush stderr failed: {e}")))?;
+            io::stderr().flush().map_err(|e| AgentError::internal(format!("flush stderr failed: {e}")))?;
 
             let line = read_stdin_line_cancellable(cancel_token).await?;
 
@@ -50,11 +48,11 @@ impl CliApprovalHandler {
                 "y" | "yes" => {
                     tracing::info!(decision = "AllowOnce", tool = %request.title, "user approved");
                     return Ok(ApprovalDecision::AllowOnce);
-                }
+                },
                 "n" | "no" => {
                     tracing::info!(decision = "Deny", tool = %request.title, "user denied");
                     return Ok(ApprovalDecision::Deny);
-                }
+                },
                 _ => eprintln!("     Invalid input — enter y or n"),
             }
         }
@@ -72,9 +70,7 @@ impl ApprovalHandler for CliApprovalHandler {
     }
 }
 
-async fn read_stdin_line_cancellable(
-    cancel_token: &tokio_util::sync::CancellationToken,
-) -> AgentResult<String> {
+async fn read_stdin_line_cancellable(cancel_token: &tokio_util::sync::CancellationToken) -> AgentResult<String> {
     use tokio::io::AsyncBufReadExt;
 
     tokio::select! {

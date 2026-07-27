@@ -1,6 +1,11 @@
+//! Configuration resolution helpers.
+//!
+//! Handles LLM configuration (API key, model, base URL) with multi-source
+//! resolution: CLI argument → environment variable (`.env`) → default.
+
 pub mod llm;
 
-pub use llm::{resolve_llm_config, LlmConfig};
+pub use llm::{LlmConfig, resolve_llm_config};
 
 use std::env;
 

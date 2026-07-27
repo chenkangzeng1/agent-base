@@ -16,20 +16,22 @@ pub mod session;
 // Only re-export the types consumers use most often.
 // For the full type set, import directly from agent-base.
 pub use agent_base::{
-    AgentBuilder, AgentError, AgentResult, AgentRuntime, ApprovalHandler, ConsecutiveFailureRecovery,
-    LlmClient, OpenAiClient, ReasoningConfig, ReasoningEffort, RunOutcome, RuntimeEvent, SafetyConfig,
-    SessionId, Tool, ToolContext, ToolControlFlow, ToolOutput, TurnFactMiddleware,
-    TurnToolLimitMiddleware, UpdatePlanTool, PlanItem, PlanStepStatus,
+    AgentBuilder, AgentError, AgentResult, AgentRuntime, ApprovalHandler, ConsecutiveFailureRecovery, LlmClient,
+    OpenAiClient, PlanItem, PlanStepStatus, ReasoningConfig, ReasoningEffort, RunOutcome, RuntimeEvent, SafetyConfig,
+    SessionId, Tool, ToolContext, ToolControlFlow, ToolOutput, TurnFactMiddleware, TurnToolLimitMiddleware,
+    UpdatePlanTool,
 };
 
 // ── agent-works ──
 pub use agent_works::focus::{Context as FocusContext, Focus, FocusError, FocusInput, FocusOutput};
 
 // ── phi-agent types ──
-pub use agent::{base_agent_builder, PhiAgent, PhiAgentConfig};
+pub use agent::{PhiAgent, PhiAgentConfig, base_agent_builder};
 pub use cli::{ApprovalMode, AutoApprovalHandler};
-pub use config::{resolve_llm_config, LlmConfig};
+pub use config::{LlmConfig, resolve_llm_config};
 pub use event_log::{event_to_jsonl, event_to_value, save_turn_log};
-pub use prompt::build_system_prompt;
-pub use render::{create_renderer, create_stdout_renderer, EventRenderer, JsonStreamRenderer, NullRenderer, OutputFormat};
+pub use prompt::{build_system_prompt, build_system_prompt_cn};
+pub use render::{
+    EventRenderer, JsonStreamRenderer, NullRenderer, OutputFormat, create_renderer, create_stdout_renderer,
+};
 pub use session::SessionContext;

@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+
+env:
+  CARGO_TERM_COLOR: always
+  # Dependent repos — adjust if they live under a different org/account
+  DEPS_ORG: hibuka-labs
+
+jobs:
+  # ── Code quality checks ──
+  check:
+    name: check (stable)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout dependencies
+        run: |
+          cd ..
+          for repo in agent-base agent-works phi-tools log-core; do
+            git clone --depth 1 "https://github.com/$DEPS_ORG/$repo.git"
+          done
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            ../agent-base
+            ../agent-works
+            ../phi-tools
+            ../log-core
+
+      - name: Format check
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+  # ── Build & test on multiple toolchains ──
+  test:
+    name: test (${{ matrix.toolchain }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        toolchain: [stable, beta]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout dependencies
+        run: |
+          cd ..
+          for repo in agent-base agent-works phi-tools log-core; do
+            git clone --depth 1 "https://github.com/$DEPS_ORG/$repo.git"
+          done
+
+      - uses: dtolnay/rust-toolchain@${{ matrix.toolchain }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            ../agent-base
+            ../agent-works
+            ../phi-tools
+            ../log-core
+
+      - name: Build
+        run: cargo build --verbose
+
+      - name: Test
+        run: cargo test --verbose
+
+  # ── Documentation check ──
+  doc:
+    name: doc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Checkout dependencies
+        run: |
+          cd ..
+          for repo in agent-base agent-works phi-tools log-core; do
+            git clone --depth 1 "https://github.com/$DEPS_ORG/$repo.git"
+          done
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Check documentation
+        run: cargo doc --no-deps --document-private-items
+        env:
+          RUSTDOCFLAGS: -D warnings

@@ -1,26 +1,46 @@
 use std::sync::Arc;
 
+use agent_base::{
+    AgentBuilder, AgentResult, AgentRuntime, ReasoningEffort, RunOutcome, RuntimeEvent, SafetyConfig, SessionId,
+};
 use anyhow::Result;
-use agent_base::{AgentBuilder, AgentRuntime, AgentResult, ReasoningEffort, RunOutcome, RuntimeEvent, SafetyConfig, SessionId};
 
 use crate::agent::builder::base_agent_builder;
 
-/// phi-agent configuration (tool-agnostic)
+/// phi-agent configuration (tool-agnostic).
+///
+/// This config covers model and safety settings only. Tools are registered
+/// externally on [`AgentBuilder`] — phi-agent itself never bundles tools.
 #[derive(Clone)]
 pub struct PhiAgentConfig {
+    /// Model name passed to the LLM provider (e.g. `"opus"`, `"gpt-4o"`).
     pub model: String,
+    /// Enable extended thinking / chain-of-thought.
     pub enable_thinking: bool,
+    /// Token budget for thinking (provider-dependent). `None` means use the
+    /// provider default.
     pub thinking_budget: Option<u64>,
+    /// Reasoning intensity: Low / Medium / High / XHigh.
     pub thinking_effort: ReasoningEffort,
+    /// Per-turn safety limits (max tool calls, max consecutive failures, etc.).
     pub safety: SafetyConfig,
 }
 
 /// A built Agent instance.
 ///
-/// Wraps AgentRuntime with common operations behind a simpler API.
+/// Wraps [`AgentRuntime`] with common operations behind a simpler API.
+///
+/// ## Example
+///
+/// ```ignore
+/// let agent = PhiAgent::build(builder, config)?;
+/// let session = agent.create_session().await;
+/// agent.run_turn(session, "Hello!", |event| renderer.render(event)).await?;
+/// ```
 #[derive(Clone)]
 pub struct PhiAgent {
     runtime: AgentRuntime,
+    /// The configuration this agent was built with.
     pub config: PhiAgentConfig,
 }
 
@@ -30,10 +50,7 @@ impl PhiAgent {
     /// Equivalent to `base_agent_builder(llm_client).system_prompt(system_prompt)`,
     /// after which you register tools, middleware, and approval handlers,
     /// then call `Self::build`.
-    pub fn builder(
-        llm_client: Arc<dyn agent_base::LlmClient>,
-        system_prompt: String,
-    ) -> AgentBuilder {
+    pub fn builder(llm_client: Arc<dyn agent_base::LlmClient>, system_prompt: String) -> AgentBuilder {
         base_agent_builder(llm_client).system_prompt(system_prompt)
     }
 
@@ -49,12 +66,7 @@ impl PhiAgent {
     }
 
     /// Execute one turn.
-    pub async fn run_turn<F>(
-        &self,
-        session_id: SessionId,
-        query: &str,
-        on_event: F,
-    ) -> AgentResult<RunOutcome>
+    pub async fn run_turn<F>(&self, session_id: SessionId, query: &str, on_event: F) -> AgentResult<RunOutcome>
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
