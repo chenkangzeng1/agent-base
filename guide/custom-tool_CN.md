@@ -100,4 +100,4 @@ ToolOutput {
 
 ## 完整示例
 
-参见 [`examples/custom-tool.rs`](/examples/custom-tool.rs) 了解一个带计算器工具的完整可运行示例。
+参见 [`examples/custom-tool.rs`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/custom-tool.rs) 了解一个带计算器工具的完整可运行示例。

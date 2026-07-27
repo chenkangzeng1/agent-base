@@ -127,7 +127,7 @@ A common pattern: use Focus as a **sidecar** inside a tool implementation. Your 
 
 ## Full Example
 
-See [`examples/focus-demo.rs`](/examples/focus-demo.rs) for a complete runnable example.
+See [`examples/focus-demo.rs`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/focus-demo.rs) for a complete runnable example.
 
 ## API Reference
 

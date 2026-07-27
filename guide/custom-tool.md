@@ -100,4 +100,4 @@ ToolOutput {
 
 ## Full Example
 
-See [`examples/custom-tool.rs`](/examples/custom-tool.rs) for a complete runnable example with a calculator tool.
+See [`examples/custom-tool.rs`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/custom-tool.rs) for a complete runnable example with a calculator tool.

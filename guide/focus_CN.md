@@ -127,7 +127,7 @@ pub enum FocusError {
 
 ## 完整示例
 
-参见 [`examples/focus-demo.rs`](/examples/focus-demo.rs) 获取完整的可运行示例。
+参见 [`examples/focus-demo.rs`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/focus-demo.rs) 获取完整的可运行示例。
 
 ## API 参考
 
