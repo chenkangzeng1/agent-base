@@ -50,7 +50,7 @@ A general-purpose AI Agent framework in Rust, built on [agent-base](https://crat
 
 **Simple.** A tool is 3 methods: `name()`, `definition()`, `call()`. No framework to learn, no abstractions to fight.
 
-**Rust.** Single binary, no runtime dependency. `cargo install` and you're done. Memory-safe, crash-resistant, fast.
+**Rust.** Single binary, no runtime dependency. `cargo install` and you're done. Memory-safe, crash-resistant, fast. Deploy anywhere — from cloud servers to edge devices.
 
 **Pure.** No built-in memory, no vector database, no hidden state. The agent doesn't remember anything you don't tell it to. Predictable, debuggable, and you control where your data goes.
 
