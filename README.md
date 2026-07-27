@@ -33,7 +33,7 @@ A general-purpose AI Agent framework in Rust, built on [agent-base](https://crat
                       │  Builder factory     │
                       │  Renderers (3)       │
                       │  Config · Session    │
-                      │  CLI (forge)         │
+                      │  CLI (phi)            │
                       └──────────┬──────────┘
                                  │
                     ┌────────────┼────────────┐
