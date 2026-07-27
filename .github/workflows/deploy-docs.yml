@@ -5,8 +5,6 @@ on:
     branches: [master, main]
     paths:
       - 'book/**'
-      - 'book-en/**'
-      - 'book-zh/**'
       - 'guide/**'
       - '.github/workflows/deploy-docs.yml'
   workflow_dispatch:
@@ -38,17 +36,17 @@ jobs:
           mdbook --version
 
       - name: Build book (EN)
-        run: mdbook build book-en/
+        run: mdbook build book/en/
 
       - name: Build book (ZH)
-        run: mdbook build book-zh/
+        run: mdbook build book/zh/
 
       - name: Prepare deploy directory
         run: |
           mkdir -p deploy/en deploy/zh
           cp book/index.html deploy/
-          cp -r book-en/html/* deploy/en/
-          cp -r book-zh/html/* deploy/zh/
+          cp -r book/en/html/* deploy/en/
+          cp -r book/zh/html/* deploy/zh/
 
       - name: Setup Pages
         uses: actions/configure-pages@v4

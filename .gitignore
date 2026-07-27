@@ -23,6 +23,6 @@ sessions/
 docs/
 
 # mdBook build output
-book-en/html/
-book-zh/html/
+book/en/html/
+book/zh/html/
 .gstack/
