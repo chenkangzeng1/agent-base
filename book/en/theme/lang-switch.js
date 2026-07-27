@@ -1,17 +1,30 @@
 (function () {
   var path = window.location.pathname;
-  var isZh = path.indexOf('/zh/') === 0 || path === '/zh/' || path === '/zh';
+  var ptr = typeof path_to_root !== 'undefined' ? path_to_root : '';
 
-  var label, targetPath, lang;
+  // Detect ZH pages: path contains /zh/ as a directory segment
+  var isZh = /\/zh(\/|$)/.test(path);
+
+  var targetPath;
+
+  // Compute book root by resolving path_to_root against current directory
+  var dir = path.replace(/\/[^/]*$/, '/');
+  var a = document.createElement('a');
+  a.href = dir + ptr;
+  var bookRoot = a.pathname;
+
+  // Page path relative to the book root
+  var relPath = path.startsWith(bookRoot) ? path.slice(bookRoot.length) : path;
+
   if (isZh) {
-    targetPath = path.replace(/^\/zh/, '') || '/';
-    label = 'English';
-    lang = 'en';
+    // Remove /zh segment from the original path
+    targetPath = path.replace(/\/zh(?=\/|$)/, '').replace(/\/+$/, '') || '/';
   } else {
-    targetPath = '/zh' + path;
-    label = '中文';
-    lang = 'zh';
+    targetPath = bookRoot + 'zh/' + relPath;
   }
+
+  var label = isZh ? 'English' : '中文';
+  var lang = isZh ? 'en' : 'zh';
 
   function inject() {
     var toolbar = document.querySelector('.right-buttons');
