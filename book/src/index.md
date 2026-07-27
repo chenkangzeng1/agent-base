@@ -1,98 +1,49 @@
 # phi-agent
 
-<div class="hero">
-<div class="hero-tagline">
-General-purpose AI Agent Framework in Rust.<br>Simple. Pure. Predictable.
-</div>
-<div class="hero-actions">
-<a href="./en/guide/getting-started.md" class="btn btn-primary">Get Started →</a>
-<a href="./zh/guide/getting-started.md" class="btn btn-ghost">快速开始 →</a>
-</div>
-</div>
+**General-purpose AI Agent Framework in Rust — simple, pure, predictable.**
 
----
+<div style="text-align: center; margin: 3em 0;">
 
-<div class="features">
-
-<div class="feature-card">
-<div class="icon">🧩</div>
-
-### No Built-in Tools
-
-phi-agent provides the infrastructure — builder factory, renderers, config, session management. You bring your own tools, and keep full control.
-
-</div>
-
-<div class="feature-card">
-<div class="icon">⚡</div>
-
-### Pure Rust
-
-Single binary, no runtime dependency. Async, type-safe, zero-cost abstractions. Deploy anywhere — from cloud servers to edge devices.
-
-</div>
-
-<div class="feature-card">
-<div class="icon">🧠</div>
-
-### Focus Primitive
-
-Structured single-purpose LLM calls outside the agent loop. Classification, judgment, extraction — one system prompt, one typed output.
-
-</div>
-
-<div class="feature-card">
-<div class="icon">🎯</div>
-
-### Your Rules
-
-No built-in memory, no vector DB, no hidden state. The agent doesn't remember anything you don't tell it to. Data stays under your control.
-
-</div>
-
-<div class="feature-card">
-<div class="icon">🖥️</div>
-
-### CLI + Library
-
-Use `phi` as a standalone CLI with REPL and one-shot modes. Or import `phi_agent` as a Rust library and build your own application.
-
-</div>
-
-<div class="feature-card">
-<div class="icon">🌐</div>
-
-### EN & 中文
-
-Full bilingual documentation. English and Chinese tutorials, guides, and API references — maintained in sync.
-
-</div>
+[Get Started](./en/guide/getting-started.md) · [快速开始](./zh/guide/getting-started.md)
 
 </div>
 
 ---
+
+## What is phi-agent?
+
+phi-agent is a Rust framework for building AI agents. It provides the infrastructure — builder factory, renderers, configuration, session management — but **does not bundle any tools**. You bring your own tools, and keep full control.
+
+## Why phi-agent?
+
+- **Simple** — No hidden state, no vector DB, no magic. Everything is explicit.
+- **Pure Rust** — Async, type-safe, zero-cost abstractions. Runs from cloud to edge.
+- **Your Rules** — The framework doesn't decide what tools your agent has. You do.
 
 ## Architecture
-
-<div class="index-arch">
 
 ```
 agent-base (runtime kernel + Tool trait)
     ↑
-agent-works (MCP · Skills · Focus)
+agent-works (MCP, Skills, Focus)
     ↑
 phi-agent (lib) ← framework, no tools
     ↑
 Your App (CLI, web, etc.) ← you register tools here
 ```
 
-</div>
+## Documentation
+
+| | EN | 中文 |
+|------|----|------|
+| Quick Start | [EN](./en/guide/getting-started.md) | [中文](./zh/guide/getting-started.md) |
+| Custom Tools | [EN](./en/guide/custom-tool.md) | [中文](./zh/guide/custom-tool.md) |
+| Configuration | [EN](./en/guide/configuration.md) | [中文](./zh/guide/configuration.md) |
+| Focus | [EN](./en/guide/focus.md) | [中文](./zh/guide/focus.md) |
+| Advanced | [EN](./en/guide/advanced.md) | [中文](./zh/guide/advanced.md) |
 
 ## Links
 
-<div class="quick-links">
-<a href="https://github.com/hibuka-labs/phi-agent" class="quick-link">GitHub</a>
-<a href="https://crates.io/crates/phi-agent" class="quick-link">crates.io</a>
-<a href="https://docs.rs/phi-agent" class="quick-link">docs.rs</a>
-<a href="./en/guide/getting-started.md" class="quick-link">Documentation →</a>
-</div>
+- [GitHub](https://github.com/hibuka-labs/phi-agent)
+- [crates.io](https://crates.io/crates/phi-agent)
+- [API Reference (docs.rs)](https://docs.rs/phi-agent)
