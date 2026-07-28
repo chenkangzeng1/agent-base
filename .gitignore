@@ -20,9 +20,11 @@ Thumbs.db
 
 # Session data (local runtime state)
 sessions/
-docs/
 
-# mdBook build output
+# MkDocs build output
+site/
+
+# mdBook build output (legacy)
 book/en/html/
 book/zh/html/
 .gstack/

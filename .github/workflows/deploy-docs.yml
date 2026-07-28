@@ -4,8 +4,9 @@ on:
   push:
     branches: [master, main]
     paths:
-      - 'book/**'
-      - 'guide/**'
+      - 'docs/**'
+      - 'mkdocs.yml'
+      - 'requirements.txt'
       - '.github/workflows/deploy-docs.yml'
   workflow_dispatch:
 
@@ -28,24 +29,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install mdBook
-        run: |
-          MDBOOK_VERSION="0.4.40"
-          curl -sSL "https://github.com/rust-lang/mdBook/releases/download/v${MDBOOK_VERSION}/mdbook-v${MDBOOK_VERSION}-x86_64-unknown-linux-gnu.tar.gz" | tar xz
-          sudo mv mdbook /usr/local/bin/
-          mdbook --version
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
 
-      - name: Build book (EN)
-        run: mdbook build book/en/
+      - name: Install MkDocs
+        run: pip install mkdocs-material mkdocs-static-i18n
 
-      - name: Build book (ZH)
-        run: mdbook build book/zh/
-
-      - name: Prepare deploy directory
-        run: |
-          mkdir -p deploy/zh
-          cp -r book/en/html/* deploy/
-          cp -r book/zh/html/* deploy/zh/
+      - name: Build
+        run: mkdocs build
 
       - name: Setup Pages
         uses: actions/configure-pages@v4
@@ -53,7 +46,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: 'deploy'
+          path: 'site'
 
       - name: Deploy to GitHub Pages
         id: deployment
