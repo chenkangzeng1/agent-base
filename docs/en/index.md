@@ -4,7 +4,10 @@ hide:
   - navigation
 ---
 
-# phi-agent
+<h1>
+  <img src="favicon.svg" style="height: 1.2em; vertical-align: middle; margin-right: 0.3em;">
+  phi-agent
+</h1>
 
 General-purpose AI Agent Framework in Rust — simple, pure, predictable.
 

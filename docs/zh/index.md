@@ -4,7 +4,10 @@ hide:
   - navigation
 ---
 
-# phi-agent
+<h1>
+  <img src="favicon.svg" style="height: 1.2em; vertical-align: middle; margin-right: 0.3em;">
+  phi-agent
+</h1>
 
 Rust 通用 AI Agent 框架 — 简单、纯粹、可预测。
 
