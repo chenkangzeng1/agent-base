@@ -27,4 +27,7 @@ site/
 # mdBook build output (legacy)
 book/en/html/
 book/zh/html/
+
+# Local preview build
+deploy/
 .gstack/
