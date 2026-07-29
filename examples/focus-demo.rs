@@ -34,10 +34,7 @@ struct TaskStatus {
 // ── Example 1: Simple string input ──────────────────────────────────────────
 
 /// Classify sentiment from a single text string.
-async fn classify_sentiment(
-    client: Arc<OpenAiClient>,
-    text: String,
-) -> Result<SentimentResult, FocusError> {
+async fn classify_sentiment(client: Arc<OpenAiClient>, text: String) -> Result<SentimentResult, FocusError> {
     let focus = Focus::new(
         client,
         "You are a sentiment classifier. Analyze the given text and return JSON: \
@@ -69,10 +66,7 @@ async fn judge_task(
          \"suggestion\": \"<next action to take>\"}. Only return JSON.",
     );
 
-    let ctx = FocusContext::new()
-        .add("command", command)
-        .add("elapsed", elapsed)
-        .add("screen", screen_output);
+    let ctx = FocusContext::new().add("command", command).add("elapsed", elapsed).add("screen", screen_output);
 
     let output = focus.ask::<TaskStatus>(&ctx, Duration::from_secs(10)).await?;
 
@@ -88,8 +82,7 @@ async fn main() -> anyhow::Result<()> {
         .or_else(|_| std::env::var("OPENAI_API_KEY"))
         .expect("Set LLM_API_KEY or OPENAI_API_KEY environment variable");
     let model = std::env::var("LLM_MODEL").unwrap_or_else(|_| "opus".into());
-    let base_url = std::env::var("LLM_BASE_URL")
-        .unwrap_or_else(|_| "https://api.openai.com/v1".into());
+    let base_url = std::env::var("LLM_BASE_URL").unwrap_or_else(|_| "https://api.openai.com/v1".into());
 
     let client = Arc::new(OpenAiClient::new(api_key, model, Some(base_url)));
 
@@ -108,10 +101,10 @@ async fn main() -> anyhow::Result<()> {
         match classify_sentiment(Arc::clone(&client), text.to_string()).await {
             Ok(result) => {
                 println!("  Result: {:?}", result);
-            }
+            },
             Err(e) => {
                 println!("  Error: {}", e);
-            }
+            },
         }
     }
 
@@ -129,10 +122,10 @@ async fn main() -> anyhow::Result<()> {
     match judge_task(Arc::clone(&client), command, elapsed, screen).await {
         Ok(status) => {
             println!("  Status: {:?}", status);
-        }
+        },
         Err(e) => {
             println!("  Error: {}", e);
-        }
+        },
     }
 
     println!("\n═══ Done ═══");
