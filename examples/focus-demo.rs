@@ -19,6 +19,7 @@ use serde::Deserialize;
 
 /// Expected response from the sentiment classifier.
 #[derive(Deserialize, Debug)]
+#[allow(dead_code)]
 struct SentimentResult {
     sentiment: String,
     confidence: f64,
@@ -26,6 +27,7 @@ struct SentimentResult {
 
 /// Expected response from the task status judge.
 #[derive(Deserialize, Debug)]
+#[allow(dead_code)]
 struct TaskStatus {
     status: String,
     suggestion: String,
