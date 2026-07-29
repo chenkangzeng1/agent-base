@@ -52,13 +52,34 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-      - name: Upload to OSS (S3 API)
+      - name: Upload to OSS
         env:
-          AWS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
-          AWS_DEFAULT_REGION: oss-cn-hongkong
+          OSS_ACCESS_KEY_ID: ${{ secrets.OSS_ACCESS_KEY_ID }}
+          OSS_ACCESS_KEY_SECRET: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
+          OSS_ENDPOINT: ${{ secrets.OSS_ENDPOINT }}
+          OSS_BUCKET: ${{ secrets.OSS_BUCKET }}
         run: |
-          aws configure set default.s3.addressing_style virtual
-          aws s3 sync site/ s3://${{ secrets.OSS_BUCKET }}/ \
-            --endpoint-url https://${{ secrets.OSS_ENDPOINT }} \
-            --delete
+          pip install oss2
+          python -c "
+          import os, oss2
+          auth = oss2.Auth(os.environ['OSS_ACCESS_KEY_ID'], os.environ['OSS_ACCESS_KEY_SECRET'])
+          bucket = oss2.Bucket(auth, os.environ['OSS_ENDPOINT'], os.environ['OSS_BUCKET'])
+
+          # Upload all local files
+          local_keys = set()
+          for root, dirs, files in os.walk('site'):
+              for f in files:
+                  local = os.path.join(root, f)
+                  key = os.path.relpath(local, 'site')
+                  local_keys.add(key)
+                  print(f'Uploading {key}')
+                  bucket.put_object_from_file(key, local)
+
+          # Delete stale files no longer in site/
+          for obj in oss2.ObjectIteratorV2(bucket):
+              if obj.key not in local_keys:
+                  print(f'Deleting {obj.key}')
+                  bucket.delete_object(obj.key)
+
+          print('Done!')
+          "
