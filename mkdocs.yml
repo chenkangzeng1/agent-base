@@ -1,6 +1,6 @@
 site_name: phi-agent
 site_description: General-purpose AI Agent Framework in Rust
-site_url: https://hibuka-labs.github.io/phi-agent/
+site_url: https://docs.phiagent.dev/
 repo_url: https://github.com/hibuka-labs/phi-agent
 repo_name: hibuka-labs/phi-agent
 copyright: Copyright &copy; 2025 phi-agent Contributors
