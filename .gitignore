@@ -11,9 +11,6 @@
 *.swo
 *~
 
-# Claude context file (local only)
-CLAUDE.md
-
 # OS files
 .DS_Store
 Thumbs.db
