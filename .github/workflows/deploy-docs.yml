@@ -58,6 +58,7 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.OSS_ACCESS_KEY_SECRET }}
           AWS_DEFAULT_REGION: oss-cn-hongkong
         run: |
+          aws configure set default.s3.addressing_style virtual
           aws s3 sync site/ s3://${{ secrets.OSS_BUCKET }}/ \
             --endpoint-url https://${{ secrets.OSS_ENDPOINT }} \
             --delete
