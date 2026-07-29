@@ -54,11 +54,7 @@ phi-agent/
 │   └── logo.svg
 ├── tests/
 │   └── integration_test.rs   # 7 tests with mock LLM client
-├── docs/                     # Design notes (git-ignored, local only)
-│   ├── design.md
-│   ├── forge-tools-design.md
-│   ├── auto-publish-design.md
-│   └── brand-building-plan.md
+├── docs/                     # Public guide (en/ zh/) + git-ignored internal design notes
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md
 ├── SECURITY.md               # Contact: phiagent@hibuka.com

@@ -28,3 +28,6 @@ book/zh/html/
 # Local preview build
 deploy/
 .gstack/
+
+# Internal design docs (root-level only; en/ zh/ guides are public)
+docs/*.md
