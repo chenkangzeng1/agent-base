@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   deploy:
-    name: Deploy to GitHub Pages
+    name: Deploy to GitHub Pages + OSS
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -52,3 +52,14 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
+      - name: Setup ossutil
+        run: |
+          curl -sL https://gosspublic.alicdn.com/ossutil/1.7.19/ossutil-linux-amd64.zip -o ossutil.zip
+          unzip -q ossutil.zip
+          chmod +x ossutil
+          sudo mv ossutil /usr/local/bin/
+
+      - name: Upload to OSS
+        run: |
+          ossutil config -e ${{ secrets.OSS_ENDPOINT }} -i ${{ secrets.OSS_ACCESS_KEY_ID }} -k ${{ secrets.OSS_ACCESS_KEY_SECRET }} -L CH
+          ossutil sync site/ oss://${{ secrets.OSS_BUCKET }}/ --update --delete
