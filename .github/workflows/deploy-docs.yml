@@ -40,6 +40,9 @@ jobs:
       - name: Build
         run: mkdocs build
 
+      - name: Add CNAME for GitHub Pages
+        run: echo 'docs.phiagent.dev' > site/CNAME
+
       - name: Setup Pages
         uses: actions/configure-pages@v4
 
