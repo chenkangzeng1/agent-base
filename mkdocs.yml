@@ -9,6 +9,9 @@ extra_javascript:
   - assets/lang-redirect.js
 
 extra:
+  analytics:
+    provider: google
+    property: G-T4W9LL7DXN
   generator: false
 
 theme:
