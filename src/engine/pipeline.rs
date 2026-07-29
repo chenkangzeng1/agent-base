@@ -6,7 +6,7 @@ use serde_json::Value;
 
 use crate::engine::EventBus;
 use crate::tool::{Tool, ToolContext, ToolControlFlow, ToolOutput, ToolPolicy, TruncationInfo};
-use crate::types::{RuntimeEvent, AgentResult};
+use crate::types::{AgentResult, RuntimeEvent};
 
 /// Pure execution pipeline — cares about *how* to safely execute a tool.
 ///
@@ -63,11 +63,8 @@ impl ToolExecutionPipeline for DefaultPipeline {
 
         // 2. Execute with optional timeout
         let result = if let Some(timeout_ms) = self.tool_timeout_ms {
-            match tokio::time::timeout(
-                Duration::from_millis(timeout_ms),
-                tool.call(args, ctx),
-            )
-            .await
+            match tokio::time::timeout(Duration::from_millis(timeout_ms), tool.call(args, ctx))
+                .await
             {
                 Ok(result) => result,
                 Err(_) => {
@@ -201,11 +198,19 @@ mod tests {
     struct EchoTool;
     #[async_trait]
     impl Tool for EchoTool {
-        fn name(&self) -> &'static str { "echo" }
-        fn definition(&self) -> Value { json!({}) }
+        fn name(&self) -> &'static str {
+            "echo"
+        }
+        fn definition(&self) -> Value {
+            json!({})
+        }
         async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
             Ok(ToolOutput {
-                summary: args.get("msg").and_then(|v| v.as_str()).unwrap_or("ok").to_string(),
+                summary: args
+                    .get("msg")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("ok")
+                    .to_string(),
                 ..Default::default()
             })
         }
@@ -214,19 +219,30 @@ mod tests {
     struct SlowTool;
     #[async_trait]
     impl Tool for SlowTool {
-        fn name(&self) -> &'static str { "slow" }
-        fn definition(&self) -> Value { json!({}) }
+        fn name(&self) -> &'static str {
+            "slow"
+        }
+        fn definition(&self) -> Value {
+            json!({})
+        }
         async fn call(&self, _args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
             tokio::time::sleep(Duration::from_secs(10)).await;
-            Ok(ToolOutput { summary: "done".to_string(), ..Default::default() })
+            Ok(ToolOutput {
+                summary: "done".to_string(),
+                ..Default::default()
+            })
         }
     }
 
     struct FailingTool;
     #[async_trait]
     impl Tool for FailingTool {
-        fn name(&self) -> &'static str { "fail" }
-        fn definition(&self) -> Value { json!({}) }
+        fn name(&self) -> &'static str {
+            "fail"
+        }
+        fn definition(&self) -> Value {
+            json!({})
+        }
         async fn call(&self, _args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
             Err(AgentError::tool_not_found("intentional"))
         }
@@ -239,15 +255,29 @@ mod tests {
     }
     impl TrackingPolicy {
         fn new() -> Self {
-            Self { before_count: AtomicU32::new(0), after_count: AtomicU32::new(0), fail_before: false }
+            Self {
+                before_count: AtomicU32::new(0),
+                after_count: AtomicU32::new(0),
+                fail_before: false,
+            }
         }
         fn fail_before_call() -> Self {
-            Self { before_count: AtomicU32::new(0), after_count: AtomicU32::new(0), fail_before: true }
+            Self {
+                before_count: AtomicU32::new(0),
+                after_count: AtomicU32::new(0),
+                fail_before: true,
+            }
         }
     }
     #[async_trait]
     impl ToolPolicy for TrackingPolicy {
-        async fn evaluate_approval(&self, _: &str, _: &Value) -> Option<crate::types::ApprovalRequest> { None }
+        async fn evaluate_approval(
+            &self,
+            _: &str,
+            _: &Value,
+        ) -> Option<crate::types::ApprovalRequest> {
+            None
+        }
         fn before_call(&self, _name: &str, _args: &Value, _ctx: &ToolContext) -> AgentResult<()> {
             self.before_count.fetch_add(1, Ordering::SeqCst);
             if self.fail_before {
@@ -255,7 +285,13 @@ mod tests {
             }
             Ok(())
         }
-        fn after_call(&self, _name: &str, _args: &Value, _output: &ToolOutput, _ctx: &ToolContext) -> AgentResult<()> {
+        fn after_call(
+            &self,
+            _name: &str,
+            _args: &Value,
+            _output: &ToolOutput,
+            _ctx: &ToolContext,
+        ) -> AgentResult<()> {
             self.after_count.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
@@ -266,7 +302,10 @@ mod tests {
     #[tokio::test]
     async fn basic_execution() {
         let pipeline = DefaultPipeline::new(None, None, None);
-        let output = pipeline.execute(&EchoTool, &json!({"msg": "hello"}), &test_ctx()).await.unwrap();
+        let output = pipeline
+            .execute(&EchoTool, &json!({"msg": "hello"}), &test_ctx())
+            .await
+            .unwrap();
         assert_eq!(output.summary, "hello");
     }
 
@@ -275,7 +314,10 @@ mod tests {
         let policy = Arc::new(TrackingPolicy::new());
         let pipeline = DefaultPipeline::new(Some(policy.clone()), None, None);
 
-        pipeline.execute(&EchoTool, &json!({}), &test_ctx()).await.unwrap();
+        pipeline
+            .execute(&EchoTool, &json!({}), &test_ctx())
+            .await
+            .unwrap();
 
         assert_eq!(policy.before_count.load(Ordering::SeqCst), 1);
         assert_eq!(policy.after_count.load(Ordering::SeqCst), 1);
@@ -295,21 +337,34 @@ mod tests {
     #[tokio::test]
     async fn timeout_fires() {
         let pipeline = DefaultPipeline::new(None, Some(50), None); // 50ms timeout
-        let output = pipeline.execute(&SlowTool, &json!({}), &test_ctx()).await.unwrap();
+        let output = pipeline
+            .execute(&SlowTool, &json!({}), &test_ctx())
+            .await
+            .unwrap();
         assert_eq!(output.summary, "[Tool Timeout]");
     }
 
     #[tokio::test]
     async fn no_timeout_when_tool_fast() {
         let pipeline = DefaultPipeline::new(None, Some(5000), None);
-        let output = pipeline.execute(&EchoTool, &json!({"msg": "fast"}), &test_ctx()).await.unwrap();
+        let output = pipeline
+            .execute(&EchoTool, &json!({"msg": "fast"}), &test_ctx())
+            .await
+            .unwrap();
         assert_eq!(output.summary, "fast");
     }
 
     #[tokio::test]
     async fn truncation_applies() {
         let pipeline = DefaultPipeline::new(None, None, Some(10)); // max 10 chars
-        let output = pipeline.execute(&EchoTool, &json!({"msg": "this is a very long message"}), &test_ctx()).await.unwrap();
+        let output = pipeline
+            .execute(
+                &EchoTool,
+                &json!({"msg": "this is a very long message"}),
+                &test_ctx(),
+            )
+            .await
+            .unwrap();
         assert!(output.summary.len() <= 10);
         assert!(output.truncation.is_some());
         let t = output.truncation.unwrap();
@@ -320,7 +375,10 @@ mod tests {
     #[tokio::test]
     async fn no_truncation_when_short() {
         let pipeline = DefaultPipeline::new(None, None, Some(100));
-        let output = pipeline.execute(&EchoTool, &json!({"msg": "short"}), &test_ctx()).await.unwrap();
+        let output = pipeline
+            .execute(&EchoTool, &json!({"msg": "short"}), &test_ctx())
+            .await
+            .unwrap();
         assert_eq!(output.summary, "short");
         assert!(output.truncation.is_none());
     }
@@ -331,7 +389,14 @@ mod tests {
         // which falls inside a 3-byte CJK char. floor_char_boundary
         // should round down to the nearest char boundary.
         let pipeline = DefaultPipeline::new(None, None, Some(20));
-        let output = pipeline.execute(&EchoTool, &json!({"msg": "这是一个很长的中文消息，用于测试多字节字符的截断处理"}), &test_ctx()).await.unwrap();
+        let output = pipeline
+            .execute(
+                &EchoTool,
+                &json!({"msg": "这是一个很长的中文消息，用于测试多字节字符的截断处理"}),
+                &test_ctx(),
+            )
+            .await
+            .unwrap();
         assert!(output.summary.len() <= 20);
         assert!(output.summary.ends_with("...(truncated)") || output.summary.len() <= 20);
         assert!(output.truncation.is_some());
@@ -341,7 +406,10 @@ mod tests {
     #[tokio::test]
     async fn timeout_plus_truncation() {
         let pipeline = DefaultPipeline::new(None, Some(50), Some(100));
-        let output = pipeline.execute(&SlowTool, &json!({}), &test_ctx()).await.unwrap();
+        let output = pipeline
+            .execute(&SlowTool, &json!({}), &test_ctx())
+            .await
+            .unwrap();
         assert_eq!(output.summary, "[Tool Timeout]");
         assert!(output.truncation.is_none()); // timeout output is short
     }
@@ -349,7 +417,9 @@ mod tests {
     #[tokio::test]
     async fn tool_error_propagates() {
         let pipeline = DefaultPipeline::new(None, None, None);
-        let result = pipeline.execute(&FailingTool, &json!({}), &test_ctx()).await;
+        let result = pipeline
+            .execute(&FailingTool, &json!({}), &test_ctx())
+            .await;
         assert!(result.is_err());
     }
 
@@ -362,7 +432,9 @@ mod tests {
         let mut rx = event_bus.subscribe();
         let pipeline = EventEmittingPipeline::new(inner, event_bus);
 
-        let _ = pipeline.execute(&EchoTool, &json!({"msg": "test"}), &test_ctx()).await;
+        let _ = pipeline
+            .execute(&EchoTool, &json!({"msg": "test"}), &test_ctx())
+            .await;
 
         let mut events = Vec::new();
         while let Ok(event) = rx.try_recv() {
@@ -375,7 +447,9 @@ mod tests {
             _ => panic!("expected ToolCallStarted"),
         }
         match &events[1] {
-            RuntimeEvent::ToolCallFinished { tool_name, summary, .. } => {
+            RuntimeEvent::ToolCallFinished {
+                tool_name, summary, ..
+            } => {
                 assert_eq!(tool_name, "echo");
                 assert_eq!(summary, "test");
             }
@@ -390,7 +464,9 @@ mod tests {
         let mut rx = event_bus.subscribe();
         let pipeline = EventEmittingPipeline::new(inner, event_bus);
 
-        let _ = pipeline.execute(&FailingTool, &json!({}), &test_ctx()).await;
+        let _ = pipeline
+            .execute(&FailingTool, &json!({}), &test_ctx())
+            .await;
 
         let mut events = Vec::new();
         while let Ok(event) = rx.try_recv() {
@@ -413,7 +489,10 @@ mod tests {
         let event_bus = EventBus::new(64);
         let pipeline = EventEmittingPipeline::new(inner, event_bus);
 
-        let output = pipeline.execute(&EchoTool, &json!({"msg": "delegated"}), &test_ctx()).await.unwrap();
+        let output = pipeline
+            .execute(&EchoTool, &json!({"msg": "delegated"}), &test_ctx())
+            .await
+            .unwrap();
         assert_eq!(output.summary, "delegated");
         assert_eq!(policy.before_count.load(Ordering::SeqCst), 1);
         assert_eq!(policy.after_count.load(Ordering::SeqCst), 1);

@@ -1,7 +1,7 @@
-use agent_base::{AgentBuilder, RuntimeEvent, ChatMessage, LlmClient, OpenAiClient, StreamChunk};
+use agent_base::{AgentBuilder, ChatMessage, LlmClient, OpenAiClient, RuntimeEvent, StreamChunk};
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
@@ -41,7 +41,9 @@ impl LlmClient for CaptureLlmClient {
         tools: &[Value],
         reasoning: Option<&agent_base::ReasoningConfig>,
         response_format: Option<&agent_base::ResponseFormat>,
-    ) -> agent_base::AgentResult<Pin<Box<dyn futures_core::Stream<Item = agent_base::AgentResult<StreamChunk>> + Send>>> {
+    ) -> agent_base::AgentResult<
+        Pin<Box<dyn futures_core::Stream<Item = agent_base::AgentResult<StreamChunk>> + Send>>,
+    > {
         // 构造一个模拟的请求 body 来验证参数传递
         let mut body = json!({
             "model": "test-model",
@@ -90,22 +92,35 @@ async fn test_thinking_budget_parameter_passed() {
         .system_prompt("test")
         .enable_thinking(true)
         .thinking_budget(128)
-        .build().unwrap();
+        .build()
+        .unwrap();
 
     let session_id = runtime.create_session().await;
     let _ = runtime.run_turn_collect(session_id, "test").await;
 
     let bodies = llm.captured_bodies();
-    assert!(!bodies.is_empty(), "Should have captured at least one request body");
+    assert!(
+        !bodies.is_empty(),
+        "Should have captured at least one request body"
+    );
 
     let body = &bodies[0];
-    println!("Captured request body: {}", serde_json::to_string_pretty(body).unwrap());
+    println!(
+        "Captured request body: {}",
+        serde_json::to_string_pretty(body).unwrap()
+    );
 
     // 验证 enable_thinking 被正确设置
-    assert_eq!(body["enable_thinking"], true, "enable_thinking should be true");
+    assert_eq!(
+        body["enable_thinking"], true,
+        "enable_thinking should be true"
+    );
 
     // 验证 thinking_budget 被正确设置
-    assert_eq!(body["thinking_budget"], 128, "thinking_budget should be 128");
+    assert_eq!(
+        body["thinking_budget"], 128,
+        "thinking_budget should be 128"
+    );
 }
 
 #[tokio::test]
@@ -119,18 +134,31 @@ async fn test_extra_body_format_for_thinking() {
         .system_prompt("test")
         .enable_thinking(true)
         .thinking_budget(128)
-        .build().unwrap();
+        .build()
+        .unwrap();
 
     let session_id = runtime.create_session().await;
     let _ = runtime.run_turn_collect(session_id, "test").await;
 
     let bodies = llm.captured_bodies();
-    assert!(!bodies.is_empty(), "Should have captured at least one request body");
+    assert!(
+        !bodies.is_empty(),
+        "Should have captured at least one request body"
+    );
 
     let body = &bodies[0];
-    println!("Captured request body: {}", serde_json::to_string_pretty(body).unwrap());
+    println!(
+        "Captured request body: {}",
+        serde_json::to_string_pretty(body).unwrap()
+    );
 
     // 验证参数存在
-    assert!(body.get("enable_thinking").is_some(), "enable_thinking should be present");
-    assert!(body.get("thinking_budget").is_some(), "thinking_budget should be present");
+    assert!(
+        body.get("enable_thinking").is_some(),
+        "enable_thinking should be present"
+    );
+    assert!(
+        body.get("thinking_budget").is_some(),
+        "thinking_budget should be present"
+    );
 }

@@ -16,16 +16,18 @@ mod turn_facts;
 pub use approval::{AllowAllApprovalHandler, ApprovalHandler, DenyAllApprovalHandler};
 pub use builder::AgentBuilder;
 pub use circuit_breaker::{CircuitBreaker, CircuitState};
-pub(crate) use runtime::EventBus;
 pub use context::ContextWindowManager;
 pub use middleware::{Middleware, PostLlmCtx, PreLlmCtx, UserMessageCtx};
 pub use pipeline::{DefaultPipeline, ToolExecutionPipeline};
+pub(crate) use runtime::EventBus;
 
-pub use recovery::{ConsecutiveFailureRecovery, RetryOnError, StopOnError, ToolErrorAction, ToolErrorRecovery};
+pub use crate::types::{AgentResult, ApprovalDecision, ApprovalRequest, RiskLevel, SessionId};
+pub use recovery::{
+    ConsecutiveFailureRecovery, RetryOnError, StopOnError, ToolErrorAction, ToolErrorRecovery,
+};
 pub use runtime::AgentRuntime;
 pub use safety::TurnToolLimitMiddleware;
 pub use session::AgentSession;
 pub use session_store::{InMemorySessionStore, SessionStore};
 pub use tool_enforcement::{ToolEnforcementConfig, ToolEnforcementMiddleware};
 pub use turn_facts::TurnFactMiddleware;
-pub use crate::types::{AgentResult, ApprovalDecision, ApprovalRequest, RiskLevel, SessionId};

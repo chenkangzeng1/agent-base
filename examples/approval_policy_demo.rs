@@ -1,3 +1,5 @@
+use serde_json::{Value, json};
+use std::collections::HashMap;
 /// 演示 ToolPolicy 如何根据计划状态决定是否需要审批
 ///
 /// 问题场景：
@@ -10,11 +12,8 @@
 ///
 /// 运行方式：
 /// cargo run --example approval_policy_demo
-
 use std::sync::Arc;
-use std::collections::HashMap;
 use tokio::sync::RwLock;
-use serde_json::{json, Value};
 
 /// 模拟 PlanStore
 struct MockPlanStore {
@@ -24,7 +23,7 @@ struct MockPlanStore {
 #[derive(Clone)]
 struct PlanData {
     plan_id: String,
-    status: String,  // "awaiting_confirmation", "approved", "executing", etc.
+    status: String, // "awaiting_confirmation", "approved", "executing", etc.
     steps: Vec<StepData>,
 }
 
@@ -32,7 +31,7 @@ struct PlanData {
 struct StepData {
     id: String,
     command: String,
-    risk_level: String,  // "safe", "sensitive", "destructive"
+    risk_level: String, // "safe", "sensitive", "destructive"
 }
 
 impl MockPlanStore {
@@ -83,7 +82,10 @@ impl TestToolPolicy {
 
         // 检查命令风险等级
         let has_sensitive = plan_data.steps.iter().any(|s| s.risk_level == "sensitive");
-        let has_destructive = plan_data.steps.iter().any(|s| s.risk_level == "destructive");
+        let has_destructive = plan_data
+            .steps
+            .iter()
+            .any(|s| s.risk_level == "destructive");
 
         if has_destructive {
             println!("[ToolPolicy] 检测到破坏性命令，需要审批");
@@ -109,17 +111,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 场景 1: 计划状态为 approved（用户已确认）
     println!("--- 场景 1: 用户已确认计划（状态为 approved）---");
-    plan_store.save_plan(PlanData {
-        plan_id: "plan-1".to_string(),
-        status: "approved".to_string(),
-        steps: vec![
-            StepData {
+    plan_store
+        .save_plan(PlanData {
+            plan_id: "plan-1".to_string(),
+            status: "approved".to_string(),
+            steps: vec![StepData {
                 id: "step-1".to_string(),
                 command: "df -h".to_string(),
                 risk_level: "safe".to_string(),
-            },
-        ],
-    }).await;
+            }],
+        })
+        .await;
 
     let args = json!({"plan_id": "plan-1"});
     let result = policy.evaluate_approval("execute_plan", &args).await;
@@ -127,17 +129,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 场景 2: 计划状态为 awaiting_confirmation（等待用户确认），包含敏感命令
     println!("--- 场景 2: 等待用户确认，计划包含敏感命令 ---");
-    plan_store.save_plan(PlanData {
-        plan_id: "plan-2".to_string(),
-        status: "awaiting_confirmation".to_string(),
-        steps: vec![
-            StepData {
+    plan_store
+        .save_plan(PlanData {
+            plan_id: "plan-2".to_string(),
+            status: "awaiting_confirmation".to_string(),
+            steps: vec![StepData {
                 id: "step-1".to_string(),
                 command: "systemctl restart nginx".to_string(),
                 risk_level: "sensitive".to_string(),
-            },
-        ],
-    }).await;
+            }],
+        })
+        .await;
 
     let args = json!({"plan_id": "plan-2"});
     let result = policy.evaluate_approval("execute_plan", &args).await;
@@ -145,22 +147,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 场景 3: 计划状态为 awaiting_confirmation（等待用户确认），所有命令都是安全的
     println!("--- 场景 3: 等待用户确认，所有命令都是安全的 ---");
-    plan_store.save_plan(PlanData {
-        plan_id: "plan-3".to_string(),
-        status: "awaiting_confirmation".to_string(),
-        steps: vec![
-            StepData {
-                id: "step-1".to_string(),
-                command: "df -h".to_string(),
-                risk_level: "safe".to_string(),
-            },
-            StepData {
-                id: "step-2".to_string(),
-                command: "free -m".to_string(),
-                risk_level: "safe".to_string(),
-            },
-        ],
-    }).await;
+    plan_store
+        .save_plan(PlanData {
+            plan_id: "plan-3".to_string(),
+            status: "awaiting_confirmation".to_string(),
+            steps: vec![
+                StepData {
+                    id: "step-1".to_string(),
+                    command: "df -h".to_string(),
+                    risk_level: "safe".to_string(),
+                },
+                StepData {
+                    id: "step-2".to_string(),
+                    command: "free -m".to_string(),
+                    risk_level: "safe".to_string(),
+                },
+            ],
+        })
+        .await;
 
     let args = json!({"plan_id": "plan-3"});
     let result = policy.evaluate_approval("execute_plan", &args).await;
@@ -168,17 +172,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // 场景 4: 计划状态为 awaiting_confirmation（等待用户确认），包含破坏性命令
     println!("--- 场景 4: 等待用户确认，包含破坏性命令 ---");
-    plan_store.save_plan(PlanData {
-        plan_id: "plan-4".to_string(),
-        status: "awaiting_confirmation".to_string(),
-        steps: vec![
-            StepData {
+    plan_store
+        .save_plan(PlanData {
+            plan_id: "plan-4".to_string(),
+            status: "awaiting_confirmation".to_string(),
+            steps: vec![StepData {
                 id: "step-1".to_string(),
                 command: "rm -rf /tmp/*".to_string(),
                 risk_level: "destructive".to_string(),
-            },
-        ],
-    }).await;
+            }],
+        })
+        .await;
 
     let args = json!({"plan_id": "plan-4"});
     let result = policy.evaluate_approval("execute_plan", &args).await;

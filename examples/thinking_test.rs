@@ -91,8 +91,7 @@ async fn main() -> AgentResult<()> {
         .or_else(|_| std::env::var("DASHSCOPE_API_KEY"))
         .map_err(|_| agent_base::AgentError::internal("OPENAI_API_KEY 未设置"))?;
 
-    let model = std::env::var("OPENAI_MODEL")
-        .unwrap_or_else(|_| "qwen-flash".to_string());
+    let model = std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "qwen-flash".to_string());
 
     let base_url = std::env::var("OPENAI_BASE_URL")
         .unwrap_or_else(|_| "https://dashscope.aliyuncs.com/compatible-mode/v1".to_string());
@@ -109,33 +108,76 @@ async fn main() -> AgentResult<()> {
 
     // 测试1: enable_thinking=false（无思考，对照）
     results.push(
-        run_test(&client, "测试1: enable_thinking=false", system_prompt, user_input, Some(false), None).await?,
+        run_test(
+            &client,
+            "测试1: enable_thinking=false",
+            system_prompt,
+            user_input,
+            Some(false),
+            None,
+        )
+        .await?,
     );
 
     // 测试2: enable_thinking=true, 无 budget
     results.push(
-        run_test(&client, "测试2: enable_thinking=true, 无 thinking_budget", system_prompt, user_input, Some(true), None).await?,
+        run_test(
+            &client,
+            "测试2: enable_thinking=true, 无 thinking_budget",
+            system_prompt,
+            user_input,
+            Some(true),
+            None,
+        )
+        .await?,
     );
 
     // 测试3: enable_thinking=true, thinking_budget=128
     results.push(
-        run_test(&client, "测试3: thinking_budget=128", system_prompt, user_input, Some(true), Some(128)).await?,
+        run_test(
+            &client,
+            "测试3: thinking_budget=128",
+            system_prompt,
+            user_input,
+            Some(true),
+            Some(128),
+        )
+        .await?,
     );
 
     // 测试4: enable_thinking=true, thinking_budget=50（极低）
     results.push(
-        run_test(&client, "测试4: thinking_budget=50", system_prompt, user_input, Some(true), Some(50)).await?,
+        run_test(
+            &client,
+            "测试4: thinking_budget=50",
+            system_prompt,
+            user_input,
+            Some(true),
+            Some(50),
+        )
+        .await?,
     );
 
     // 测试5: enable_thinking=true, thinking_budget=10（极低）
     results.push(
-        run_test(&client, "测试5: thinking_budget=10", system_prompt, user_input, Some(true), Some(10)).await?,
+        run_test(
+            &client,
+            "测试5: thinking_budget=10",
+            system_prompt,
+            user_input,
+            Some(true),
+            Some(10),
+        )
+        .await?,
     );
 
     println!("\n\n{}", "=".repeat(60));
     println!("结果汇总");
     println!("{}", "=".repeat(60));
-    println!("{:<6} {:<30} {:>12} {:>12}", "测试", "配置", "思考(字符)", "回复(字符)");
+    println!(
+        "{:<6} {:<30} {:>12} {:>12}",
+        "测试", "配置", "思考(字符)", "回复(字符)"
+    );
     println!("{:-<6} {:-<30} {:->12} {:->12}", "", "", "", "");
     for (i, (t, r)) in results.iter().enumerate() {
         let label = match i {

@@ -21,7 +21,10 @@ pub enum UserEvent {
     /// Tool progress notification.
     Progress { text: String },
     /// Sub-agent event forwarding (used by `SubAgentTool`).
-    SubAgentEvent { subagent: String, event: Box<RuntimeEvent> },
+    SubAgentEvent {
+        subagent: String,
+        event: Box<RuntimeEvent>,
+    },
     /// User-defined structured event for custom business semantics.
     Structured { event_type: String, data: Value },
 }
@@ -36,19 +39,51 @@ pub enum UserEvent {
 #[serde(tag = "runtimeEventType", rename_all = "camelCase")]
 pub enum RuntimeEvent {
     // --- Framework system events ---
-    TextDelta { session_id: SessionId, text: String },
-    ThoughtDelta { session_id: SessionId, text: String },
-    ToolCallStarted { session_id: SessionId, tool_name: String, args_json: String },
-    ToolCallFinished { session_id: SessionId, tool_name: String, summary: String },
-    AwaitingApproval { session_id: SessionId, request: ApprovalRequest },
-    Checkpoint { session_id: SessionId, checkpoint: CheckpointData },
-    RunFinished { session_id: SessionId },
-    RunCancelled { session_id: SessionId },
+    TextDelta {
+        session_id: SessionId,
+        text: String,
+    },
+    ThoughtDelta {
+        session_id: SessionId,
+        text: String,
+    },
+    ToolCallStarted {
+        session_id: SessionId,
+        tool_name: String,
+        args_json: String,
+    },
+    ToolCallFinished {
+        session_id: SessionId,
+        tool_name: String,
+        summary: String,
+    },
+    AwaitingApproval {
+        session_id: SessionId,
+        request: ApprovalRequest,
+    },
+    Checkpoint {
+        session_id: SessionId,
+        checkpoint: CheckpointData,
+    },
+    RunFinished {
+        session_id: SessionId,
+    },
+    RunCancelled {
+        session_id: SessionId,
+    },
     // --- Lightweight plan update (display-only, no execution semantics) ---
-    PlanUpdated { session_id: SessionId, objective: String, explanation: Option<String>, plan: Vec<PlanItem> },
+    PlanUpdated {
+        session_id: SessionId,
+        objective: String,
+        explanation: Option<String>,
+        plan: Vec<PlanItem>,
+    },
     // --- User-space events ---
     /// A user-space event produced by a tool.
-    UserEvent { session_id: SessionId, event: UserEvent },
+    UserEvent {
+        session_id: SessionId,
+        event: UserEvent,
+    },
 }
 
 impl RuntimeEvent {

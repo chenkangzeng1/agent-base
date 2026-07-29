@@ -30,9 +30,7 @@ pub struct ToolEnforcementMiddleware {
 
 impl ToolEnforcementMiddleware {
     pub fn new(config: ToolEnforcementConfig) -> Self {
-        Self {
-            config,
-        }
+        Self { config }
     }
 }
 

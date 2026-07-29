@@ -2,7 +2,7 @@ use std::fmt::Write;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::engine::EventBus;
 use crate::tool::{FrameworkTool, Tool, ToolContext, ToolOutput};
@@ -35,7 +35,10 @@ fn normalize_step_text(raw: &str) -> String {
     let text = raw.trim();
 
     // Step 1: Strip "Step N: " / "step N. " prefix (English)
-    let text = if let Some(rest) = text.strip_prefix("Step").or_else(|| text.strip_prefix("step")) {
+    let text = if let Some(rest) = text
+        .strip_prefix("Step")
+        .or_else(|| text.strip_prefix("step"))
+    {
         let rest = rest.trim_start_matches(|c: char| c.is_ascii_digit() || c == ' ');
         rest.trim_start_matches(|c: char| c == ':' || c == '.' || c == ')' || c == ' ')
     } else {
@@ -48,11 +51,16 @@ fn normalize_step_text(raw: &str) -> String {
         let rest = rest.trim_start_matches(|c: char| {
             c.is_ascii_digit()
                 || c == ' '
-                || matches!(c, '一' | '二' | '三' | '四' | '五' | '六' | '七' | '八' | '九' | '十')
+                || matches!(
+                    c,
+                    '一' | '二' | '三' | '四' | '五' | '六' | '七' | '八' | '九' | '十'
+                )
         });
         // Strip "步" and following punctuation/whitespace
         rest.strip_prefix('步')
-            .map(|r| r.trim_start_matches(|c: char| matches!(c, '：' | ':' | '、' | '.' | ')' | ' ')))
+            .map(|r| {
+                r.trim_start_matches(|c: char| matches!(c, '：' | ':' | '、' | '.' | ')' | ' '))
+            })
             .unwrap_or(text)
     } else {
         text
@@ -188,11 +196,12 @@ impl Tool for UpdatePlanTool {
     }
 
     async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
-        let plan_args: UpdatePlanArgs = serde_json::from_value(args.clone())
-            .map_err(|e| crate::types::AgentError::ToolArgsInvalid {
+        let plan_args: UpdatePlanArgs = serde_json::from_value(args.clone()).map_err(|e| {
+            crate::types::AgentError::ToolArgsInvalid {
                 name: "update_plan".to_string(),
                 raw: format!("deserialization error: {e}"),
-            })?;
+            }
+        })?;
 
         // Validate
         if let Err(validation_err) = plan_args.validate() {
@@ -208,13 +217,12 @@ impl Tool for UpdatePlanTool {
                 *self.last_objective.lock().unwrap() = Some(obj.clone());
                 obj.clone()
             }
-            None => {
-                self.last_objective
-                    .lock()
-                    .unwrap()
-                    .clone()
-                    .unwrap_or_else(|| "(no objective specified)".to_string())
-            }
+            None => self
+                .last_objective
+                .lock()
+                .unwrap()
+                .clone()
+                .unwrap_or_else(|| "(no objective specified)".to_string()),
         };
 
         // Normalize step text for consistent UI rendering
@@ -242,14 +250,11 @@ impl Tool for UpdatePlanTool {
         // normalized_plan into the event instead of cloning it).
         let raw = Some(serde_json::to_value(&normalized_plan).unwrap_or_default());
 
-        let mut summary = format!(
-            "📋 {}: {}/{} steps completed",
-            objective, completed, total
-        );
+        let mut summary = format!("📋 {}: {}/{} steps completed", objective, completed, total);
         if in_progress > 0 {
-            let current = normalized_plan.iter().find(|item| {
-                item.status == crate::types::PlanStepStatus::InProgress
-            });
+            let current = normalized_plan
+                .iter()
+                .find(|item| item.status == crate::types::PlanStepStatus::InProgress);
             if let Some(item) = current {
                 write!(summary, ". Current: \"{}\"", item.step).unwrap();
             }
@@ -292,9 +297,18 @@ mod tests {
             objective: Some("安装 Docker".into()),
             explanation: None,
             plan: vec![
-                PlanItem { step: "Step 1".into(), status: PlanStepStatus::Completed },
-                PlanItem { step: "Step 2".into(), status: PlanStepStatus::InProgress },
-                PlanItem { step: "Step 3".into(), status: PlanStepStatus::Pending },
+                PlanItem {
+                    step: "Step 1".into(),
+                    status: PlanStepStatus::Completed,
+                },
+                PlanItem {
+                    step: "Step 2".into(),
+                    status: PlanStepStatus::InProgress,
+                },
+                PlanItem {
+                    step: "Step 3".into(),
+                    status: PlanStepStatus::Pending,
+                },
             ],
         };
         assert!(args.validate().is_ok());
@@ -303,9 +317,10 @@ mod tests {
         let args = UpdatePlanArgs {
             objective: None,
             explanation: None,
-            plan: vec![
-                PlanItem { step: "Step 1".into(), status: PlanStepStatus::Pending },
-            ],
+            plan: vec![PlanItem {
+                step: "Step 1".into(),
+                status: PlanStepStatus::Pending,
+            }],
         };
         assert!(args.validate().is_ok());
 
@@ -313,9 +328,10 @@ mod tests {
         let args = UpdatePlanArgs {
             objective: Some("".into()),
             explanation: None,
-            plan: vec![
-                PlanItem { step: "Step 1".into(), status: PlanStepStatus::Pending },
-            ],
+            plan: vec![PlanItem {
+                step: "Step 1".into(),
+                status: PlanStepStatus::Pending,
+            }],
         };
         assert!(args.validate().is_err());
 
@@ -332,8 +348,14 @@ mod tests {
             objective: Some("安装 Docker".into()),
             explanation: None,
             plan: vec![
-                PlanItem { step: "Step 1".into(), status: PlanStepStatus::InProgress },
-                PlanItem { step: "Step 2".into(), status: PlanStepStatus::InProgress },
+                PlanItem {
+                    step: "Step 1".into(),
+                    status: PlanStepStatus::InProgress,
+                },
+                PlanItem {
+                    step: "Step 2".into(),
+                    status: PlanStepStatus::InProgress,
+                },
             ],
         };
         assert!(args.validate().is_err());
@@ -342,9 +364,10 @@ mod tests {
         let args = UpdatePlanArgs {
             objective: Some("安装 Docker".into()),
             explanation: None,
-            plan: vec![
-                PlanItem { step: "  ".into(), status: PlanStepStatus::Pending },
-            ],
+            plan: vec![PlanItem {
+                step: "  ".into(),
+                status: PlanStepStatus::Pending,
+            }],
         };
         assert!(args.validate().is_err());
     }
@@ -354,7 +377,10 @@ mod tests {
         // Strip number prefixes
         assert_eq!(normalize_step_text("1. 安装 Docker"), "安装 Docker");
         assert_eq!(normalize_step_text("2) 添加 GPG 密钥"), "添加 GPG 密钥");
-        assert_eq!(normalize_step_text("(3) 更新 APT 包列表"), "更新 APT 包列表");
+        assert_eq!(
+            normalize_step_text("(3) 更新 APT 包列表"),
+            "更新 APT 包列表"
+        );
         assert_eq!(normalize_step_text("Step 1: 安装 Docker"), "安装 Docker");
         assert_eq!(normalize_step_text("step 2: 更新包列表"), "更新包列表");
         assert_eq!(normalize_step_text("1、配置仓库"), "配置仓库");

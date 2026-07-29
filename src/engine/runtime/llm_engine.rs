@@ -7,9 +7,9 @@ use futures_util::StreamExt;
 use serde_json::Value;
 use tracing::Span;
 
-use crate::llm::{LlmClient, ReasoningConfig, StreamChunk, UsageInfo};
-use crate::types::{RuntimeEvent, AgentResult, ChatMessage, SessionId};
 use crate::engine::runtime::event_bus::EventBus;
+use crate::llm::{LlmClient, ReasoningConfig, StreamChunk, UsageInfo};
+use crate::types::{AgentResult, ChatMessage, RuntimeEvent, SessionId};
 
 pub struct LlmEngine {
     client: RwLock<Arc<dyn LlmClient>>,
@@ -18,7 +18,10 @@ pub struct LlmEngine {
 
 impl LlmEngine {
     pub(crate) fn new(client: Arc<dyn LlmClient>, event_bus: EventBus) -> Self {
-        Self { client: RwLock::new(client), event_bus }
+        Self {
+            client: RwLock::new(client),
+            event_bus,
+        }
     }
 
     /// Get a clone of the current LLM client.
@@ -38,8 +41,13 @@ impl LlmEngine {
         reasoning: Option<&ReasoningConfig>,
         response_format: Option<&crate::types::ResponseFormat>,
     ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
-        tracing::info!(msg_count = messages.len(), tool_count = tool_definitions.len(), "LLM chat_stream: sending request to API");
-        let result = self.get_client()
+        tracing::info!(
+            msg_count = messages.len(),
+            tool_count = tool_definitions.len(),
+            "LLM chat_stream: sending request to API"
+        );
+        let result = self
+            .get_client()
             .chat_stream(messages, tool_definitions, reasoning, response_format)
             .await;
         match &result {

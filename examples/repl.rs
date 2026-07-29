@@ -2,13 +2,13 @@ use std::io::{self, Write};
 use std::sync::Arc;
 
 use agent_base::{
-    AgentBuilder, AgentError, AgentResult, ApprovalDecision, ApprovalHandler,
-    ApprovalRequest, OpenAiClient, RiskLevel, RuntimeEvent, Tool, ToolContext,
-    ToolControlFlow, ToolOutput, ToolPolicy,
+    AgentBuilder, AgentError, AgentResult, ApprovalDecision, ApprovalHandler, ApprovalRequest,
+    OpenAiClient, RiskLevel, RuntimeEvent, Tool, ToolContext, ToolControlFlow, ToolOutput,
+    ToolPolicy,
 };
 use async_trait::async_trait;
 use dotenvy::dotenv;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 // ---------------------------------------------------------------------------
 // Arithmetic tools
@@ -188,7 +188,11 @@ struct CliApprovalHandler;
 
 #[async_trait]
 impl ApprovalHandler for CliApprovalHandler {
-    async fn approve(&self, request: ApprovalRequest, _cancel_token: tokio_util::sync::CancellationToken) -> AgentResult<ApprovalDecision> {
+    async fn approve(
+        &self,
+        request: ApprovalRequest,
+        _cancel_token: tokio_util::sync::CancellationToken,
+    ) -> AgentResult<ApprovalDecision> {
         println!();
         println!("[Approval request] {}", request.title);
         println!("  Risk level: {:?}", request.risk_level);
@@ -231,7 +235,9 @@ impl EventPrinter {
                 io::stdout().flush().unwrap();
             }
             RuntimeEvent::ToolCallStarted {
-                tool_name, args_json, ..
+                tool_name,
+                args_json,
+                ..
             } => {
                 println!();
                 println!("[Tool call] {} (with args: {})", tool_name, args_json);
@@ -266,11 +272,7 @@ struct ArithmeticToolPolicy;
 
 #[async_trait]
 impl ToolPolicy for ArithmeticToolPolicy {
-    async fn evaluate_approval(
-        &self,
-        tool_name: &str,
-        _args: &Value,
-    ) -> Option<ApprovalRequest> {
+    async fn evaluate_approval(&self, tool_name: &str, _args: &Value) -> Option<ApprovalRequest> {
         if tool_name == "divide" {
             return Some(ApprovalRequest {
                 title: "Division operation".to_string(),
@@ -319,7 +321,11 @@ async fn main() -> AgentResult<()> {
 
     let api_key = std::env::var("OPENAI_API_KEY")
         .or_else(|_| std::env::var("DASHSCOPE_API_KEY"))
-        .map_err(|_| AgentError::internal("Please set OPENAI_API_KEY or DASHSCOPE_API_KEY environment variable"))?;
+        .map_err(|_| {
+            AgentError::internal(
+                "Please set OPENAI_API_KEY or DASHSCOPE_API_KEY environment variable",
+            )
+        })?;
 
     let model = std::env::var("OPENAI_MODEL")
         .or_else(|_| std::env::var("DASHSCOPE_MODEL"))
@@ -341,7 +347,8 @@ async fn main() -> AgentResult<()> {
         .register_tool(DivideTool)
         .tool_policy(Arc::new(ArithmeticToolPolicy))
         .approval_handler(Arc::new(CliApprovalHandler))
-        .build().unwrap();
+        .build()
+        .unwrap();
 
     let mut session_id = runtime.create_session().await;
 
@@ -373,7 +380,9 @@ async fn main() -> AgentResult<()> {
         }
 
         match runtime
-            .run_turn(session_id.clone(), &input, |event| EventPrinter::handle(event))
+            .run_turn(session_id.clone(), &input, |event| {
+                EventPrinter::handle(event)
+            })
             .await
         {
             Ok(_outcome) => {}

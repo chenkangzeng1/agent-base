@@ -72,10 +72,7 @@ impl RetryConfig {
 #[derive(Clone, Debug)]
 pub enum ResponseFormat {
     JsonObject,
-    JsonSchema {
-        name: String,
-        schema: Value,
-    },
+    JsonSchema { name: String, schema: Value },
 }
 
 impl ResponseFormat {
@@ -170,7 +167,6 @@ impl Default for AgentConfig {
 }
 
 impl AgentConfig {
-
     /// Validate the configuration, returning an error for invalid values.
     pub fn validate(&self) -> crate::types::AgentResult<()> {
         use crate::types::AgentError;

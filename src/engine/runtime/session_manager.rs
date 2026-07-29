@@ -4,10 +4,12 @@ use std::time::Instant;
 
 use tokio::sync::{Mutex, RwLock};
 
-use crate::engine::context::ContextWindowManager;
-use crate::types::{AgentError, AgentResult, MessageRole, SessionId, SessionIdGenerator, SessionConfig};
-use crate::engine::session_store::SessionStore;
 use crate::engine::AgentSession;
+use crate::engine::context::ContextWindowManager;
+use crate::engine::session_store::SessionStore;
+use crate::types::{
+    AgentError, AgentResult, MessageRole, SessionConfig, SessionId, SessionIdGenerator,
+};
 
 #[derive(Clone)]
 pub struct SessionManager {
@@ -74,7 +76,9 @@ impl SessionManager {
                 let msg_count = session.chat_messages().len();
                 // Validate the restored message sequence — corrupt persisted data
                 // would cause LLM API errors downstream, so warn early.
-                if let Err(e) = crate::engine::session::validate_message_sequence(session.chat_messages()) {
+                if let Err(e) =
+                    crate::engine::session::validate_message_sequence(session.chat_messages())
+                {
                     tracing::warn!(session_id = session_id.id, error = %e, "restored session has invalid message sequence");
                 }
                 // Evict before inserting to make room if needed
@@ -87,7 +91,11 @@ impl SessionManager {
                     let mut lru = self.lru_times.lock().await;
                     lru.insert(session_id.clone(), Instant::now());
                 }
-                tracing::debug!(session_id = session_id.id, msg_count, "session restored from store");
+                tracing::debug!(
+                    session_id = session_id.id,
+                    msg_count,
+                    "session restored from store"
+                );
                 Some(session)
             }
             Ok(None) => {
@@ -167,7 +175,10 @@ impl SessionManager {
         let session = self.session_or_err(session_id).await?;
         let msg_count = session.chat_messages().len();
         tracing::debug!(session_id = session_id.id, msg_count, "saving session");
-        self.session_store.save(&session).await.map_err(|e| AgentError::internal(format!("Session persistence failed: {e}")))
+        self.session_store
+            .save(&session)
+            .await
+            .map_err(|e| AgentError::internal(format!("Session persistence failed: {e}")))
     }
 
     pub fn session_store(&self) -> &Arc<dyn SessionStore> {

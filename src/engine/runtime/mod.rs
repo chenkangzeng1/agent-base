@@ -2,11 +2,11 @@ use std::sync::Arc;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::engine::session_store::SessionStore;
 use crate::engine::AgentSession;
+use crate::engine::session_store::SessionStore;
 use crate::types::{
-    AgentConfig, AgentError, AgentResult, CheckpointData,
-    MessageRole, RunOutcome, RuntimeEvent, SessionId,
+    AgentConfig, AgentError, AgentResult, CheckpointData, MessageRole, RunOutcome, RuntimeEvent,
+    SessionId,
 };
 
 use super::approval::ApprovalHandler;
@@ -14,17 +14,17 @@ use super::approval::ApprovalHandler;
 mod event_bus;
 pub(crate) use event_bus::EventBus;
 mod llm_engine;
+mod plan_runner;
 mod react_loop;
 mod session_manager;
 mod tool_engine;
-mod plan_runner;
 
 pub(super) const DEFAULT_MAX_TURNS: u32 = 50;
 
 pub use llm_engine::LlmEngine;
+pub(crate) use plan_runner::RuntimeCore;
 pub use session_manager::SessionManager;
 pub(crate) use tool_engine::ToolEngine;
-pub(crate) use plan_runner::RuntimeCore;
 
 #[derive(Clone)]
 pub struct AgentRuntime {
@@ -34,11 +34,17 @@ pub struct AgentRuntime {
 impl AgentRuntime {
     pub async fn create_session(&self) -> SessionId {
         let config = self.runner.config.read().await;
-        self.runner.session_manager.create_session(config.system_prompt.as_deref()).await
+        self.runner
+            .session_manager
+            .create_session(config.system_prompt.as_deref())
+            .await
     }
 
     pub async fn restore_session(&self, session_id: &SessionId) -> Option<AgentSession> {
-        self.runner.session_manager.restore_session(session_id).await
+        self.runner
+            .session_manager
+            .restore_session(session_id)
+            .await
     }
 
     pub async fn session(&self, session_id: &SessionId) -> Option<AgentSession> {
@@ -53,7 +59,10 @@ impl AgentRuntime {
     where
         F: FnOnce(&mut AgentSession) -> R,
     {
-        self.runner.session_manager.with_session_mut(session_id, f).await
+        self.runner
+            .session_manager
+            .with_session_mut(session_id, f)
+            .await
     }
 
     pub fn emit_event(&self, event: RuntimeEvent) {
@@ -127,14 +136,24 @@ impl AgentRuntime {
     }
 
     pub async fn cached_approval(&self, session_id: &SessionId, action_key: &str) -> bool {
-        self.runner.session_manager.cached_approval(session_id, action_key).await
+        self.runner
+            .session_manager
+            .cached_approval(session_id, action_key)
+            .await
     }
 
     pub async fn cache_approval(&self, session_id: &SessionId, action_key: String) {
-        self.runner.session_manager.cache_approval(session_id, action_key).await
+        self.runner
+            .session_manager
+            .cache_approval(session_id, action_key)
+            .await
     }
 
-    pub async fn save_checkpoint(&self, session_id: &SessionId, checkpoint: CheckpointData) -> AgentResult<()> {
+    pub async fn save_checkpoint(
+        &self,
+        session_id: &SessionId,
+        checkpoint: CheckpointData,
+    ) -> AgentResult<()> {
         self.emit_event(RuntimeEvent::Checkpoint {
             session_id: session_id.clone(),
             checkpoint,
@@ -142,15 +161,15 @@ impl AgentRuntime {
         Ok(())
     }
 
-    pub async fn load_checkpoint(&self, _session_id: &SessionId, _checkpoint: &CheckpointData) -> AgentResult<Option<CheckpointData>> {
+    pub async fn load_checkpoint(
+        &self,
+        _session_id: &SessionId,
+        _checkpoint: &CheckpointData,
+    ) -> AgentResult<Option<CheckpointData>> {
         Ok(None)
     }
 
-    pub async fn run<F>(
-        &self,
-        session_id: SessionId,
-        on_event: F,
-    ) -> AgentResult<RunOutcome>
+    pub async fn run<F>(&self, session_id: SessionId, on_event: F) -> AgentResult<RunOutcome>
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
@@ -177,28 +196,47 @@ impl AgentRuntime {
         self.runner.run_turn_collect(session_id, user_input).await
     }
 
-    pub async fn add_user_message(&self, session_id: &SessionId, text: impl Into<String>) -> AgentResult<()> {
+    pub async fn add_user_message(
+        &self,
+        session_id: &SessionId,
+        text: impl Into<String>,
+    ) -> AgentResult<()> {
         let text = text.into();
         self.with_session_mut(session_id, |session| {
             session.push_message(MessageRole::User, &text);
-        }).await
+        })
+        .await
     }
 
-    pub async fn add_system_message(&self, session_id: &SessionId, text: impl Into<String>) -> AgentResult<()> {
+    pub async fn add_system_message(
+        &self,
+        session_id: &SessionId,
+        text: impl Into<String>,
+    ) -> AgentResult<()> {
         let text = text.into();
         self.with_session_mut(session_id, |session| {
             session.push_message(MessageRole::System, &text);
-        }).await
+        })
+        .await
     }
 
-    pub async fn add_tool_result(&self, session_id: &SessionId, tool_call_id: &str, summary: impl Into<String>) -> AgentResult<()> {
+    pub async fn add_tool_result(
+        &self,
+        session_id: &SessionId,
+        tool_call_id: &str,
+        summary: impl Into<String>,
+    ) -> AgentResult<()> {
         let summary = summary.into();
         self.with_session_mut(session_id, |session| {
             session.push_tool_result(tool_call_id, summary.clone());
-        }).await
+        })
+        .await
     }
 
-    pub async fn get_messages(&self, session_id: &SessionId) -> AgentResult<Vec<crate::types::ChatMessage>> {
+    pub async fn get_messages(
+        &self,
+        session_id: &SessionId,
+    ) -> AgentResult<Vec<crate::types::ChatMessage>> {
         let session = self.session_or_err(session_id).await?;
         Ok(session.chat_messages().to_vec())
     }
@@ -212,14 +250,19 @@ impl AgentRuntime {
         session_id: &SessionId,
         messages: Vec<crate::types::ChatMessage>,
     ) -> AgentResult<()> {
-        self.with_session_mut(session_id, |session| {
-            session.set_chat_messages(messages)
-        }).await?
-        .map_err(|e| AgentError::internal(e))
+        self.with_session_mut(session_id, |session| session.set_chat_messages(messages))
+            .await?
+            .map_err(|e| AgentError::internal(e))
     }
 
     pub async fn validate_session(&self, session_id: &SessionId) -> AgentResult<()> {
-        if self.runner.session_manager.session(session_id).await.is_none() {
+        if self
+            .runner
+            .session_manager
+            .session(session_id)
+            .await
+            .is_none()
+        {
             return Err(AgentError::session_not_found(session_id.id));
         }
         Ok(())

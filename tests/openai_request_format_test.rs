@@ -1,6 +1,6 @@
 use agent_base::{ChatMessage, LlmClient, OpenAiClient, StreamChunk};
 use futures_util::StreamExt;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// 测试 OpenAiClient 生成的请求 body 格式
 /// 这个测试不实际发送 HTTP 请求，而是通过日志验证请求 body 结构

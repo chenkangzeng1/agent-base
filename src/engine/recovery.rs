@@ -108,9 +108,10 @@ impl ToolErrorRecovery for ConsecutiveFailureRecovery {
         tool_names: &[String],
         _error: &AgentError,
     ) -> AgentResult<ToolErrorAction> {
-        let mut counts = self.failure_counts.lock().map_err(|e| {
-            AgentError::internal(format!("Failed to lock failure counts: {}", e))
-        })?;
+        let mut counts = self
+            .failure_counts
+            .lock()
+            .map_err(|e| AgentError::internal(format!("Failed to lock failure counts: {}", e)))?;
 
         let session_counts = counts.entry(session_id.id).or_insert_with(HashMap::new);
 

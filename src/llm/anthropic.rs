@@ -3,11 +3,11 @@ use eventsource_stream::Eventsource;
 use futures_core::Stream;
 use futures_util::StreamExt;
 use reqwest::Client;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::pin::Pin;
 
-use crate::types::{AgentResult, AgentError, ChatMessage, ImageAttachment, ResponseFormat};
 use super::{LlmCapabilities, LlmClient, ReasoningConfig, StreamChunk, UsageInfo};
+use crate::types::{AgentError, AgentResult, ChatMessage, ImageAttachment, ResponseFormat};
 
 pub struct AnthropicClient {
     api_key: String,
@@ -18,10 +18,20 @@ pub struct AnthropicClient {
 
 impl AnthropicClient {
     pub fn new(api_key: String, model: String, base_url: Option<String>) -> Self {
-        Self::new_with_config(api_key, model, base_url, crate::llm::LlmClientConfig::default())
+        Self::new_with_config(
+            api_key,
+            model,
+            base_url,
+            crate::llm::LlmClientConfig::default(),
+        )
     }
 
-    pub fn new_with_config(api_key: String, model: String, base_url: Option<String>, config: crate::llm::LlmClientConfig) -> Self {
+    pub fn new_with_config(
+        api_key: String,
+        model: String,
+        base_url: Option<String>,
+        config: crate::llm::LlmClientConfig,
+    ) -> Self {
         let client = Client::builder()
             .connect_timeout(config.connect_timeout)
             .timeout(config.request_timeout)
@@ -35,8 +45,7 @@ impl AnthropicClient {
         Self {
             api_key,
             model,
-            base_url: base_url
-                .unwrap_or_else(|| "https://api.anthropic.com".to_string()),
+            base_url: base_url.unwrap_or_else(|| "https://api.anthropic.com".to_string()),
             client,
         }
     }
@@ -50,7 +59,9 @@ impl AnthropicClient {
                 ChatMessage::System { content, .. } => {
                     system_prompt = Some(content.clone());
                 }
-                ChatMessage::User { content, images, .. } => {
+                ChatMessage::User {
+                    content, images, ..
+                } => {
                     let mut content_parts: Vec<Value> = Vec::new();
                     content_parts.push(json!({"type": "text", "text": content}));
                     for img in images {
@@ -64,7 +75,11 @@ impl AnthropicClient {
                                     }
                                 }));
                             }
-                            ImageAttachment::Base64 { data, media_type, detail: _ } => {
+                            ImageAttachment::Base64 {
+                                data,
+                                media_type,
+                                detail: _,
+                            } => {
                                 let mime = media_type.as_deref().unwrap_or("image/jpeg");
                                 content_parts.push(json!({
                                     "type": "image",
@@ -82,7 +97,11 @@ impl AnthropicClient {
                         "content": content_parts,
                     }));
                 }
-                ChatMessage::Assistant { content, reasoning_content: _, tool_calls } => {
+                ChatMessage::Assistant {
+                    content,
+                    reasoning_content: _,
+                    tool_calls,
+                } => {
                     let mut parts: Vec<Value> = Vec::new();
                     if let Some(text) = content {
                         if !text.is_empty() {
@@ -91,8 +110,8 @@ impl AnthropicClient {
                     }
                     if let Some(tc) = tool_calls {
                         for t in tc {
-                            let input: Value = serde_json::from_str(&t.arguments)
-                                .unwrap_or(Value::Null);
+                            let input: Value =
+                                serde_json::from_str(&t.arguments).unwrap_or(Value::Null);
                             parts.push(json!({
                                 "type": "tool_use",
                                 "id": t.id,
@@ -105,7 +124,10 @@ impl AnthropicClient {
                         result.push(json!({"role": "assistant", "content": parts}));
                     }
                 }
-                ChatMessage::Tool { tool_call_id, content } => {
+                ChatMessage::Tool {
+                    tool_call_id,
+                    content,
+                } => {
                     result.push(json!({
                         "role": "user",
                         "content": [{
@@ -127,10 +149,12 @@ impl AnthropicClient {
             .filter_map(|tool| {
                 let func = tool.get("function")?;
                 let name = func.get("name")?.as_str()?;
-                let description = func.get("description")
+                let description = func
+                    .get("description")
                     .and_then(Value::as_str)
                     .unwrap_or("");
-                let input_schema = func.get("parameters")
+                let input_schema = func
+                    .get("parameters")
                     .cloned()
                     .unwrap_or_else(|| json!({"type": "object"}));
                 Some(json!({
@@ -224,8 +248,16 @@ impl AnthropicClient {
                 let idx = data.get("index").and_then(Value::as_u64).unwrap_or(0);
                 if let Some(cb) = cb {
                     if cb.get("type").and_then(Value::as_str) == Some("tool_use") {
-                        let id = cb.get("id").and_then(Value::as_str).unwrap_or("").to_string();
-                        let name = cb.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+                        let id = cb
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string();
+                        let name = cb
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string();
                         return Ok(StreamChunk::ToolCall(json!({
                             "delta": {
                                 "tool_calls": [{
@@ -248,11 +280,19 @@ impl AnthropicClient {
                 if let Some(d) = delta {
                     match d.get("type").and_then(Value::as_str) {
                         Some("text_delta") => {
-                            let text = d.get("text").and_then(Value::as_str).unwrap_or("").to_string();
+                            let text = d
+                                .get("text")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_string();
                             Ok(StreamChunk::Text(text))
                         }
                         Some("input_json_delta") => {
-                            let partial = d.get("partial_json").and_then(Value::as_str).unwrap_or("").to_string();
+                            let partial = d
+                                .get("partial_json")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_string();
                             Ok(StreamChunk::ToolCall(json!({
                                 "delta": {
                                     "tool_calls": [{
@@ -265,7 +305,11 @@ impl AnthropicClient {
                             })))
                         }
                         Some("thinking_delta") => {
-                            let thinking = d.get("thinking").and_then(Value::as_str).unwrap_or("").to_string();
+                            let thinking = d
+                                .get("thinking")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_string();
                             Ok(StreamChunk::Thought(thinking))
                         }
                         _ => Ok(StreamChunk::Text(String::new())),
@@ -319,7 +363,9 @@ impl LlmClient for AnthropicClient {
             .map_err(|e| AgentError::llm(format!("HTTP request failed: {e}")))?;
 
         let status = response.status();
-        let res_json: Value = response.json().await
+        let res_json: Value = response
+            .json()
+            .await
             .map_err(|e| AgentError::json(format!("Response JSON parse failed: {e}")))?;
 
         if !status.is_success() {
@@ -366,7 +412,9 @@ impl LlmClient for AnthropicClient {
 
         if !response.status().is_success() {
             let status = response.status();
-            let err_text = response.text().await
+            let err_text = response
+                .text()
+                .await
                 .map_err(|e| AgentError::llm(format!("Failed to read error response: {e}")))?;
             tracing::warn!(%status, error = %err_text, "Anthropic API stream non-success");
             return Err(AgentError::LlmApi { message: err_text });
@@ -382,7 +430,11 @@ impl LlmClient for AnthropicClient {
                         Some(Err(AgentError::LlmApi { message: err_msg }))
                     }
                     Ok(ev) => {
-                        let event_type = if ev.event.is_empty() { "message_stop" } else { ev.event.as_str() };
+                        let event_type = if ev.event.is_empty() {
+                            "message_stop"
+                        } else {
+                            ev.event.as_str()
+                        };
                         match Self::parse_sse(&ev.data, event_type) {
                             Ok(chunk) => Some(Ok(chunk)),
                             Err(e) => Some(Err(e)),

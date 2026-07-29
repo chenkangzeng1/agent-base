@@ -1,10 +1,10 @@
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
+use super::{Tool, ToolContext, ToolControlFlow, ToolOutput};
 use crate::engine::AgentRuntime;
 use crate::types::{AgentError, AgentResult, RuntimeEvent, SessionId, UserEvent};
-use super::{Tool, ToolContext, ToolControlFlow, ToolOutput};
 
 /// Sub-Agent session policy
 #[derive(Clone, Debug)]
@@ -24,11 +24,7 @@ pub struct SubAgentTool {
 }
 
 impl SubAgentTool {
-    pub fn new(
-        name: &'static str,
-        description: &'static str,
-        sub_runtime: AgentRuntime,
-    ) -> Self {
+    pub fn new(name: &'static str, description: &'static str, sub_runtime: AgentRuntime) -> Self {
         Self {
             name,
             description,
@@ -80,13 +76,12 @@ impl Tool for SubAgentTool {
     }
 
     async fn call(&self, args: &Value, ctx: &ToolContext) -> AgentResult<ToolOutput> {
-        let task = args
-            .get("task")
-            .and_then(Value::as_str)
-            .ok_or_else(|| AgentError::ToolArgsInvalid {
+        let task = args.get("task").and_then(Value::as_str).ok_or_else(|| {
+            AgentError::ToolArgsInvalid {
                 name: self.name.to_string(),
                 raw: args.to_string(),
-            })?;
+            }
+        })?;
 
         if task.is_empty() {
             return Ok(ToolOutput {
@@ -105,19 +100,31 @@ impl Tool for SubAgentTool {
                 let new_id = runtime.create_session().await;
                 let mut sid_guard = self.sub_session_id.lock().await;
                 *sid_guard = Some(new_id.clone());
-                tracing::debug!(subagent = self.name, sub_session = new_id.id, "sub-agent ephemeral session created");
+                tracing::debug!(
+                    subagent = self.name,
+                    sub_session = new_id.id,
+                    "sub-agent ephemeral session created"
+                );
                 new_id
             }
             SubAgentSessionPolicy::Persistent => {
                 let mut sid_guard = self.sub_session_id.lock().await;
                 if let Some(id) = sid_guard.clone() {
-                    tracing::debug!(subagent = self.name, sub_session = id.id, "sub-agent reusing persistent session");
+                    tracing::debug!(
+                        subagent = self.name,
+                        sub_session = id.id,
+                        "sub-agent reusing persistent session"
+                    );
                     id
                 } else {
                     let runtime = self.sub_runtime.lock().await;
                     let new_id = runtime.create_session().await;
                     *sid_guard = Some(new_id.clone());
-                    tracing::debug!(subagent = self.name, sub_session = new_id.id, "sub-agent persistent session created");
+                    tracing::debug!(
+                        subagent = self.name,
+                        sub_session = new_id.id,
+                        "sub-agent persistent session created"
+                    );
                     new_id
                 }
             }
@@ -126,10 +133,13 @@ impl Tool for SubAgentTool {
         // Add the user task as a message to the sub-agent session
         {
             let runtime = self.sub_runtime.lock().await;
-            runtime.add_user_message(&sub_session_id, task).await.map_err(|e| AgentError::ToolExecution {
-                name: self.name.to_string(),
-                source: Box::new(e),
-            })?;
+            runtime
+                .add_user_message(&sub_session_id, task)
+                .await
+                .map_err(|e| AgentError::ToolExecution {
+                    name: self.name.to_string(),
+                    source: Box::new(e),
+                })?;
         }
 
         let mut runtime_events = Vec::new();
@@ -168,7 +178,12 @@ impl Tool for SubAgentTool {
             final_text
         };
 
-        tracing::debug!(subagent = self.name, text_len = summary.len(), event_count = runtime_events.len(), "sub-agent completed");
+        tracing::debug!(
+            subagent = self.name,
+            text_len = summary.len(),
+            event_count = runtime_events.len(),
+            "sub-agent completed"
+        );
 
         Ok(ToolOutput {
             summary,

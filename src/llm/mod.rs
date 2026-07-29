@@ -10,7 +10,7 @@ mod openai;
 mod registry;
 
 pub use anthropic::AnthropicClient;
-pub use openai::{OpenAiClient, LlmClientConfig};
+pub use openai::{LlmClientConfig, OpenAiClient};
 pub use registry::{LlmClientBuilder, LlmProvider};
 
 #[derive(Clone, Debug)]

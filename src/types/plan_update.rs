@@ -98,7 +98,8 @@ mod tests {
     #[test]
     fn test_optional_objective_deserialization() {
         // objective present — should parse fine
-        let json = r#"{"objective": "Install Docker", "plan": [{"step": "Step 1", "status": "pending"}]}"#;
+        let json =
+            r#"{"objective": "Install Docker", "plan": [{"step": "Step 1", "status": "pending"}]}"#;
         let args: UpdatePlanArgs = serde_json::from_str(json).unwrap();
         assert_eq!(args.objective.as_deref(), Some("Install Docker"));
         assert!(args.validate().is_ok());

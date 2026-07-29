@@ -104,7 +104,14 @@ impl AgentError {
     }
 
     pub fn is_retryable(&self) -> bool {
-        matches!(self, Self::Llm(_) | Self::LlmApi { .. } | Self::LlmStream(_) | Self::ServiceUnavailable(_) | Self::RateLimitExceeded)
+        matches!(
+            self,
+            Self::Llm(_)
+                | Self::LlmApi { .. }
+                | Self::LlmStream(_)
+                | Self::ServiceUnavailable(_)
+                | Self::RateLimitExceeded
+        )
     }
 
     pub fn is_rate_limited(&self) -> bool {

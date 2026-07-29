@@ -49,9 +49,7 @@ impl AgentSession {
         self.chat_messages
             .iter()
             .filter_map(|cm| match cm {
-                ChatMessage::Assistant {
-                    content: None, ..
-                } => None,
+                ChatMessage::Assistant { content: None, .. } => None,
                 ChatMessage::Assistant {
                     content: Some(c),
                     tool_calls: Some(tc),
@@ -157,7 +155,11 @@ impl AgentSession {
         self.chat_messages.retain(|m| !m.is_ephemeral());
         let removed = before - self.chat_messages.len();
         if removed > 0 {
-            tracing::debug!(removed, remaining = self.chat_messages.len(), "ephemeral messages cleaned up");
+            tracing::debug!(
+                removed,
+                remaining = self.chat_messages.len(),
+                "ephemeral messages cleaned up"
+            );
         }
     }
 
@@ -184,7 +186,13 @@ impl AgentSession {
             .chat_messages
             .iter()
             .enumerate()
-            .filter_map(|(i, m)| if matches!(m, ChatMessage::User { .. }) { Some(i) } else { None })
+            .filter_map(|(i, m)| {
+                if matches!(m, ChatMessage::User { .. }) {
+                    Some(i)
+                } else {
+                    None
+                }
+            })
             .collect();
 
         if user_positions.len() <= turns_to_remove {
@@ -214,15 +222,19 @@ impl AgentSession {
     }
 
     pub fn close_dangling_tool_calls(&mut self, error_summary: &str) {
-        let assistant_idx = self.chat_messages.iter().rposition(|m| {
-            matches!(m, ChatMessage::Assistant { tool_calls: Some(tc), .. } if !tc.is_empty())
-        });
+        let assistant_idx = self.chat_messages.iter().rposition(
+            |m| matches!(m, ChatMessage::Assistant { tool_calls: Some(tc), .. } if !tc.is_empty()),
+        );
 
         let Some(assistant_idx) = assistant_idx else {
             return;
         };
 
-        let ChatMessage::Assistant { tool_calls: Some(tc), .. } = &self.chat_messages[assistant_idx] else {
+        let ChatMessage::Assistant {
+            tool_calls: Some(tc),
+            ..
+        } = &self.chat_messages[assistant_idx]
+        else {
             return;
         };
 
@@ -255,7 +267,8 @@ impl AgentSession {
             .iter()
             .filter_map(|m| match m {
                 ChatMessage::Assistant {
-                    tool_calls: Some(tc), ..
+                    tool_calls: Some(tc),
+                    ..
                 } => Some(tc.len()),
                 _ => None,
             })
@@ -293,7 +306,8 @@ pub fn validate_message_sequence(messages: &[ChatMessage]) -> Result<(), String>
                 }
             }
             ChatMessage::Assistant {
-                tool_calls: Some(tc), ..
+                tool_calls: Some(tc),
+                ..
             } => {
                 // Previous batch must be fully answered before a new batch starts
                 if !pending_tool_call_ids.is_empty() {
@@ -387,7 +401,9 @@ mod tests {
         // System message preserved
         assert!(matches!(s.chat_messages()[0], ChatMessage::System { .. }));
         // Oldest user message is u2
-        assert!(matches!(s.chat_messages()[1], ChatMessage::User { ref content, .. } if content == "u2"));
+        assert!(
+            matches!(s.chat_messages()[1], ChatMessage::User { ref content, .. } if content == "u2")
+        );
     }
 
     #[test]
@@ -449,10 +465,7 @@ mod validate_tests {
 
     #[test]
     fn test_valid_simple_sequence() {
-        let msgs = vec![
-            ChatMessage::user("hello"),
-            ChatMessage::assistant("hi"),
-        ];
+        let msgs = vec![ChatMessage::user("hello"), ChatMessage::assistant("hi")];
         assert!(validate_message_sequence(&msgs).is_ok());
     }
 
@@ -518,10 +531,7 @@ mod validate_tests {
     #[test]
     fn test_set_chat_messages_valid() {
         let mut s = make_session();
-        let msgs = vec![
-            ChatMessage::user("hello"),
-            ChatMessage::assistant("hi"),
-        ];
+        let msgs = vec![ChatMessage::user("hello"), ChatMessage::assistant("hi")];
         assert!(s.set_chat_messages(msgs.clone()).is_ok());
         assert_eq!(s.chat_messages().len(), 2);
     }
@@ -529,9 +539,7 @@ mod validate_tests {
     #[test]
     fn test_set_chat_messages_invalid() {
         let mut s = make_session();
-        let msgs = vec![
-            ChatMessage::tool("call_1", "orphaned"),
-        ];
+        let msgs = vec![ChatMessage::tool("call_1", "orphaned")];
         assert!(s.set_chat_messages(msgs).is_err());
     }
 }

@@ -8,11 +8,17 @@ pub struct SessionId {
 
 impl SessionId {
     pub fn new(id: u64) -> Self {
-        Self { id, external_id: None }
+        Self {
+            id,
+            external_id: None,
+        }
     }
 
     pub fn with_external_id(id: u64, external_id: impl Into<String>) -> Self {
-        Self { id, external_id: Some(external_id.into()) }
+        Self {
+            id,
+            external_id: Some(external_id.into()),
+        }
     }
 }
 
@@ -50,7 +56,10 @@ impl Default for AtomicU64SessionIdGenerator {
 
 impl SessionIdGenerator for AtomicU64SessionIdGenerator {
     fn generate(&self) -> SessionId {
-        SessionId::new(self.counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+        SessionId::new(
+            self.counter
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+        )
     }
 }
 

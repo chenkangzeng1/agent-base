@@ -3,12 +3,15 @@ use eventsource_stream::Eventsource;
 use futures_core::Stream;
 use futures_util::StreamExt;
 use reqwest::Client;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::pin::Pin;
 use std::time::Duration;
 
-use crate::types::{AgentResult, AgentError, ChatMessage, ImageAttachment, ImageDetail, ResponseFormat, ToolCallMessage};
 use super::{LlmCapabilities, LlmClient, ReasoningConfig, ReasoningEffort, StreamChunk, UsageInfo};
+use crate::types::{
+    AgentError, AgentResult, ChatMessage, ImageAttachment, ImageDetail, ResponseFormat,
+    ToolCallMessage,
+};
 
 #[derive(Clone, Debug)]
 pub struct LlmClientConfig {
@@ -41,7 +44,12 @@ impl OpenAiClient {
         Self::new_with_config(api_key, model, base_url, LlmClientConfig::default())
     }
 
-    pub fn new_with_config(api_key: String, model: String, base_url: Option<String>, config: LlmClientConfig) -> Self {
+    pub fn new_with_config(
+        api_key: String,
+        model: String,
+        base_url: Option<String>,
+        config: LlmClientConfig,
+    ) -> Self {
         let client = Client::builder()
             .connect_timeout(config.connect_timeout)
             .timeout(config.request_timeout)
@@ -55,8 +63,7 @@ impl OpenAiClient {
         Self {
             api_key,
             model,
-            base_url: base_url
-                .unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
+            base_url: base_url.unwrap_or_else(|| "https://api.openai.com/v1".to_string()),
             client,
         }
     }
@@ -81,7 +88,11 @@ impl OpenAiClient {
         self.model.starts_with("deepseek")
     }
 
-    fn apply_reasoning_config(&self, request_body: &mut Value, reasoning: Option<&ReasoningConfig>) {
+    fn apply_reasoning_config(
+        &self,
+        request_body: &mut Value,
+        reasoning: Option<&ReasoningConfig>,
+    ) {
         let Some(config) = reasoning else { return };
 
         if self.is_qwen_model() {
@@ -132,7 +143,10 @@ impl OpenAiClient {
             if config.enabled == Some(true) || config.budget_tokens.is_some() {
                 let mut extra_body = serde_json::Map::new();
                 if let Some(enabled) = config.enabled {
-                    extra_body.insert("thinking".to_string(), json!({"type": if enabled { "enabled" } else { "disabled" }}));
+                    extra_body.insert(
+                        "thinking".to_string(),
+                        json!({"type": if enabled { "enabled" } else { "disabled" }}),
+                    );
                 }
                 if let Some(budget) = config.budget_tokens {
                     extra_body.insert("thinking_budget".to_string(), json!(budget));
@@ -165,7 +179,9 @@ impl OpenAiClient {
                 "role": "system",
                 "content": content,
             }),
-            ChatMessage::User { content, images, .. } => {
+            ChatMessage::User {
+                content, images, ..
+            } => {
                 if images.is_empty() {
                     json!({
                         "role": "user",
@@ -183,7 +199,11 @@ impl OpenAiClient {
                     })
                 }
             }
-            ChatMessage::Assistant { content, reasoning_content, tool_calls } => {
+            ChatMessage::Assistant {
+                content,
+                reasoning_content,
+                tool_calls,
+            } => {
                 let mut obj = serde_json::Map::new();
                 obj.insert("role".to_string(), json!("assistant"));
                 obj.insert("content".to_string(), json!(content));
@@ -191,15 +211,16 @@ impl OpenAiClient {
                     obj.insert("reasoning_content".to_string(), json!(reasoning));
                 }
                 if let Some(tc) = tool_calls {
-                    let tool_calls_json: Vec<Value> = tc
-                        .iter()
-                        .map(|t| Self::tool_call_to_json(t))
-                        .collect();
+                    let tool_calls_json: Vec<Value> =
+                        tc.iter().map(|t| Self::tool_call_to_json(t)).collect();
                     obj.insert("tool_calls".to_string(), json!(tool_calls_json));
                 }
                 Value::Object(obj)
             }
-            ChatMessage::Tool { tool_call_id, content } => json!({
+            ChatMessage::Tool {
+                tool_call_id,
+                content,
+            } => json!({
                 "role": "tool",
                 "tool_call_id": tool_call_id,
                 "content": content,
@@ -236,7 +257,11 @@ impl OpenAiClient {
                     "image_url": Value::Object(obj),
                 })
             }
-            ImageAttachment::Base64 { data, media_type, detail } => {
+            ImageAttachment::Base64 {
+                data,
+                media_type,
+                detail,
+            } => {
                 let mime = media_type.as_deref().unwrap_or("image/jpeg");
                 let data_url = format!("data:{mime};base64,{data}");
                 let mut obj = serde_json::Map::new();
@@ -302,7 +327,9 @@ impl LlmClient for OpenAiClient {
             .map_err(|e| AgentError::llm(format!("HTTP request failed: {e}")))?;
 
         let status = response.status();
-        let res_json: Value = response.json().await
+        let res_json: Value = response
+            .json()
+            .await
             .map_err(|e| AgentError::json(format!("Response JSON parse failed: {e}")))?;
 
         if !status.is_success() {
@@ -359,62 +386,76 @@ impl LlmClient for OpenAiClient {
 
         if !response.status().is_success() {
             let status = response.status();
-            let err_text = response.text().await
+            let err_text = response
+                .text()
+                .await
                 .map_err(|e| AgentError::llm(format!("Failed to read error response: {e}")))?;
             tracing::warn!(%status, error = %err_text, "OpenAI API stream non-success");
             return Err(AgentError::LlmApi { message: err_text });
         }
 
-        let stream = response.bytes_stream().eventsource().map(|event| match event {
-            Ok(event) => {
-                if event.data == "[DONE]" {
-                    return Ok(StreamChunk::Stop);
-                }
-
-                let data: Value = serde_json::from_str(&event.data)
-                    .map_err(|e| AgentError::json(format!("JSON Parse error: {e}")))?;
-
-                let choices = data.get("choices").and_then(Value::as_array);
-
-                if choices.is_none() || choices.map_or(true, |c| c.is_empty()) {
-                    if let Some(usage) = data.get("usage") {
-                        return Ok(StreamChunk::Usage(UsageInfo {
-                            prompt_tokens: usage.get("prompt_tokens").and_then(Value::as_u64).map(|v| v as u32),
-                            completion_tokens: usage.get("completion_tokens").and_then(Value::as_u64).map(|v| v as u32),
-                            total_tokens: usage.get("total_tokens").and_then(Value::as_u64).map(|v| v as u32),
-                        }));
+        let stream = response
+            .bytes_stream()
+            .eventsource()
+            .map(|event| match event {
+                Ok(event) => {
+                    if event.data == "[DONE]" {
+                        return Ok(StreamChunk::Stop);
                     }
-                    return Ok(StreamChunk::Text(String::new()));
-                }
 
-                let choice = &choices.unwrap()[0];
-                let delta = &choice["delta"];
-                let finish_reason = choice["finish_reason"].as_str().unwrap_or("");
+                    let data: Value = serde_json::from_str(&event.data)
+                        .map_err(|e| AgentError::json(format!("JSON Parse error: {e}")))?;
 
-                if finish_reason == "tool_calls" || delta.get("tool_calls").is_some() {
-                    return Ok(StreamChunk::ToolCall(choice.clone()));
-                }
+                    let choices = data.get("choices").and_then(Value::as_array);
 
-                if let Some(reasoning) = delta.get("reasoning_content") {
-                    if let Some(text) = reasoning.as_str() {
-                        return Ok(StreamChunk::Thought(text.to_string()));
+                    if choices.is_none() || choices.map_or(true, |c| c.is_empty()) {
+                        if let Some(usage) = data.get("usage") {
+                            return Ok(StreamChunk::Usage(UsageInfo {
+                                prompt_tokens: usage
+                                    .get("prompt_tokens")
+                                    .and_then(Value::as_u64)
+                                    .map(|v| v as u32),
+                                completion_tokens: usage
+                                    .get("completion_tokens")
+                                    .and_then(Value::as_u64)
+                                    .map(|v| v as u32),
+                                total_tokens: usage
+                                    .get("total_tokens")
+                                    .and_then(Value::as_u64)
+                                    .map(|v| v as u32),
+                            }));
+                        }
+                        return Ok(StreamChunk::Text(String::new()));
                     }
-                }
 
-                if let Some(content) = delta.get("content") {
-                    if let Some(text) = content.as_str() {
-                        return Ok(StreamChunk::Text(text.to_string()));
+                    let choice = &choices.unwrap()[0];
+                    let delta = &choice["delta"];
+                    let finish_reason = choice["finish_reason"].as_str().unwrap_or("");
+
+                    if finish_reason == "tool_calls" || delta.get("tool_calls").is_some() {
+                        return Ok(StreamChunk::ToolCall(choice.clone()));
                     }
-                }
 
-                if finish_reason == "stop" {
-                    return Ok(StreamChunk::Stop);
-                }
+                    if let Some(reasoning) = delta.get("reasoning_content") {
+                        if let Some(text) = reasoning.as_str() {
+                            return Ok(StreamChunk::Thought(text.to_string()));
+                        }
+                    }
 
-                Ok(StreamChunk::Text(String::new()))
-            }
-            Err(e) => Err(AgentError::LlmStream(format!("SSE Stream error: {e}"))),
-        });
+                    if let Some(content) = delta.get("content") {
+                        if let Some(text) = content.as_str() {
+                            return Ok(StreamChunk::Text(text.to_string()));
+                        }
+                    }
+
+                    if finish_reason == "stop" {
+                        return Ok(StreamChunk::Stop);
+                    }
+
+                    Ok(StreamChunk::Text(String::new()))
+                }
+                Err(e) => Err(AgentError::LlmStream(format!("SSE Stream error: {e}"))),
+            });
 
         Ok(Box::pin(stream))
     }

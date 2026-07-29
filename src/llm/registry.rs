@@ -27,7 +27,11 @@ pub struct LlmClientBuilder {
 }
 
 impl LlmClientBuilder {
-    pub fn new(provider: LlmProvider, api_key: impl Into<String>, model: impl Into<String>) -> Self {
+    pub fn new(
+        provider: LlmProvider,
+        api_key: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
         Self {
             provider,
             api_key: api_key.into(),
@@ -38,11 +42,9 @@ impl LlmClientBuilder {
 
     pub fn from_env() -> Option<Self> {
         let api_key = std::env::var("LLM_API_KEY").ok()?;
-        let model = std::env::var("LLM_MODEL")
-            .unwrap_or_else(|_| "gpt-4o".to_string());
+        let model = std::env::var("LLM_MODEL").unwrap_or_else(|_| "gpt-4o".to_string());
         let base_url = std::env::var("LLM_BASE_URL").ok();
-        let provider_str = std::env::var("LLM_PROVIDER")
-            .unwrap_or_else(|_| "openai".to_string());
+        let provider_str = std::env::var("LLM_PROVIDER").unwrap_or_else(|_| "openai".to_string());
 
         Some(Self {
             provider: LlmProvider::from_str(&provider_str),

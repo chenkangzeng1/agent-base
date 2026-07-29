@@ -155,7 +155,11 @@ impl ChatMessage {
         }
     }
 
-    pub fn assistant_tool_call(tool_call_id: impl Into<String>, tool_name: impl Into<String>, arguments: impl Into<String>) -> Self {
+    pub fn assistant_tool_call(
+        tool_call_id: impl Into<String>,
+        tool_name: impl Into<String>,
+        arguments: impl Into<String>,
+    ) -> Self {
         Self::Assistant {
             content: None,
             reasoning_content: None,

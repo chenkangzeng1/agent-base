@@ -41,7 +41,12 @@ async fn test_summarize(
     };
 
     let mut stream = client
-        .chat_stream(&messages, &[] as &[serde_json::Value], Some(&reasoning), None)
+        .chat_stream(
+            &messages,
+            &[] as &[serde_json::Value],
+            Some(&reasoning),
+            None,
+        )
         .await?;
 
     let mut thought = String::new();
@@ -51,13 +56,24 @@ async fn test_summarize(
 
     while let Some(chunk) = stream.next().await {
         match chunk? {
-            StreamChunk::Thought(t) => { thought.push_str(&t); }
-            StreamChunk::Text(t) => { text.push_str(&t); }
-            StreamChunk::ToolCall(_) => { tool_calls += 1; }
-            StreamChunk::Stop => { has_stop = true; }
+            StreamChunk::Thought(t) => {
+                thought.push_str(&t);
+            }
+            StreamChunk::Text(t) => {
+                text.push_str(&t);
+            }
+            StreamChunk::ToolCall(_) => {
+                tool_calls += 1;
+            }
+            StreamChunk::Stop => {
+                has_stop = true;
+            }
             StreamChunk::Usage(u) => {
-                println!("  📊 prompt={}, completion={}",
-                    u.prompt_tokens.unwrap_or(0), u.completion_tokens.unwrap_or(0));
+                println!(
+                    "  📊 prompt={}, completion={}",
+                    u.prompt_tokens.unwrap_or(0),
+                    u.completion_tokens.unwrap_or(0)
+                );
             }
         }
     }
@@ -104,7 +120,11 @@ async fn main() -> AgentResult<()> {
     ];
 
     for (model_id, model_label) in &models {
-        let client = OpenAiClient::new(api_key.clone(), model_id.to_string(), Some(base_url.clone()));
+        let client = OpenAiClient::new(
+            api_key.clone(),
+            model_id.to_string(),
+            Some(base_url.clone()),
+        );
         test_summarize(&client, model_label, false).await?;
         test_summarize(&client, model_label, true).await?;
     }

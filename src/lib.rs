@@ -8,19 +8,16 @@ pub mod types;
 // ---------------------------------------------------------------------------
 pub mod prelude {
     pub use crate::engine::{
-        AgentBuilder, AgentRuntime, AgentSession, AllowAllApprovalHandler,
-        DenyAllApprovalHandler,
+        AgentBuilder, AgentRuntime, AgentSession, AllowAllApprovalHandler, DenyAllApprovalHandler,
     };
-    pub use crate::llm::{
-        AnthropicClient, LlmClient, LlmClientBuilder, OpenAiClient,
-    };
+    pub use crate::llm::{AnthropicClient, LlmClient, LlmClientBuilder, OpenAiClient};
     pub use crate::tool::{
-        AutoContinueTool, SubAgentTool, Tool, ToolContext, ToolOutput,
-        ToolPolicy, ToolRegistry, TypedTool,
+        AutoContinueTool, SubAgentTool, Tool, ToolContext, ToolOutput, ToolPolicy, ToolRegistry,
+        TypedTool,
     };
     pub use crate::types::{
-        AgentConfig, AgentError, AgentResult, ChatMessage, Language,
-        Message, MessageRole, RunOutcome, RuntimeEvent, SessionId, UserEvent,
+        AgentConfig, AgentError, AgentResult, ChatMessage, Language, Message, MessageRole,
+        RunOutcome, RuntimeEvent, SessionId, UserEvent,
     };
 }
 
@@ -28,75 +25,35 @@ pub mod prelude {
 // Agent Runtime
 // ---------------------------------------------------------------------------
 pub use engine::{
-    AgentBuilder,
-    AgentRuntime,
-    AgentSession,
-    CircuitBreaker,
-    CircuitState,
-    DefaultPipeline,
-    InMemorySessionStore,
-    SessionId,
-    SessionStore,
-    ToolExecutionPipeline,
+    AgentBuilder, AgentRuntime, AgentSession, CircuitBreaker, CircuitState, DefaultPipeline,
+    InMemorySessionStore, SessionId, SessionStore, ToolExecutionPipeline,
 };
 
 // ---------------------------------------------------------------------------
 // LLM Provider
 // ---------------------------------------------------------------------------
 pub use llm::{
-    AnthropicClient,
-    LlmCapabilities,
-    LlmClient,
-    LlmClientBuilder,
-    LlmProvider,
-    OpenAiClient,
-    ReasoningConfig,
-    ReasoningEffort,
-    StreamChunk,
-    UsageInfo,
+    AnthropicClient, LlmCapabilities, LlmClient, LlmClientBuilder, LlmProvider, OpenAiClient,
+    ReasoningConfig, ReasoningEffort, StreamChunk, UsageInfo,
 };
 
 // ---------------------------------------------------------------------------
 // Approval
 // ---------------------------------------------------------------------------
 pub use engine::{
-    AllowAllApprovalHandler,
-    ApprovalDecision,
-    ApprovalHandler,
-    ApprovalRequest,
-    ConsecutiveFailureRecovery,
-    DenyAllApprovalHandler,
-    Middleware,
-    PostLlmCtx,
-    PreLlmCtx,
-    UserMessageCtx,
-    ContextWindowManager,
-    RiskLevel,
-    RetryOnError,
-    StopOnError,
-    ToolEnforcementConfig,
-    ToolEnforcementMiddleware,
-    ToolErrorAction,
-    ToolErrorRecovery,
-    TurnFactMiddleware,
-    TurnToolLimitMiddleware,
+    AllowAllApprovalHandler, ApprovalDecision, ApprovalHandler, ApprovalRequest,
+    ConsecutiveFailureRecovery, ContextWindowManager, DenyAllApprovalHandler, Middleware,
+    PostLlmCtx, PreLlmCtx, RetryOnError, RiskLevel, StopOnError, ToolEnforcementConfig,
+    ToolEnforcementMiddleware, ToolErrorAction, ToolErrorRecovery, TurnFactMiddleware,
+    TurnToolLimitMiddleware, UserMessageCtx,
 };
 
 // ---------------------------------------------------------------------------
 // Tools
 // ---------------------------------------------------------------------------
 pub use tool::{
-    AutoContinueTool,
-    SubAgentSessionPolicy,
-    SubAgentTool,
-    Tool,
-    ToolContext,
-    ToolControlFlow,
-    ToolOutput,
-    ToolPolicy,
-    ToolRegistry,
-    TypedTool,
-    UpdatePlanTool,
+    AutoContinueTool, SubAgentSessionPolicy, SubAgentTool, Tool, ToolContext, ToolControlFlow,
+    ToolOutput, ToolPolicy, ToolRegistry, TypedTool, UpdatePlanTool,
 };
 
 // ---------------------------------------------------------------------------
@@ -113,23 +70,7 @@ pub use types::{AgentError, AgentResult, ErrorKind};
 // Types
 // ---------------------------------------------------------------------------
 pub use types::{
-    AgentConfig,
-    ChatMessage,
-    CheckpointData,
-    CheckpointStep,
-    ImageAttachment,
-    ImageDetail,
-    Language,
-    Message,
-    MessageRole,
-    PlanItem,
-    PlanStepStatus,
-    ResponseFormat,
-    RetryConfig,
-    RunOutcome,
-    SafetyConfig,
-    SessionConfig,
-    ToolCallMessage,
-    ToolResultData,
-    UpdatePlanArgs,
+    AgentConfig, ChatMessage, CheckpointData, CheckpointStep, ImageAttachment, ImageDetail,
+    Language, Message, MessageRole, PlanItem, PlanStepStatus, ResponseFormat, RetryConfig,
+    RunOutcome, SafetyConfig, SessionConfig, ToolCallMessage, ToolResultData, UpdatePlanArgs,
 };

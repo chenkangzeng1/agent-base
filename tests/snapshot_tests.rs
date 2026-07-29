@@ -2,9 +2,9 @@
 //!
 //! These catch unintended changes to LLM-visible output formats.
 
-use async_trait::async_trait;
 use agent_base::tool::{Tool, ToolContext, ToolOutput, ToolRegistry};
 use agent_base::types::ChatMessage;
+use async_trait::async_trait;
 use serde_json::json;
 
 /// A minimal test tool for snapshotting tool definitions.

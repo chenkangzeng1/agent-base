@@ -56,14 +56,20 @@ impl ContextWindowManager {
     pub(crate) fn message_tokens(msg: &ChatMessage) -> usize {
         match msg {
             ChatMessage::System { content, .. } => Self::estimate_tokens(content),
-            ChatMessage::User { content, images, .. } => {
+            ChatMessage::User {
+                content, images, ..
+            } => {
                 let mut tokens = Self::estimate_tokens(content);
                 for img in images {
                     match img {
                         crate::types::ImageAttachment::Url { url, detail: _ } => {
                             tokens += Self::estimate_tokens(url);
                         }
-                        crate::types::ImageAttachment::Base64 { data, media_type, detail: _ } => {
+                        crate::types::ImageAttachment::Base64 {
+                            data,
+                            media_type,
+                            detail: _,
+                        } => {
                             tokens += data.len() / 4;
                             if let Some(mt) = media_type {
                                 tokens += Self::estimate_tokens(mt);
@@ -74,7 +80,11 @@ impl ContextWindowManager {
                 }
                 tokens
             }
-            ChatMessage::Assistant { content, reasoning_content, tool_calls } => {
+            ChatMessage::Assistant {
+                content,
+                reasoning_content,
+                tool_calls,
+            } => {
                 let mut tokens = content
                     .as_deref()
                     .map(|c| Self::estimate_tokens(c))
@@ -91,9 +101,10 @@ impl ContextWindowManager {
                 }
                 tokens
             }
-            ChatMessage::Tool { tool_call_id, content } => {
-                Self::estimate_tokens(tool_call_id) + Self::estimate_tokens(content)
-            }
+            ChatMessage::Tool {
+                tool_call_id,
+                content,
+            } => Self::estimate_tokens(tool_call_id) + Self::estimate_tokens(content),
         }
     }
 
@@ -114,7 +125,9 @@ impl ContextWindowManager {
         }
 
         let keep_first = self.keep_first_n.min(messages.len());
-        let keep_last = self.keep_last_n.min(messages.len().saturating_sub(keep_first));
+        let keep_last = self
+            .keep_last_n
+            .min(messages.len().saturating_sub(keep_first));
 
         // Trimmable range: [keep_first, messages.len() - keep_last)
         let trim_start = keep_first;

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use serde_json::Value;
-use tokio::sync::{broadcast, mpsc, RwLock};
+use tokio::sync::{RwLock, broadcast, mpsc};
 
 use crate::engine::approval::ApprovalHandler;
 use crate::engine::pipeline::{DefaultPipeline, ToolExecutionPipeline};
@@ -9,7 +9,7 @@ use crate::engine::recovery::ToolErrorRecovery;
 use crate::engine::runtime::event_bus::EventBus;
 use crate::engine::runtime::session_manager::SessionManager;
 use crate::tool::{ToolContext, ToolControlFlow, ToolOutput, ToolPolicy, ToolRegistry};
-use crate::types::{AgentError, RuntimeEvent, AgentResult, Language, SessionId, UserEvent};
+use crate::types::{AgentError, AgentResult, Language, RuntimeEvent, SessionId, UserEvent};
 
 pub(crate) struct ToolEngine {
     tools: Arc<RwLock<ToolRegistry>>,
@@ -70,7 +70,12 @@ impl ToolEngine {
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
-        tracing::debug!(session_id = session_id.id, tool = name, args_len = tool_args_json.len(), "execute tool start");
+        tracing::debug!(
+            session_id = session_id.id,
+            tool = name,
+            args_len = tool_args_json.len(),
+            "execute tool start"
+        );
 
         // Emit ToolCallStarted via internal EventBus
         self.event_bus.emit(RuntimeEvent::ToolCallStarted {
@@ -94,11 +99,19 @@ impl ToolEngine {
         // Lookup tool and execute via pipeline.
         // The pipeline handles: before_call hook → timeout → truncation → after_call hook.
         // ToolEngine handles: event emission and UserEvent forwarding.
-        tracing::debug!(session_id = session_id.id, tool = name, "looking up tool in registry");
+        tracing::debug!(
+            session_id = session_id.id,
+            tool = name,
+            "looking up tool in registry"
+        );
         let tools_guard = self.tools.read().await;
         let tool_result = match tools_guard.get(name) {
             Some(tool) => {
-                tracing::debug!(session_id = session_id.id, tool = name, "tool found, executing via pipeline");
+                tracing::debug!(
+                    session_id = session_id.id,
+                    tool = name,
+                    "tool found, executing via pipeline"
+                );
 
                 // Per-call pipeline: inherits policy from self.pipeline, adds caller's timeout/truncation.
                 let pipeline = DefaultPipeline::new(
@@ -161,7 +174,11 @@ impl ToolEngine {
                 }
             }
             None => {
-                tracing::warn!(session_id = session_id.id, tool = name, "tool not found in registry");
+                tracing::warn!(
+                    session_id = session_id.id,
+                    tool = name,
+                    "tool not found in registry"
+                );
                 ToolOutput {
                     summary: if ctx.language == Language::Zh {
                         format!("工具 {} 未找到", name)
@@ -219,7 +236,11 @@ impl ToolEngine {
         };
 
         if approved {
-            tracing::debug!(session_id = session_id.id, tool = tool_name, "approval cached, skipping");
+            tracing::debug!(
+                session_id = session_id.id,
+                tool = tool_name,
+                "approval cached, skipping"
+            );
             return Ok(());
         }
 
@@ -242,11 +263,18 @@ impl ToolEngine {
                 let result = tokio::time::timeout(
                     timeout,
                     handler.approve(request.clone(), ctx.cancel_token.clone()),
-                ).await;
+                )
+                .await;
                 match result {
-                    Ok(result) => result.map_err(|e| AgentError::internal(format!("Approval handler failed: {e}")))?,
+                    Ok(result) => result.map_err(|e| {
+                        AgentError::internal(format!("Approval handler failed: {e}"))
+                    })?,
                     Err(_) => {
-                        tracing::warn!(session_id = session_id.id, ?timeout, "Approval timed out, defaulting to Deny");
+                        tracing::warn!(
+                            session_id = session_id.id,
+                            ?timeout,
+                            "Approval timed out, defaulting to Deny"
+                        );
                         crate::types::ApprovalDecision::Deny
                     }
                 }
@@ -256,17 +284,35 @@ impl ToolEngine {
 
         match decision {
             crate::types::ApprovalDecision::AllowOnce => {
-                tracing::info!(session_id = session_id.id, tool = tool_name, decision = "AllowOnce", "approval granted");
+                tracing::info!(
+                    session_id = session_id.id,
+                    tool = tool_name,
+                    decision = "AllowOnce",
+                    "approval granted"
+                );
             }
             crate::types::ApprovalDecision::AllowAlways => {
-                tracing::info!(session_id = session_id.id, tool = tool_name, decision = "AllowAlways", "approval granted (cached)");
+                tracing::info!(
+                    session_id = session_id.id,
+                    tool = tool_name,
+                    decision = "AllowAlways",
+                    "approval granted (cached)"
+                );
                 if let Some(action_key) = request.action_key.clone() {
-                    ctx.session_manager.cache_approval(session_id, action_key).await;
+                    ctx.session_manager
+                        .cache_approval(session_id, action_key)
+                        .await;
                 }
             }
             crate::types::ApprovalDecision::Deny => {
-                tracing::warn!(session_id = session_id.id, tool = tool_name, decision = "Deny", "approval denied");
-                let denial_summary = format!("[Action Denied]: tool {} rejected by approval", tool_name);
+                tracing::warn!(
+                    session_id = session_id.id,
+                    tool = tool_name,
+                    decision = "Deny",
+                    "approval denied"
+                );
+                let denial_summary =
+                    format!("[Action Denied]: tool {} rejected by approval", tool_name);
                 // 不记录到 session 历史 — 用户拒绝是 UI 层交互，不需要 LLM 看到
                 self.event_bus.emit(RuntimeEvent::ToolCallFinished {
                     session_id: session_id.clone(),
@@ -299,20 +345,20 @@ impl ToolEngine {
         let mut results = Vec::with_capacity(tool_calls.len());
 
         for (id, name, args_str) in tool_calls {
-            let args: Value = serde_json::from_str(args_str).map_err(|_| {
-                AgentError::ToolArgsInvalid {
+            let args: Value =
+                serde_json::from_str(args_str).map_err(|_| AgentError::ToolArgsInvalid {
                     name: name.clone(),
                     raw: args_str.clone(),
-                }
-            })?;
+                })?;
 
-            self.process_approval(
-                session_id, name, &args, args_str, ctx, event_rx, on_event,
-            ).await?;
+            self.process_approval(session_id, name, &args, args_str, ctx, event_rx, on_event)
+                .await?;
 
-            let result = self.execute_tool(
-                session_id, id, name, &args, args_str, ctx, event_rx, on_event,
-            ).await?;
+            let result = self
+                .execute_tool(
+                    session_id, id, name, &args, args_str, ctx, event_rx, on_event,
+                )
+                .await?;
 
             results.push(result);
         }

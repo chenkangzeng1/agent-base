@@ -35,7 +35,10 @@ async fn probe_model(
     thinking_budget: Option<u64>,
 ) -> AgentResult<TestResult> {
     println!("\n{}", "=".repeat(70));
-    println!("{} — thinking={}, budget={:?}", model_label, enable_thinking, thinking_budget);
+    println!(
+        "{} — thinking={}, budget={:?}",
+        model_label, enable_thinking, thinking_budget
+    );
     println!("{}", "=".repeat(70));
 
     let messages = vec![
@@ -131,7 +134,13 @@ async fn probe_model(
         println!("  ✅ 正常：有工具调用");
     }
 
-    Ok(TestResult { thought_chars, text_chars, tool_calls, has_stop, elapsed_ms })
+    Ok(TestResult {
+        thought_chars,
+        text_chars,
+        tool_calls,
+        has_stop,
+        elapsed_ms,
+    })
 }
 
 #[tokio::main]
@@ -146,7 +155,8 @@ async fn main() -> AgentResult<()> {
         .or_else(|_| std::env::var("OPENAI_BASE_URL"))
         .unwrap_or_else(|_| "https://dashscope.aliyuncs.com/compatible-mode/v1".to_string());
 
-    let system_prompt = "你是运维工程师助手。回复简洁直接。如果需要执行命令来回答用户问题，请调用工具。";
+    let system_prompt =
+        "你是运维工程师助手。回复简洁直接。如果需要执行命令来回答用户问题，请调用工具。";
     let user_input = "看下磁盘空间";
 
     // 三个模型，分别测试 thinking=false 和 thinking=true
@@ -159,25 +169,50 @@ async fn main() -> AgentResult<()> {
     let mut all_results: Vec<(&str, Vec<TestResult>)> = Vec::new();
 
     for (model_id, model_label) in &models {
-        let client = OpenAiClient::new(api_key.clone(), model_id.to_string(), Some(base_url.clone()));
+        let client = OpenAiClient::new(
+            api_key.clone(),
+            model_id.to_string(),
+            Some(base_url.clone()),
+        );
         let mut results = Vec::new();
 
         // 测试 A: 不开 thinking（对照组）
         results.push(
-            probe_model(&client, &format!("{} (无思考)", model_label),
-                system_prompt, user_input, false, None).await?
+            probe_model(
+                &client,
+                &format!("{} (无思考)", model_label),
+                system_prompt,
+                user_input,
+                false,
+                None,
+            )
+            .await?,
         );
 
         // 测试 B: 开 thinking，不限 budget
         results.push(
-            probe_model(&client, &format!("{} (thinking=on, 无budget)", model_label),
-                system_prompt, user_input, true, None).await?
+            probe_model(
+                &client,
+                &format!("{} (thinking=on, 无budget)", model_label),
+                system_prompt,
+                user_input,
+                true,
+                None,
+            )
+            .await?,
         );
 
         // 测试 C: 开 thinking，budget=2000（和 ops-omni 实际配置一致）
         results.push(
-            probe_model(&client, &format!("{} (thinking=on, budget=2000)", model_label),
-                system_prompt, user_input, true, Some(2000)).await?
+            probe_model(
+                &client,
+                &format!("{} (thinking=on, budget=2000)", model_label),
+                system_prompt,
+                user_input,
+                true,
+                Some(2000),
+            )
+            .await?,
         );
 
         all_results.push((model_label, results));
@@ -187,11 +222,20 @@ async fn main() -> AgentResult<()> {
     println!("\n\n{}", "=".repeat(90));
     println!("汇总对比");
     println!("{}", "=".repeat(90));
-    println!("{:<14} {:<32} {:>10} {:>10} {:>8} {:>8}",
-        "模型", "配置", "思考(字符)", "回复(字符)", "工具调用", "耗时ms");
-    println!("{:-<14} {:-<32} {:->10} {:->10} {:->8} {:->8}", "", "", "", "", "", "");
+    println!(
+        "{:<14} {:<32} {:>10} {:>10} {:>8} {:>8}",
+        "模型", "配置", "思考(字符)", "回复(字符)", "工具调用", "耗时ms"
+    );
+    println!(
+        "{:-<14} {:-<32} {:->10} {:->10} {:->8} {:->8}",
+        "", "", "", "", "", ""
+    );
 
-    let configs = ["无思考", "thinking=on, 无budget", "thinking=on, budget=2000"];
+    let configs = [
+        "无思考",
+        "thinking=on, 无budget",
+        "thinking=on, budget=2000",
+    ];
     for (label, results) in &all_results {
         for (i, r) in results.iter().enumerate() {
             let flag = if r.thought_chars > 0 && r.text_chars == 0 && r.tool_calls == 0 {
@@ -199,8 +243,10 @@ async fn main() -> AgentResult<()> {
             } else {
                 ""
             };
-            println!("{:<14} {:<32} {:>10} {:>10} {:>8} {:>8}{}",
-                label, configs[i], r.thought_chars, r.text_chars, r.tool_calls, r.elapsed_ms, flag);
+            println!(
+                "{:<14} {:<32} {:>10} {:>10} {:>8} {:>8}{}",
+                label, configs[i], r.thought_chars, r.text_chars, r.tool_calls, r.elapsed_ms, flag
+            );
         }
     }
 

@@ -3,14 +3,16 @@ use std::sync::Arc;
 
 use crate::llm::{LlmClient, ReasoningConfig};
 use crate::tool::{Tool, ToolPolicy, ToolRegistry};
-use crate::types::{AgentConfig, ResponseFormat, RetryConfig, SessionIdGenerator, AtomicU64SessionIdGenerator};
+use crate::types::{
+    AgentConfig, AtomicU64SessionIdGenerator, ResponseFormat, RetryConfig, SessionIdGenerator,
+};
 
+use super::AgentRuntime;
 use super::approval::ApprovalHandler;
 use super::context::ContextWindowManager;
 use super::middleware::{Middleware, MiddlewareRef};
 use super::recovery::{StopOnError, ToolErrorRecovery};
 use super::session_store::{InMemorySessionStore, SessionStore};
-use super::AgentRuntime;
 
 pub struct AgentBuilder {
     client: Arc<dyn LlmClient>,
@@ -218,9 +220,7 @@ impl AgentBuilder {
         let session_store = self
             .session_store
             .unwrap_or_else(|| Arc::new(InMemorySessionStore::new()));
-        let error_recovery = self
-            .error_recovery
-            .unwrap_or_else(|| Arc::new(StopOnError));
+        let error_recovery = self.error_recovery.unwrap_or_else(|| Arc::new(StopOnError));
         let session_id_generator = self
             .session_id_generator
             .unwrap_or_else(|| Arc::new(AtomicU64SessionIdGenerator::default()));
@@ -231,10 +231,7 @@ impl AgentBuilder {
             self.config.session.clone(),
         );
 
-        let llm_engine = super::runtime::LlmEngine::new(
-            self.client.clone(),
-            event_bus.clone(),
-        );
+        let llm_engine = super::runtime::LlmEngine::new(self.client.clone(), event_bus.clone());
 
         let tool_engine = super::runtime::ToolEngine::new(
             self.tools,

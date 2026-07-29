@@ -4,10 +4,10 @@ use tokio_util::sync::CancellationToken;
 
 use crate::engine::context::ContextWindowManager;
 use crate::engine::middleware::MiddlewareRef;
+use crate::engine::runtime::event_bus::EventBus;
 use crate::engine::runtime::llm_engine::LlmEngine;
 use crate::engine::runtime::session_manager::SessionManager;
 use crate::engine::runtime::tool_engine::ToolEngine;
-use crate::engine::runtime::event_bus::EventBus;
 use crate::types::AgentConfig;
 
 pub(crate) struct RuntimeCore {

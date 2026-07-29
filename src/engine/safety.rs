@@ -50,7 +50,8 @@ impl Middleware for TurnToolLimitMiddleware {
 
             // Force LLM to summarize
             ctx.follow_up_message = Some(
-                "本轮工具调用已达上限。请根据已有结果总结并向用户报告。不要再调用工具。".to_string(),
+                "本轮工具调用已达上限。请根据已有结果总结并向用户报告。不要再调用工具。"
+                    .to_string(),
             );
         }
 
@@ -65,7 +66,13 @@ mod tests {
 
     fn make_ctx(turn_tool_calls: usize, pending_calls: usize) -> PostLlmCtx {
         let tool_calls = (0..pending_calls)
-            .map(|i| (format!("call_{}", i), "test_tool".to_string(), "{}".to_string()))
+            .map(|i| {
+                (
+                    format!("call_{}", i),
+                    "test_tool".to_string(),
+                    "{}".to_string(),
+                )
+            })
             .collect();
         PostLlmCtx {
             session_id: SessionId::new(1),

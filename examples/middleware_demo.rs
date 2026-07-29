@@ -2,13 +2,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use agent_base::{
-    AgentBuilder, AgentError, AgentResult, ChatMessage, Middleware,
-    OpenAiClient, PostLlmCtx, RuntimeEvent, SessionId, Tool, ToolContext, ToolControlFlow,
-    ToolOutput,
+    AgentBuilder, AgentError, AgentResult, ChatMessage, Middleware, OpenAiClient, PostLlmCtx,
+    RuntimeEvent, SessionId, Tool, ToolContext, ToolControlFlow, ToolOutput,
 };
 use async_trait::async_trait;
 use dotenvy::dotenv;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 struct EchoTool;
 
@@ -139,7 +138,8 @@ impl Middleware for AntiHallucinationMiddleware {
         ctx.follow_up_message = Some(
             "CRITICAL: You have tools available but did not call any. \
              Do NOT describe what you would do — actually DO it by calling tools. \
-             Call the appropriate tool NOW.".to_string(),
+             Call the appropriate tool NOW."
+                .to_string(),
         );
 
         Ok(())
@@ -156,7 +156,9 @@ struct SensitiveContentFilter {
 
 impl SensitiveContentFilter {
     fn new(words: Vec<String>) -> Self {
-        Self { blocked_words: words }
+        Self {
+            blocked_words: words,
+        }
     }
 }
 
@@ -166,9 +168,7 @@ impl Middleware for SensitiveContentFilter {
         let lower = ctx.full_text.to_lowercase();
         for word in &self.blocked_words {
             if lower.contains(&word.to_lowercase()) {
-                println!(
-                    "[Middleware] Blocked sensitive content containing '{word}', suppressing"
-                );
+                println!("[Middleware] Blocked sensitive content containing '{word}', suppressing");
                 ctx.skip_push = true;
                 ctx.full_text.clear();
                 return Ok(());
@@ -193,7 +193,9 @@ impl EventPrinter {
                 io::stdout().flush().unwrap();
             }
             RuntimeEvent::ToolCallStarted {
-                tool_name, args_json, ..
+                tool_name,
+                args_json,
+                ..
             } => {
                 println!();
                 println!("[Tool call] {} (args: {})", tool_name, args_json);
@@ -233,7 +235,11 @@ async fn print_session_messages(runtime: &agent_base::AgentRuntime, session_id: 
                             println!("[USER] {}", content);
                         }
                     }
-                    ChatMessage::Assistant { content, tool_calls, .. } => {
+                    ChatMessage::Assistant {
+                        content,
+                        tool_calls,
+                        ..
+                    } => {
                         if let Some(tc) = tool_calls {
                             println!(
                                 "[ASSISTANT] tool_calls: {:?}",
@@ -245,7 +251,11 @@ async fn print_session_messages(runtime: &agent_base::AgentRuntime, session_id: 
                             println!("[ASSISTANT] {}", c);
                         }
                     }
-                    ChatMessage::Tool { tool_call_id, content, .. } => {
+                    ChatMessage::Tool {
+                        tool_call_id,
+                        content,
+                        ..
+                    } => {
                         if content.len() > 120 {
                             println!("[TOOL:{}] {}...", tool_call_id, &content[..120]);
                         } else {
@@ -350,7 +360,9 @@ async fn main() -> AgentResult<()> {
         }
 
         match runtime
-            .run_turn(session_id.clone(), &input, |event| EventPrinter::handle(event))
+            .run_turn(session_id.clone(), &input, |event| {
+                EventPrinter::handle(event)
+            })
             .await
         {
             Ok(outcome) => {

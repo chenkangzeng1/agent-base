@@ -1,8 +1,8 @@
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::tool::{Tool, ToolContext, ToolControlFlow, ToolOutput};
-use crate::types::{AgentResult};
+use crate::types::AgentResult;
 
 /// Pure orchestration signal tool with zero domain dependency.
 ///

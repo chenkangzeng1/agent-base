@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use agent_base::{
-    AgentBuilder, AgentResult, ChatMessage, LlmCapabilities, LlmClient,
-    ResponseFormat, RuntimeEvent, StreamChunk, SubAgentTool,
+    AgentBuilder, AgentResult, ChatMessage, LlmCapabilities, LlmClient, ResponseFormat,
+    RuntimeEvent, StreamChunk, SubAgentTool,
 };
 use async_trait::async_trait;
 use futures_core::Stream;
@@ -74,15 +74,12 @@ async fn main() -> AgentResult<()> {
 
     println!("[1] Creating sub-agent:  Agent (Data Analysis Expert) ...");
 
-    let sub_llm = Arc::new(MockLlmClient::new(vec![
-            vec![
-                StreamChunk::Text("Data analysis results：".to_string()),
-                StreamChunk::Text("Monthly sales 120 10K，MoM growth 15%，".to_string()),
-                StreamChunk::Text("Online channel share 60%，Offline channel share 40%。".to_string()),
-                StreamChunk::Stop,
-            ],
-        ],
-    ));
+    let sub_llm = Arc::new(MockLlmClient::new(vec![vec![
+        StreamChunk::Text("Data analysis results：".to_string()),
+        StreamChunk::Text("Monthly sales 120 10K，MoM growth 15%，".to_string()),
+        StreamChunk::Text("Online channel share 60%，Offline channel share 40%。".to_string()),
+        StreamChunk::Stop,
+    ]]));
 
     let sub_runtime = AgentBuilder::new(sub_llm)
         .system_prompt("You are a Data Analysis Expert. Analyze based on the task description provided. Return detailed results.")
@@ -143,17 +140,26 @@ async fn main() -> AgentResult<()> {
     for event in &events {
         match event {
             RuntimeEvent::TextDelta { text, .. } => print!("{text}"),
-            RuntimeEvent::ToolCallStarted { tool_name, args_json, .. } => {
+            RuntimeEvent::ToolCallStarted {
+                tool_name,
+                args_json,
+                ..
+            } => {
                 println!();
                 println!(">>> Parent agent calling tool: {tool_name}");
                 println!("    with args: {args_json}");
             }
-            RuntimeEvent::ToolCallFinished { tool_name, summary, .. } => {
+            RuntimeEvent::ToolCallFinished {
+                tool_name, summary, ..
+            } => {
                 println!();
                 println!("<<< Tool result ({tool_name}):");
                 println!("    {summary}");
             }
-            RuntimeEvent::UserEvent { event: agent_base::UserEvent::SubAgentEvent { subagent, event }, .. } => {
+            RuntimeEvent::UserEvent {
+                event: agent_base::UserEvent::SubAgentEvent { subagent, event },
+                ..
+            } => {
                 print!("  [sub-agent {subagent}] ");
                 match event.as_ref() {
                     RuntimeEvent::TextDelta { text, .. } => {
@@ -182,8 +188,12 @@ async fn main() -> AgentResult<()> {
     println!("Note:");
     println!("  1. Parent agent receives user request and delegates analysis to the sub-agent");
     println!("  2. sub-agent Agent runs independently，generates analysis results");
-    println!("  3. Sub-agent events (TextDelta, etc.) bridge to the parent agent via Custom events");
-    println!("  4. Parent agent receives sub-agent results, summarizes, and provides the final conclusion");
+    println!(
+        "  3. Sub-agent events (TextDelta, etc.) bridge to the parent agent via Custom events"
+    );
+    println!(
+        "  4. Parent agent receives sub-agent results, summarizes, and provides the final conclusion"
+    );
 
     Ok(())
 }

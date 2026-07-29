@@ -16,13 +16,13 @@ use std::io::{self, Write};
 use std::sync::Arc;
 
 use agent_base::{
-    AgentBuilder, AgentError, AgentResult, ApprovalDecision, ApprovalHandler,
-    ApprovalRequest, OpenAiClient, RiskLevel, RuntimeEvent, Tool,
-    ToolContext, ToolControlFlow, ToolOutput, ToolPolicy,
+    AgentBuilder, AgentError, AgentResult, ApprovalDecision, ApprovalHandler, ApprovalRequest,
+    OpenAiClient, RiskLevel, RuntimeEvent, Tool, ToolContext, ToolControlFlow, ToolOutput,
+    ToolPolicy,
 };
 use async_trait::async_trait;
 use dotenvy::dotenv;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 // ============================================================================
 // Tool definitions
@@ -97,8 +97,11 @@ impl Tool for MemCheckTool {
 
     async fn call(&self, _args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
         Ok(ToolOutput {
-            summary: "Total: 16G  Used: 12G  Available: 4G  Usage: 75%\nSwap: Total 4G  Used 512M".into(),
-            raw: Some(json!({ "total_gb": 16, "used_gb": 12, "percent": 75, "swap_total_gb": 4, "swap_used_gb": 0.5 })),
+            summary: "Total: 16G  Used: 12G  Available: 4G  Usage: 75%\nSwap: Total 4G  Used 512M"
+                .into(),
+            raw: Some(
+                json!({ "total_gb": 16, "used_gb": 12, "percent": 75, "swap_total_gb": 4, "swap_used_gb": 0.5 }),
+            ),
             control_flow: ToolControlFlow::Continue,
             truncation: None,
         })
@@ -137,7 +140,10 @@ impl Tool for RestartServiceTool {
     async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
         let service = args["service"].as_str().unwrap_or("unknown");
         Ok(ToolOutput {
-            summary: format!("Service '{}' has been successfully restarted. Status: active (running)", service),
+            summary: format!(
+                "Service '{}' has been successfully restarted. Status: active (running)",
+                service
+            ),
             raw: Some(json!({ "service": service, "status": "restarted", "success": true })),
             control_flow: ToolControlFlow::Continue,
             truncation: None,
@@ -154,11 +160,7 @@ struct HealthCheckPolicy;
 
 #[async_trait]
 impl ToolPolicy for HealthCheckPolicy {
-    async fn evaluate_approval(
-        &self,
-        tool_name: &str,
-        args: &Value,
-    ) -> Option<ApprovalRequest> {
+    async fn evaluate_approval(&self, tool_name: &str, args: &Value) -> Option<ApprovalRequest> {
         match tool_name {
             "restart_service" => {
                 let service = args
@@ -167,7 +169,10 @@ impl ToolPolicy for HealthCheckPolicy {
                     .unwrap_or("unknown");
                 Some(ApprovalRequest {
                     title: "Restart Service".into(),
-                    message: format!("Allow restart of service '{}'? This will cause a brief interruption.", service),
+                    message: format!(
+                        "Allow restart of service '{}'? This will cause a brief interruption.",
+                        service
+                    ),
                     risk_level: RiskLevel::Sensitive,
                     action_key: Some(format!("restart:{}", service)),
                     raw: None,
@@ -197,7 +202,11 @@ struct CliApproval;
 
 #[async_trait]
 impl ApprovalHandler for CliApproval {
-    async fn approve(&self, request: ApprovalRequest, _cancel_token: tokio_util::sync::CancellationToken) -> AgentResult<ApprovalDecision> {
+    async fn approve(
+        &self,
+        request: ApprovalRequest,
+        _cancel_token: tokio_util::sync::CancellationToken,
+    ) -> AgentResult<ApprovalDecision> {
         println!();
         println!("⚠️  Approval Request: {}", request.title);
         println!("   Risk Level: {:?}", request.risk_level);
@@ -331,9 +340,7 @@ async fn main() -> AgentResult<()> {
     let api_key = std::env::var("OPENAI_API_KEY")
         .or_else(|_| std::env::var("DASHSCOPE_API_KEY"))
         .map_err(|_| {
-            AgentError::internal(
-                "Please set OPENAI_API_KEY or DASHSCOPE_API_KEY in your .env file",
-            )
+            AgentError::internal("Please set OPENAI_API_KEY or DASHSCOPE_API_KEY in your .env file")
         })?;
 
     let model = std::env::var("OPENAI_MODEL")
@@ -344,7 +351,8 @@ async fn main() -> AgentResult<()> {
         .or_else(|_| std::env::var("DASHSCOPE_BASE_URL"))
         .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
 
-    let llm: Arc<OpenAiClient> = Arc::new(OpenAiClient::new(api_key, model.clone(), Some(base_url)));
+    let llm: Arc<OpenAiClient> =
+        Arc::new(OpenAiClient::new(api_key, model.clone(), Some(base_url)));
 
     let runtime = AgentBuilder::new(llm)
         .system_prompt(SYSTEM_PROMPT)
@@ -423,7 +431,9 @@ async fn main() -> AgentResult<()> {
                             println!("[User] {}", content);
                         }
                         agent_base::ChatMessage::Assistant {
-                            content, tool_calls, ..
+                            content,
+                            tool_calls,
+                            ..
                         } => {
                             if let Some(tc) = tool_calls {
                                 println!(
@@ -442,7 +452,9 @@ async fn main() -> AgentResult<()> {
                             }
                         }
                         agent_base::ChatMessage::Tool {
-                            tool_call_id, content, ..
+                            tool_call_id,
+                            content,
+                            ..
                         } => {
                             let display = if content.len() > 120 {
                                 format!("{}...", &content[..120])

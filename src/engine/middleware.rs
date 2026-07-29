@@ -62,7 +62,10 @@ mod tests {
     #[test]
     fn test_post_llm_ctx_new_fields_defaults() {
         let ctx = PostLlmCtx {
-            session_id: SessionId { id: 1, external_id: None },
+            session_id: SessionId {
+                id: 1,
+                external_id: None,
+            },
             full_text: "test".to_string(),
             is_tool_call: false,
             tool_calls: vec![],
@@ -84,7 +87,10 @@ mod tests {
     #[test]
     fn test_post_llm_ctx_skip_push_follow_up_set() {
         let ctx = PostLlmCtx {
-            session_id: SessionId { id: 2, external_id: None },
+            session_id: SessionId {
+                id: 2,
+                external_id: None,
+            },
             full_text: "I will execute...".to_string(),
             is_tool_call: false,
             tool_calls: vec![],
@@ -97,7 +103,10 @@ mod tests {
             follow_up_message: Some("Please call tools now.".to_string()),
         };
         assert!(ctx.skip_push);
-        assert_eq!(ctx.follow_up_message, Some("Please call tools now.".to_string()));
+        assert_eq!(
+            ctx.follow_up_message,
+            Some("Please call tools now.".to_string())
+        );
         assert_eq!(ctx.available_tools, vec!["echo".to_string()]);
         assert_eq!(ctx.total_tool_calls, 0);
     }
@@ -105,7 +114,10 @@ mod tests {
     #[test]
     fn test_post_llm_ctx_clone_preserves_new_fields() {
         let ctx = PostLlmCtx {
-            session_id: SessionId { id: 3, external_id: None },
+            session_id: SessionId {
+                id: 3,
+                external_id: None,
+            },
             full_text: "hello".to_string(),
             is_tool_call: false,
             tool_calls: vec![],

@@ -8,7 +8,6 @@
 /// 结论：
 /// - 使用 `handle.block_on()` 会导致死锁或 panic
 /// - 解决方案：将 `ToolPolicy.evaluate_approval` 改为 async
-
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
@@ -103,8 +102,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     match tokio::time::timeout(
         Duration::from_secs(2),
-        policy2.evaluate_approval("execute_plan", "plan-1")
-    ).await {
+        policy2.evaluate_approval("execute_plan", "plan-1"),
+    )
+    .await
+    {
         Ok(result) => println!("方式2 结果: {:?}\n", result),
         Err(_) => println!("方式2 超时!\n"),
     }
@@ -143,13 +144,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=== 建议的 trait 改进 ===");
     println!("// 当前（有问题）:");
     println!("pub trait ToolPolicy: Send + Sync {{");
-    println!("    fn evaluate_approval(&self, tool_name: &str, args: &Value) -> Option<ApprovalRequest>;");
+    println!(
+        "    fn evaluate_approval(&self, tool_name: &str, args: &Value) -> Option<ApprovalRequest>;"
+    );
     println!("}}");
     println!();
     println!("// 改进后:");
     println!("#[async_trait]");
     println!("pub trait ToolPolicy: Send + Sync {{");
-    println!("    async fn evaluate_approval(&self, tool_name: &str, args: &Value) -> Option<ApprovalRequest>;");
+    println!(
+        "    async fn evaluate_approval(&self, tool_name: &str, args: &Value) -> Option<ApprovalRequest>;"
+    );
     println!("}}");
 
     Ok(())

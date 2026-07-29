@@ -2,12 +2,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
-use crate::llm::LlmClient;
-use crate::types::{AgentResult, AgentError, SessionId, UserEvent};
 use crate::engine::SessionStore;
+use crate::llm::LlmClient;
+use crate::types::{AgentError, AgentResult, SessionId, UserEvent};
 
 pub mod auto_continue;
 pub mod policy;
@@ -79,7 +79,9 @@ pub trait Tool: Send + Sync {
     /// that needs engine infrastructure injection (EventBus).
     /// Default returns `None` — user-defined tools need not override this.
     #[allow(private_interfaces)]
-    fn as_framework_tool(&self) -> Option<&dyn FrameworkTool> { None }
+    fn as_framework_tool(&self) -> Option<&dyn FrameworkTool> {
+        None
+    }
 }
 
 /// Marker trait for framework-internal tools that require engine infrastructure.
@@ -134,8 +136,8 @@ impl<T: TypedTool + Send + Sync + 'static> Tool for T {
     }
 
     async fn call(&self, args: &Value, ctx: &ToolContext) -> AgentResult<ToolOutput> {
-        let typed_args: T::Args = serde_json::from_value(args.clone())
-            .map_err(|_| AgentError::ToolArgsInvalid {
+        let typed_args: T::Args =
+            serde_json::from_value(args.clone()).map_err(|_| AgentError::ToolArgsInvalid {
                 name: self.name().to_string(),
                 raw: args.to_string(),
             })?;

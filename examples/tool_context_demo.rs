@@ -85,7 +85,7 @@ use agent_base::{
 };
 use async_trait::async_trait;
 use dotenvy::dotenv;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 // ============================================================================
 // Tool 1: analyze_text — uses ctx.emit_progress()
@@ -152,13 +152,29 @@ impl Tool for AnalyzeTextTool {
         ctx.emit_progress("Analyzing text: evaluating sentiment...");
 
         let positive_en = [
-            "good", "great", "excellent", "happy", "love", "wonderful", "amazing", "fantastic",
+            "good",
+            "great",
+            "excellent",
+            "happy",
+            "love",
+            "wonderful",
+            "amazing",
+            "fantastic",
         ];
         let negative_en = [
-            "bad", "terrible", "awful", "hate", "sad", "horrible", "worst", "disgusting",
+            "bad",
+            "terrible",
+            "awful",
+            "hate",
+            "sad",
+            "horrible",
+            "worst",
+            "disgusting",
         ];
         let positive_zh = ["开心", "快乐", "美好", "希望", "喜欢", "棒", "优秀", "幸福"];
-        let negative_zh = ["难过", "糟糕", "讨厌", "悲伤", "可怕", "失望", "痛苦", "愤怒"];
+        let negative_zh = [
+            "难过", "糟糕", "讨厌", "悲伤", "可怕", "失望", "痛苦", "愤怒",
+        ];
 
         let lower = text.to_lowercase();
         let pos = positive_en.iter().filter(|w| lower.contains(*w)).count()
@@ -247,7 +263,9 @@ impl Tool for SummarizeTool {
 
         // Make a nested LLM call from within the tool.
         let messages = vec![
-            ChatMessage::system("You are a concise summarizer. Respond with exactly one sentence. Match the language of the input text."),
+            ChatMessage::system(
+                "You are a concise summarizer. Respond with exactly one sentence. Match the language of the input text.",
+            ),
             ChatMessage::user(format!("Summarize this:\n\n{}", text)),
         ];
 
@@ -390,7 +408,8 @@ async fn main() -> AgentResult<()> {
         .or_else(|_| std::env::var("DASHSCOPE_BASE_URL"))
         .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
 
-    let llm: Arc<OpenAiClient> = Arc::new(OpenAiClient::new(api_key, model.clone(), Some(base_url)));
+    let llm: Arc<OpenAiClient> =
+        Arc::new(OpenAiClient::new(api_key, model.clone(), Some(base_url)));
 
     let runtime = AgentBuilder::new(llm)
         .system_prompt(SYSTEM_PROMPT)
@@ -428,9 +447,9 @@ async fn main() -> AgentResult<()> {
     // Event loop using `run_turn` — events arrive in real-time via callback.
     loop {
         print!("User > ");
-        std::io::stdout().flush().map_err(|e| {
-            agent_base::AgentError::internal(format!("flush failed: {e}"))
-        })?;
+        std::io::stdout()
+            .flush()
+            .map_err(|e| agent_base::AgentError::internal(format!("flush failed: {e}")))?;
 
         let mut input = String::new();
         std::io::stdin()
@@ -462,7 +481,9 @@ async fn main() -> AgentResult<()> {
                         print!("{}", text);
                     }
                     RuntimeEvent::ToolCallStarted {
-                        tool_name, args_json, ..
+                        tool_name,
+                        args_json,
+                        ..
                     } => {
                         if assistant_started {
                             println!();
