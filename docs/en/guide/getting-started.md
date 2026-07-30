@@ -13,41 +13,41 @@
 cargo install phi-agent
 ```
 
-## Option 1: CLI (recommended)
+## Option 1: Scaffold a project (recommended)
 
-Start an interactive REPL:
+Use `phi init` to generate a complete project with an example tool and REPL:
 
 ```bash
-phi
+phi init my-agent
+cd my-agent
+cp .env.example .env   # edit with your API key
+cargo run
 ```
 
 ```
 phi> What time is it?
 🔧 get_time
-2025-07-30 19:30:00
+ Current time: 2025-07-30 19:30:00
 
 phi> /exit
 ```
 
-Built-in shell tools, metrics, and thinking mode. Great for most users.
+Open `src/main.rs` — you'll see the full `ClockTool` implementation. Write your own tool the same way, register it with the agent, done.
 
-## Option 2: Code integration
+See [Custom Tools](custom-tool.md) for details.
 
-Scaffold a project to build your own Agent:
+## Option 2: Library integration
 
-```bash
-phi init my-agent
-cd my-agent
-```
-
-Set your API key and run:
+Add phi-agent as a library to an existing project:
 
 ```bash
-cp .env.example .env
-# Edit .env with your API key
-cargo run
+cargo add phi-agent
+cargo add tokio --features full
+cargo add anyhow
+cargo add dotenvy
+cargo add async-trait
+cargo add serde_json
+cargo add chrono
 ```
 
-`phi init` generates a REPL with a `ClockTool` example. Open `src/main.rs`, model your own tool after `ClockTool`, register it — done.
-
-See [Configuration](configuration.md) for all config options and [Custom Tools](custom-tool.md) for more examples.
+Then copy the `ClockTool` example into your `main.rs`.
