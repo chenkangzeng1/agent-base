@@ -24,7 +24,10 @@ cargo add anyhow
 
 ## 3. Set your API key
 
+Download the `.env.example` template from the phi-agent repo:
+
 ```bash
+curl -O https://raw.githubusercontent.com/hibuka-labs/phi-agent/master/.env.example
 cp .env.example .env
 # Edit .env with your actual API key
 ```

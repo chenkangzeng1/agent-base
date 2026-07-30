@@ -24,7 +24,10 @@ cargo add anyhow
 
 ## 3. 配置 API Key
 
+从 phi-agent 仓库下载 `.env.example` 模板，然后编辑：
+
 ```bash
+curl -O https://raw.githubusercontent.com/hibuka-labs/phi-agent/master/.env.example
 cp .env.example .env
 # 编辑 .env，填入你的真实 API Key
 ```
