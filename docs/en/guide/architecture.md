@@ -2,6 +2,24 @@
 
 How phi-agent fits together with its dependencies, and why certain decisions were made.
 
+## Repository
+
+phi-agent is a **monorepo** — all crates live in one repository:
+
+```
+github.com/hibuka-labs/phi-agent/
+├── Cargo.toml          ← workspace root
+├── src/                ← phi-agent (lib + CLI binary)
+├── agent-base/         ← runtime kernel
+├── agent-works/        ← tools ecosystem (MCP, Skills)
+├── phi-telemetry/      ← observability (internal)
+├── phi-tools/          ← shell tools (internal)
+└── log-core/           ← logging foundation (internal)
+```
+
+Three crates are published to crates.io: `agent-base`, `agent-works`, `phi-agent`.
+The rest are internal — used by phi-agent but not exposed as standalone packages.
+
 ## Dependency Chain
 
 ```
@@ -14,47 +32,75 @@ phi-agent (lib) ← framework, no tools
 phi (bin) ← CLI, registers tools here
 ```
 
-Each crate is a separate repository under [hibuka-labs](https://github.com/hibuka-labs).
-
 ## Crate Responsibilities
 
 ### agent-base
-The runtime kernel:
+The runtime kernel — `cargo add agent-base` if you just want the engine:
 - `AgentRuntime` — core event loop (LLM chat → tool calls → repeat)
 - `Tool` trait — interface all tools implement
 - `LlmClient` trait — abstraction over LLM providers
 - `RuntimeEvent` — all events emitted during a turn
 - `AgentBuilder` — builder pattern for assembling an agent
+- `TurnContext` + `on_turn_end` hook — observability interface (exposes raw data, no metrics logic)
 
 ### agent-works
-Built on agent-base:
+Built on agent-base — `cargo add agent-works` for the toolbox:
 - **MCP** — Model Context Protocol support
 - **Skills** — plugin/skill system
 - **Focus** — structured LLM calls with typed input/output
+- **Built-in tools** — file operations (read, write, list, etc.)
 
 ### phi-agent (this crate)
-Framework layer — infrastructure only, no tools:
+Framework layer — `cargo add phi-agent` for the full thing:
 - `base_agent_builder()` — pre-configured builder factory
 - `PhiAgent` — high-level wrapper around `AgentRuntime`
 - `EventRenderer` — Terminal / JSON / Null output formats
 - Config resolution, session management, system prompts
+- `phi` CLI binary — `cargo install phi-agent`
 
-### phi-tools
-Tool implementations. On `master`: `LocalShellTool`. Additional tools on other branches.
+### Telemetry & Observability
 
-### phi (binary)
-The CLI consumer. Wires everything together: creates `OpenAiClient`, registers tools, runs REPL or one-shot.
+phi-agent collects structured metrics automatically. Every session writes a `session_metrics.json`:
 
-## Key Design Decisions
+- **Per-turn**: tokens, latency breakdown (TTFT, LLM, tool), tool calls, outcome, thinking
+- **Per-session**: totals, P50/P95/P99 latency, tool breakdown, error rate, cost estimate
+- **Custom extensions**: business logic injects data via `custom` field (e.g. phi-bard tracks prompt version, revision rounds)
 
-### No built-in tools
-phi-agent knows nothing about specific tools. Tools are registered externally via `AgentBuilder::register_tool()`. This keeps the framework lean and consumers in control.
+```bash
+# Built-in CLI
+phi metrics list               # table of recent sessions
+phi metrics show <session_id>  # detailed breakdown
+phi metrics last               # most recent session
+```
 
-### No built-in memory
-No vector DB, no embedding store, no hidden state. Every decision is traceable to what's in the prompt.
+```json
+// session_metrics.json — example
+{
+  "session_id": "20260729_abc12345",
+  "model": "claude-sonnet",
+  "total_turns": 5,
+  "total_input_tokens": 15000,
+  "total_output_tokens": 12000,
+  "estimated_cost": 0.18,
+  "p50_turn_ms": 32000,
+  "p95_turn_ms": 52000,
+  "tool_breakdown": { "shell": 5, "check_quality": 3 },
+  "outcome": "completed",
+  "custom": { "product": "phi-bard", "prompt_version": "v3" }
+}
+```
 
-### OpenAI-compatible CLI
-The CLI uses `OpenAiClient`. For Anthropic, swap to `AnthropicClient` — the framework supports both.
+**Architecture**: telemetry runs in an independent tokio task, communicating via channel.
+Observability panics never crash the agent. agent-base knows nothing about metrics —
+it only exposes `TurnContext` data through an `on_turn_end` hook.
 
-### Session isolation
-Each session gets its own directory with file locking, preventing concurrent access from multiple processes. See [Advanced Usage](advanced.md) for details.
+**Environment variables**:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PHI_METRICS_ENABLED` | `true` | Set to `false` to disable metrics collection |
+| `PHI_NODE_ID` | `""` | Node identifier for multi-node deployments |
+| `PHI_COST_PER_1K_TOKENS` | built-in | Custom model pricing (`input_cost,output_cost` per 1K tokens) |
+
+See the full [observability design doc](https://github.com/hibuka-labs/phi-agent/blob/master/docs/observability-design.md)
+for the complete specification, phi-dash plans, and analysis workflows.
