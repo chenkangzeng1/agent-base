@@ -24,15 +24,13 @@ cargo add anyhow
 
 ## 3. 配置 API Key
 
-从 phi-agent 仓库下载 `.env.example` 模板，然后编辑：
-
 ```bash
 curl -O https://raw.githubusercontent.com/hibuka-labs/phi-agent/master/.env.example
 cp .env.example .env
-# 编辑 .env，填入你的真实 API Key
+# 编辑 .env，填入真实 API Key
 ```
 
-`.env.example` 中包含了 OpenAI、Anthropic、DeepSeek 等常见提供商的配置示例。详见[配置详解](configuration.md)。
+`.env.example` 包含 OpenAI、Anthropic、DeepSeek 等常见提供商的配置示例。详见 [配置详解](configuration.md)。
 
 ## 4. 编写代码
 
