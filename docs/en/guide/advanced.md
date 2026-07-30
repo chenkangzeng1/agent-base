@@ -36,7 +36,7 @@ builder = builder.approval_handler(Arc::new(
 ));
 ```
 
-For interactive CLI approval, see `CliApprovalHandler` in the forge binary.
+For interactive CLI approval, see `CliApprovalHandler` in the phi binary.
 
 ## Session Management
 

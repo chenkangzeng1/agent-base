@@ -36,7 +36,7 @@ builder = builder.approval_handler(Arc::new(
 ));
 ```
 
-交互式 CLI 审批参见 forge 二进制中的 `CliApprovalHandler`。
+交互式 CLI 审批参见 phi 二进制中的 `CliApprovalHandler`。
 
 ## 会话管理
 

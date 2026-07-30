@@ -9,7 +9,7 @@
 | 变量 | 说明 | 默认值 |
 |------|------|--------|
 | `LLM_API_KEY` | API Key（必填） | — |
-| `LLM_MODEL` | 模型名称 | `copilot` |
+| `LLM_MODEL` | 模型名称 | `gpt-4o` |
 | `LLM_BASE_URL` | API 端点地址 | `https://api.openai.com/v1` |
 
 也支持 `OPENAI_API_KEY`、`OPENAI_MODEL`、`OPENAI_BASE_URL` 作为备选变量名。
@@ -41,7 +41,7 @@ SafetyConfig {
 }
 ```
 
-## CLI 参数 (forge)
+## CLI 参数
 
 | 参数 | 说明 |
 |------|------|
@@ -51,11 +51,16 @@ SafetyConfig {
 | `--no-thinking` | 关闭思维链推理 |
 | `--thinking-budget <n>` | 思维过程 token 预算 |
 | `--thinking-effort <level>` | `low` / `medium` / `high` / `xhigh` |
+| `--no-tool-args` | 隐藏工具参数详情 |
+| `--no-color` | 禁用终端颜色 |
 | `--max-tool-calls <n>` | 每轮最大工具调用次数 |
 | `--max-failures <n>` | 最大连续失败次数 |
 | `-y` / `--auto-approve` | 自动批准所有工具调用 |
 | `--session-id <id>` | 指定会话 ID |
 | `--shell-timeout-ms <ms>` | Shell 命令超时时间 |
+| `--log-dir <dir>` | 日志目录（默认 `~/.phi-agent`） |
+| `--log-level <level>` | 日志级别（默认 `info`） |
+| `--no-log` | 禁用文件日志 |
 
 ## 输出格式
 
@@ -73,6 +78,7 @@ SafetyConfig {
 session_id           # 会话 ID 标记
 session.lock         # 文件锁（防止并发访问）
 session_meta.json    # 创建时间、最后活跃时间
+session_metrics.json # 观测指标（token、延迟、费用）
 session.log          # 可读日志（如启用）
 turn_001.jsonl       # 每轮事件日志
 turn_002.jsonl
