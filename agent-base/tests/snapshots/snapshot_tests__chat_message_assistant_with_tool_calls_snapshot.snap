@@ -1,0 +1,17 @@
+---
+source: tests/snapshot_tests.rs
+expression: json
+---
+{
+  "Assistant": {
+    "content": null,
+    "reasoning_content": null,
+    "tool_calls": [
+      {
+        "arguments": "{\"message\":\"hi\"}",
+        "id": "call_1",
+        "name": "echo"
+      }
+    ]
+  }
+}

@@ -1,0 +1,55 @@
+[package]
+name = "agent-works"
+version = "0.1.2"
+edition = "2024"
+description = "Batteries-included Agent toolbox built on agent-base — MCP multi-server, Skills, built-in file tools, CLI REPL"
+license = "MIT"
+repository = "https://github.com/hibuka-labs/agent-works"
+readme = "README.md"
+keywords = ["agent", "ai", "llm", "mcp", "tool-calling"]
+categories = ["development-tools", "asynchronous"]
+
+[features]
+default = []
+mcp = []
+skill = []
+prompt_skill = ["serde_yaml"]
+yaml_skill = ["serde_yaml"]
+builtin-tools = ["walkdir"]
+cli = []
+full = ["mcp", "skill", "builtin-tools", "cli", "prompt_skill", "yaml_skill"]
+
+[dependencies]
+agent-base = { version = "0.1.4", path = "../agent-base" }
+async-trait = "0.1.89"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tokio = { version = "=1.52.2", features = ["full"] }
+tracing = "0.1"
+reqwest = { version = "0.13.3", features = ["json"] }
+walkdir = { version = "2", optional = true }
+serde_yaml = { version = "0.9", optional = true }
+
+[dev-dependencies]
+futures-core = "0.3.32"
+futures-util = "0.3.32"
+anyhow = "1.0.102"
+tempfile = "3"
+serial_test = "3"
+tokio-util = "0.7"
+
+[[example]]
+name = "skill_demo"
+required-features = ["skill"]
+
+[[example]]
+name = "cli_demo"
+required-features = ["cli"]
+
+[[example]]
+name = "builtin_demo"
+required-features = ["builtin-tools"]
+
+[[example]]
+name = "mcp_demo"
+required-features = ["mcp"]

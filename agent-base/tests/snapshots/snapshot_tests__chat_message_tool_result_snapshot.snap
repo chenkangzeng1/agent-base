@@ -1,0 +1,10 @@
+---
+source: tests/snapshot_tests.rs
+expression: json
+---
+{
+  "Tool": {
+    "content": "echo: hi",
+    "tool_call_id": "call_1"
+  }
+}

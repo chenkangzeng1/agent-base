@@ -1,0 +1,19 @@
+# Rust build artifacts
+/target/
+
+# Library crate — Cargo.lock should not be committed
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Environment
+.env
+.env.local

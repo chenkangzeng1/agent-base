@@ -10,6 +10,21 @@ A general-purpose AI Agent framework in Rust, built on [agent-base](https://crat
 
 **phi-agent provides the infrastructure. You bring the tools.**
 
+## Monorepo
+
+This repository contains the full phi-agent ecosystem as a Cargo workspace:
+
+| Crate | crates.io | Description |
+|-------|-----------|-------------|
+| `agent-base` | [![Crates.io](https://img.shields.io/crates/v/agent-base.svg)](https://crates.io/crates/agent-base) | Lightweight runtime kernel — LLM clients, Tool trait, event stream |
+| `agent-works` | [![Crates.io](https://img.shields.io/crates/v/agent-works.svg)](https://crates.io/crates/agent-works) | Batteries-included toolbox — MCP, Skills, built-in file tools |
+| `phi-agent` | [![Crates.io](https://img.shields.io/crates/v/phi-agent.svg)](https://crates.io/crates/phi-agent) | Full framework — builder factory, renderers, config, CLI binary |
+| `phi-telemetry` | — | Metrics collector (internal use by phi-agent) |
+| `phi-tools` | — | Local shell and file operations (internal use by phi-agent) |
+| `log-core` | — | Unified logging foundation (internal use) |
+
+**Just need the runtime?** `cargo add agent-base`. **Need the full framework?** `cargo add phi-agent`.
+
 ## Architecture
 
 ```
@@ -200,7 +215,15 @@ Yes. agent-base provides `AnthropicClient` and `OpenAiClient`. Any client implem
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions and PR guidelines.
+This is a monorepo — clone once and you can work on all crates:
+
+```bash
+git clone git@github.com:hibuka-labs/phi-agent.git
+cd phi-agent
+cargo check --workspace    # builds all 6 crates
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed setup instructions and PR guidelines.
 
 ## License
 

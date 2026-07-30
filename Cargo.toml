@@ -1,3 +1,7 @@
+[workspace]
+resolver = "2"
+members = ["agent-base", "agent-works", "phi-telemetry", "phi-tools", "log-core"]
+
 [package]
 name = "phi-agent"
 version = "0.1.1"
@@ -14,10 +18,10 @@ name = "phi"
 path = "src/bin/phi/main.rs"
 
 [dependencies]
-agent-base = "0.1.4"
-agent-works = "0.1.2"
-phi-tools = "0.1.0"
-phi-telemetry = "0.1.1"
+agent-base = { version = "0.1.4", path = "agent-base" }
+agent-works = { version = "0.1.2", path = "agent-works" }
+phi-tools = { version = "0.1.0", path = "phi-tools" }
+phi-telemetry = { version = "0.1.1", path = "phi-telemetry" }
 anyhow = "1"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
@@ -33,7 +37,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
 rustyline = "15"
-log-core = "0.1.0"
+log-core = { version = "0.1.0", path = "log-core" }
 
 [dev-dependencies]
 tempfile = "3"
