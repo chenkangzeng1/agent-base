@@ -1,0 +1,10 @@
+[package]
+name = "test3"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+phi-agent = "0.1.6"
+tokio = { version = "1", features = ["full"] }
+anyhow = "1"
+dotenvy = "0.15"

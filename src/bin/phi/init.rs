@@ -51,6 +51,9 @@ async fn main() -> anyhow::Result<()> {
 
 pub fn run(name: &str) -> Result<()> {
     let dir = Path::new(name);
+    let project_name = dir.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(name);
 
     if dir.exists() {
         anyhow::bail!("directory '{}' already exists", name);
@@ -73,7 +76,7 @@ tokio = {{ version = "1", features = ["full"] }}
 anyhow = "1"
 dotenvy = "0.15"
 "#,
-            name,
+            project_name,
             env!("CARGO_PKG_VERSION")
         ),
     )?;
