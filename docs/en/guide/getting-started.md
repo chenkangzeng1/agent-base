@@ -20,7 +20,8 @@ Use `phi init` to generate a complete project with an example tool and REPL:
 ```bash
 phi init my-agent
 cd my-agent
-cp .env.example .env   # edit with your API key
+cp .env.example .env
+# edit .env, set LLM_API_KEY=sk-your-key-here
 cargo run
 ```
 
@@ -87,9 +88,10 @@ Add phi-agent to an existing project:
 ```bash
 cargo new my-agent && cd my-agent
 cargo add phi-agent tokio --features full anyhow dotenvy async-trait serde_json chrono rustyline
+echo 'LLM_API_KEY=sk-your-key-here' > .env
 ```
 
-Create a `.env` file with your API key, then copy this to `src/main.rs`:
+Then copy this to `src/main.rs`:
 
 ```rust
 use phi_agent::{
@@ -179,4 +181,16 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-Three steps: Define Tool → Register → REPL. `cargo run` to start.
+Three steps: Define Tool → Register → REPL.
+
+```bash
+cargo run
+```
+
+```
+phi> What time is it?
+🔧 get_time
+Current time: 2025-07-30 19:30:00
+
+phi> /exit
+```

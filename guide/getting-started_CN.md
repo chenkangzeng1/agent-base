@@ -20,7 +20,8 @@ cargo install phi-agent
 ```bash
 phi init my-agent
 cd my-agent
-cp .env.example .env   # 编辑 .env 填入 API Key
+cp .env.example .env
+# 编辑 .env，填入你的 LLM_API_KEY=sk-xxx
 cargo run
 ```
 
@@ -87,9 +88,10 @@ let agent = PhiAgent::build(
 ```bash
 cargo new my-agent && cd my-agent
 cargo add phi-agent tokio --features full anyhow dotenvy async-trait serde_json chrono rustyline
+echo 'LLM_API_KEY=sk-your-key-here' > .env
 ```
 
-创建 `.env` 填入 API Key，然后复制以下代码到 `src/main.rs`：
+然后复制以下代码到 `src/main.rs`：
 
 ```rust
 use phi_agent::{
@@ -179,4 +181,16 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-三步：定义 Tool → 注册到 Agent → REPL 交互。`cargo run` 即可跑起来。
+三步：定义 Tool → 注册到 Agent → REPL 交互。
+
+```bash
+cargo run
+```
+
+```
+phi> 现在几点了？
+🔧 get_time
+当前时间：2025-07-30 19:30:00
+
+phi> /exit
+```
