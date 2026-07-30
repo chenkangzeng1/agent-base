@@ -15,11 +15,30 @@ cargo install phi-agent
 
 ## 方式一：REPL 交互（推荐）
 
+**1. 创建项目**
+
 ```bash
 phi init my-agent
+```
+
+**2. 配置 API Key**
+
+```bash
 cd my-agent
 cp .env.example .env
-# 编辑 .env，填入你的 LLM_API_KEY=sk-xxx
+```
+
+编辑 `.env`，改成你的 Key：
+
+```
+LLM_API_KEY=sk-your-key-here
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_MODEL=gpt-4o
+```
+
+**3. 运行**
+
+```bash
 cargo run
 ```
 
@@ -81,13 +100,26 @@ let agent = PhiAgent::build(
 
 ## 方式二：库集成
 
-生成单次调用版本（不含 REPL），适合嵌入已有项目：
+生成单次调用版本（不含 REPL），适合嵌入已有项目。
+
+**1. 创建项目**
 
 ```bash
 phi init --lib my-agent
+```
+
+**2. 配置 API Key**
+
+```bash
 cd my-agent
 cp .env.example .env
-# 编辑 .env，填入你的 LLM_API_KEY=sk-xxx
+```
+
+编辑 `.env`，同上。
+
+**3. 运行**
+
+```bash
 cargo run
 ```
 

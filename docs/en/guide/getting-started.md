@@ -15,18 +15,37 @@ cargo install phi-agent
 
 ## Option 1: REPL (recommended)
 
+**1. Create project**
+
 ```bash
 phi init my-agent
+```
+
+**2. Configure API key**
+
+```bash
 cd my-agent
 cp .env.example .env
-# edit .env, set LLM_API_KEY=sk-your-key-here
+```
+
+Edit `.env` with your key:
+
+```
+LLM_API_KEY=sk-your-key-here
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_MODEL=gpt-4o
+```
+
+**3. Run**
+
+```bash
 cargo run
 ```
 
 ```
 phi> What time is it?
 🔧 get_time
- Current time: 2025-07-30 19:30:00
+Current time: 2025-07-30 19:30:00
 
 phi> /exit
 ```
@@ -81,13 +100,24 @@ Model your own tool after `ClockTool`. See [Custom Tools](custom-tool.md) for mo
 
 ## Option 2: Library integration
 
-Generates a single-shot version (no REPL) for embedding in existing projects:
+**1. Create project**
 
 ```bash
 phi init --lib my-agent
+```
+
+**2. Configure API key**
+
+```bash
 cd my-agent
 cp .env.example .env
-# edit .env, set LLM_API_KEY=sk-your-key-here
+```
+
+Edit `.env` — same as above.
+
+**3. Run**
+
+```bash
 cargo run
 ```
 
