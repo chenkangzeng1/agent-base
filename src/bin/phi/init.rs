@@ -30,11 +30,14 @@ impl Tool for ClockTool {
 
     fn definition(&self) -> Value {
         json!({
-            "name": "get_time",
-            "description": "获取当前日期和时间",
-            "parameters": {
-                "type": "object",
-                "properties": {}
+            "type": "function",
+            "function": {
+                "name": "get_time",
+                "description": "获取当前日期和时间",
+                "parameters": {
+                    "type": "object",
+                    "properties": {}
+                }
             }
         })
     }
