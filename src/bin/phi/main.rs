@@ -5,15 +5,16 @@ mod tools;
 use std::sync::Arc;
 
 use anyhow::Result;
-use args::{CliArgs, OutputFormatArg};
+use args::{CliArgs, MetricsCmd, OutputFormatArg};
 use clap::Parser;
 use phi_agent::config::resolve_llm_config;
 use phi_agent::render::{OutputFormat, create_stdout_renderer};
 use phi_agent::{ApprovalMode, AutoApprovalHandler};
 use phi_agent::{
-    OpenAiClient, PhiAgent, SafetyConfig, SessionContext, TurnFactMiddleware, TurnToolLimitMiddleware,
+    OpenAiClient, PhiAgent, RunOutcome, SafetyConfig, SessionContext, TurnFactMiddleware, TurnToolLimitMiddleware,
     base_agent_builder, build_system_prompt, save_turn_log,
 };
+use phi_telemetry::{self, SessionOutcome, list_all_metrics, load_metrics, save_metrics};
 
 use approval::CliApprovalHandler;
 use tools::LocalShellTool;
@@ -22,6 +23,11 @@ use tools::LocalShellTool;
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     let args = CliArgs::parse();
+
+    // Handle metrics subcommand (no agent needed)
+    if let Some(cmd) = &args.metrics_cmd {
+        return handle_metrics(cmd, &args);
+    }
 
     // 1. Resolve log directory
     let log_dir = args.log_dir.replace("~", &std::env::var("HOME").unwrap_or_default());
@@ -145,7 +151,39 @@ async fn main() -> Result<()> {
 
     // 14. Run
     if let Some(query) = args.query {
-        run_one_shot(&agent, &agent_session_id, &session_ctx, &query, &output_format).await
+        // Set up telemetry
+        let node_id = std::env::var("PHI_NODE_ID").unwrap_or_default();
+        let metrics_enabled = std::env::var("PHI_METRICS_ENABLED")
+            .map(|v| {
+                let v = v.to_lowercase();
+                !matches!(v.as_str(), "false" | "0" | "no" | "off" | "")
+            })
+            .unwrap_or(true);
+
+        let mut telemetry = if metrics_enabled {
+            Some(phi_telemetry::init_telemetry(
+                agent.runtime(),
+                session_id_str.clone(),
+                node_id,
+                llm_config.model.clone(),
+            ))
+        } else {
+            None
+        };
+
+        let (result, run_outcome) = run_one_shot(&agent, &agent_session_id, &session_ctx, &query, &output_format).await;
+
+        // Finalize and save metrics
+        if let Some(handle) = &mut telemetry {
+            handle.shutdown().await;
+            let session = handle.session.read().await;
+            let mut session = session.clone();
+            session.finalize(phi_telemetry::types::run_outcome_to_session_outcome(&run_outcome));
+            let _ = save_metrics(&session, &session_ctx.session_dir);
+        }
+
+        result?;
+        Ok(())
     } else {
         run_repl(&agent, &agent_session_id, &session_ctx, &output_format).await
     }
@@ -159,7 +197,7 @@ async fn run_one_shot(
     session_ctx: &SessionContext,
     query: &str,
     format: &OutputFormat,
-) -> Result<()> {
+) -> (Result<()>, RunOutcome) {
     let turn_start = std::time::Instant::now();
     tracing::debug!(input = %truncate_str(query, 80), "one-shot started");
 
@@ -181,10 +219,15 @@ async fn run_one_shot(
         })
         .await;
 
-    cancel_handle.abort();
-    renderer.finish_turn()?;
+    let run_outcome = match &result {
+        Ok(outcome) => outcome.clone(),
+        Err(_) => RunOutcome::Failed { error: "agent error".to_string() },
+    };
 
-    save_turn_log(session_ctx, 1, &turn_events, query)?;
+    cancel_handle.abort();
+    let _ = renderer.finish_turn();
+
+    let _ = save_turn_log(session_ctx, 1, &turn_events, query);
 
     if matches!(format, OutputFormat::Json) {
         let session_info = serde_json::json!({
@@ -192,20 +235,22 @@ async fn run_one_shot(
             "session_id": session_ctx.session_id,
             "is_new_session": session_ctx.is_new_session,
         });
-        println!("{}", serde_json::to_string(&session_info)?);
+        if let Ok(json) = serde_json::to_string(&session_info) {
+            println!("{}", json);
+        }
     }
 
-    match result {
+    match &result {
         Ok(_) => {
             tracing::info!(duration_ms = turn_start.elapsed().as_millis() as u64, "one-shot completed");
-            Ok(())
+            (Ok(()), run_outcome)
         },
         Err(err) => {
             tracing::error!(error = %err, "one-shot failed");
             if matches!(format, OutputFormat::Terminal { .. }) {
                 eprintln!("\n❌ Error: {}", err);
             }
-            Err(err.into())
+            (Err(anyhow::anyhow!("{}", err)), run_outcome)
         },
     }
 }
@@ -221,6 +266,25 @@ async fn run_repl(
     if matches!(format, OutputFormat::Terminal { .. }) {
         print_welcome_banner(agent, session_ctx);
     }
+
+    let node_id = std::env::var("PHI_NODE_ID").unwrap_or_default();
+    let metrics_enabled = std::env::var("PHI_METRICS_ENABLED")
+        .map(|v| {
+            let v = v.to_lowercase();
+            !matches!(v.as_str(), "false" | "0" | "no" | "off" | "")
+        })
+        .unwrap_or(true);
+
+    let mut telemetry = if metrics_enabled {
+        Some(phi_telemetry::init_telemetry(
+            agent.runtime(),
+            session_ctx.session_id.clone(),
+            node_id,
+            agent.config.model.clone(),
+        ))
+    } else {
+        None
+    };
 
     let mut agent_session_id = agent_session_id.clone();
     let mut turn_number: u32 = 0;
@@ -292,6 +356,12 @@ async fn run_repl(
                 let is_cancelled = agent.is_cancelled();
                 save_turn_log(session_ctx, turn_number, &turn_events, &input)?;
 
+                // Save metrics incrementally
+                if let Some(ref handle) = telemetry {
+                    let session = handle.session.read().await;
+                    let _ = save_metrics(&session, &session_ctx.session_dir);
+                }
+
                 if is_cancelled {
                     tracing::info!(turn = turn_number, "turn cancelled by user");
                 } else {
@@ -308,12 +378,27 @@ async fn run_repl(
 
                 save_turn_log(session_ctx, turn_number, &turn_events, &input)?;
 
+                // Save metrics on error too
+                if let Some(ref handle) = telemetry {
+                    let session = handle.session.read().await;
+                    let _ = save_metrics(&session, &session_ctx.session_dir);
+                }
+
                 tracing::error!(error = %err, turn = turn_number, "agent turn failed");
                 if matches!(format, OutputFormat::Terminal { .. }) {
                     eprintln!("\n❌ Error: {}", err);
                 }
             },
         }
+    }
+
+    // Finalize metrics on session end
+    if let Some(handle) = &mut telemetry {
+        handle.shutdown().await;
+        let session = handle.session.read().await;
+        let mut session = session.clone();
+        session.finalize(SessionOutcome::Completed);
+        let _ = save_metrics(&session, &session_ctx.session_dir);
     }
 
     Ok(())
@@ -345,6 +430,177 @@ fn truncate_str(s: &str, max_chars: usize) -> String {
         format!("{}...", truncated)
     } else {
         s.to_string()
+    }
+}
+
+// ── Metrics commands ──
+
+fn handle_metrics(cmd: &MetricsCmd, args: &CliArgs) -> Result<()> {
+    let log_dir = args.log_dir.replace("~", &std::env::var("HOME").unwrap_or_default());
+    let log_dir_path = std::path::PathBuf::from(&log_dir);
+
+    match cmd {
+        MetricsCmd::List => {
+            let summaries = list_all_metrics(&log_dir_path)?;
+            if summaries.is_empty() {
+                println!("No sessions found.");
+                return Ok(());
+            }
+
+            println!("  {:<30} {:<18} {:>6} {:>10} {:>8}  {}", "Session", "Node", "Turns", "Tokens", "Cost", "Outcome");
+            println!("  {}", "-".repeat(90));
+
+            for s in &summaries {
+                let label = if let Some(ref product) = s.product {
+                    format!("{} ({})", s.session_id, product)
+                } else {
+                    s.session_id.clone()
+                };
+
+                let outcome_icon = match s.outcome {
+                    SessionOutcome::Completed => "✅ completed",
+                    SessionOutcome::Failed => "❌ failed",
+                    SessionOutcome::Cancelled => "⏹️ cancelled",
+                    SessionOutcome::MaxTurns => "⚠️ max_turns",
+                };
+
+                println!(
+                    "  {:<30} {:<18} {:>6} {:>10} ${:>7.2}  {}",
+                    truncate_str(&label, 29),
+                    if s.node_id.is_empty() { "-" } else { &s.node_id },
+                    s.total_turns,
+                    format_number(s.total_tokens),
+                    s.estimated_cost,
+                    outcome_icon,
+                );
+            }
+            println!("\n  {} session(s)", summaries.len());
+        },
+
+        MetricsCmd::Show { session_id } => {
+            let session_dir = log_dir_path.join("sessions").join(session_id);
+            if !session_dir.exists() {
+                eprintln!("Session '{}' not found.", session_id);
+                return Ok(());
+            }
+
+            let metrics = load_metrics(&session_dir)?;
+            print_session_detail(&metrics, session_id);
+        },
+
+        MetricsCmd::Last => {
+            let summaries = list_all_metrics(&log_dir_path)?;
+            match summaries.first() {
+                Some(summary) => {
+                    let session_dir = log_dir_path.join("sessions").join(&summary.session_id);
+                    let metrics = load_metrics(&session_dir)?;
+                    print_session_detail(&metrics, &summary.session_id);
+                },
+                None => {
+                    println!("No sessions found.");
+                },
+            }
+        },
+    }
+
+    Ok(())
+}
+
+fn print_session_detail(metrics: &phi_agent::SessionMetrics, session_id: &str) {
+    println!();
+    println!("  Session:    {}", session_id);
+    if !metrics.node_id.is_empty() {
+        println!("  Node:       {}", metrics.node_id);
+    }
+    println!("  Model:      {}", metrics.model);
+
+    // Product info from custom
+    if let Some(product) = metrics.custom.get("product").and_then(|v| v.as_str()) {
+        let role = metrics.custom.get("role").and_then(|v| v.as_str()).map(|r| format!(" ({})", r)).unwrap_or_default();
+        println!("  Product:    {}{}", product, role);
+    }
+
+    println!("  Turns:      {}", metrics.total_turns);
+    println!(
+        "  Duration:   {}s (avg {}s/turn, P50 {}s, P95 {}s, P99 {}s)",
+        metrics.total_duration_ms / 1000,
+        metrics.avg_turn_ms / 1000,
+        metrics.p50_turn_ms / 1000,
+        metrics.p95_turn_ms / 1000,
+        metrics.p99_turn_ms / 1000,
+    );
+    println!("  ─────────────────────────────────────────");
+    println!(
+        "  Tokens:     {} in / {} out",
+        format_number(metrics.total_input_tokens),
+        format_number(metrics.total_output_tokens),
+    );
+    println!("  Cost:       ${:.2}", metrics.estimated_cost);
+    println!("  ─────────────────────────────────────────");
+    println!(
+        "  LLM:        {}s ({}%)",
+        metrics.total_llm_ms / 1000,
+        if metrics.total_duration_ms > 0 { (metrics.total_llm_ms * 100) / metrics.total_duration_ms } else { 0 }
+    );
+    println!(
+        "  Tool:       {}s ({}%)",
+        metrics.total_tool_ms / 1000,
+        if metrics.total_duration_ms > 0 { (metrics.total_tool_ms * 100) / metrics.total_duration_ms } else { 0 }
+    );
+    if !metrics.tool_breakdown.is_empty() {
+        let tools: Vec<String> =
+            metrics.tool_breakdown.iter().map(|(name, count)| format!("{}({})", name, count)).collect();
+        println!("  Tools:      {}", tools.join(", "));
+    }
+    println!("  ─────────────────────────────────────────");
+    let outcome_icon = match metrics.outcome {
+        SessionOutcome::Completed => "✅ completed",
+        SessionOutcome::Failed => "❌ failed",
+        SessionOutcome::Cancelled => "⏹️ cancelled",
+        SessionOutcome::MaxTurns => "⚠️ max_turns",
+    };
+    println!("  Outcome:    {}", outcome_icon);
+    println!("  Errors:     {}", metrics.error_count);
+    if metrics.total_plan_updates > 0 || metrics.total_approvals > 0 {
+        println!("  Plans:      {} update(s), {} approval(s)", metrics.total_plan_updates, metrics.total_approvals);
+    }
+
+    if !metrics.turns.is_empty() {
+        println!();
+        println!("  Turn breakdown:");
+        for turn in &metrics.turns {
+            let tools_str = if turn.tools_used.is_empty() {
+                "text-only".to_string()
+            } else {
+                format!("tools[{}]", turn.tools_used.join(", "))
+            };
+            let outcome_icon = match turn.outcome {
+                phi_telemetry::TurnOutcome::Completed => "✅",
+                phi_telemetry::TurnOutcome::ToolCalls => "🔧",
+                phi_telemetry::TurnOutcome::Error => "❌",
+                phi_telemetry::TurnOutcome::Cancelled => "⏹️",
+                phi_telemetry::TurnOutcome::MaxTurns => "⚠️",
+            };
+            println!(
+                "  #{:<3} {:>4}s  TTFT {:>4}ms  {:<30} {}",
+                turn.turn_number,
+                turn.duration_ms / 1000,
+                turn.time_to_first_token_ms,
+                truncate_str(&tools_str, 29),
+                outcome_icon,
+            );
+        }
+    }
+    println!();
+}
+
+fn format_number(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1}M", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.1}K", n as f64 / 1_000.0)
+    } else {
+        n.to_string()
     }
 }
 

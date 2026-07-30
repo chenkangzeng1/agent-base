@@ -22,6 +22,12 @@ pub use agent_base::{
     UpdatePlanTool,
 };
 
+// ── phi-telemetry (metrics types and storage) ──
+pub use phi_telemetry::{
+    SessionMetrics, SessionOutcome, SessionSummary, TurnMetrics, TurnOutcome, list_all_metrics, load_metrics,
+    save_metrics, try_load_metrics,
+};
+
 // ── agent-works ──
 pub use agent_works::focus::{Context as FocusContext, Focus, FocusError, FocusInput, FocusOutput};
 

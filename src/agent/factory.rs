@@ -87,4 +87,9 @@ impl PhiAgent {
     pub async fn set_reasoning_effort(&self, effort: ReasoningEffort) {
         self.runtime.set_reasoning_effort(effort).await;
     }
+
+    /// Access the underlying runtime (for advanced use like hook registration).
+    pub fn runtime(&self) -> &AgentRuntime {
+        &self.runtime
+    }
 }
