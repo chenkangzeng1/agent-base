@@ -1,5 +1,5 @@
 use agent_base::ReasoningEffort;
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -15,8 +15,14 @@ pub struct CliArgs {
     #[arg(value_name = "QUERY")]
     pub query: Option<String>,
 
+    /// Metrics subcommand — view session observability data.
+    ///
+    /// Reads `session_metrics.json` files from the sessions directory.
+    /// No agent is started for these commands.
+    #[command(subcommand)]
+    pub metrics_cmd: Option<MetricsCmd>,
+
     // ── Output control ──
-    /// Output format
     #[arg(long, value_enum, default_value = "terminal")]
     pub format: OutputFormatArg,
 
@@ -114,4 +120,26 @@ impl From<ReasoningEffortArg> for ReasoningEffort {
             ReasoningEffortArg::Xhigh => ReasoningEffort::XHigh,
         }
     }
+}
+
+#[derive(Subcommand, Debug)]
+#[command(name = "metrics")]
+pub enum MetricsCmd {
+    /// List all sessions with token usage, cost, and outcome.
+    ///
+    /// Scans ~/.phi-agent/sessions/ for session_metrics.json files
+    /// and displays a table sorted by creation time (newest first).
+    List,
+    /// Show detailed metrics for a specific session.
+    ///
+    /// Displays session summary (model, turns, duration, P50/P95/P99 latency,
+    /// token breakdown, tool usage) followed by per-turn details.
+    Show {
+        /// Session ID (e.g. "20260730_c52b4c91")
+        session_id: String,
+    },
+    /// Show detailed metrics for the most recent session.
+    ///
+    /// Convenience shortcut — equivalent to `phi metrics show <latest-id>`.
+    Last,
 }
