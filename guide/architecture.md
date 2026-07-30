@@ -4,21 +4,19 @@ How phi-agent fits together with its dependencies, and why certain decisions wer
 
 ## Repository
 
-phi-agent is a **monorepo** — all crates live in one repository:
+Each crate is an independent repository under [hibuka-labs](https://github.com/hibuka-labs):
 
-```
-github.com/hibuka-labs/phi-agent/
-├── Cargo.toml          ← workspace root
-├── src/                ← phi-agent (lib + CLI binary)
-├── agent-base/         ← runtime kernel
-├── agent-works/        ← tools ecosystem (MCP, Skills)
-├── phi-telemetry/      ← observability (internal)
-├── phi-tools/          ← shell tools (internal)
-└── log-core/           ← logging foundation (internal)
-```
+| Crate | Repository | crates.io |
+|-------|-----------|-----------|
+| `agent-base` | [hibuka-labs/agent-base](https://github.com/hibuka-labs/agent-base) | ✅ |
+| `agent-works` | [hibuka-labs/agent-works](https://github.com/hibuka-labs/agent-works) | ✅ |
+| `phi-agent` | [hibuka-labs/phi-agent](https://github.com/hibuka-labs/phi-agent) (this repo) | ✅ |
+| `phi-tools` | [hibuka-labs/phi-tools](https://github.com/hibuka-labs/phi-tools) | ✅ |
+| `phi-telemetry` | [hibuka-labs/phi-telemetry](https://github.com/hibuka-labs/phi-telemetry) | ✅ |
+| `log-core` | [hibuka-labs/log-core](https://github.com/hibuka-labs/log-core) | ✅ |
 
-Three crates are published to crates.io: `agent-base`, `agent-works`, `phi-agent`.
-The rest are internal — used by phi-agent but not exposed as standalone packages.
+All crates use pure version dependencies — no monorepo, no path tricks.
+`cargo add phi-agent` pulls what you need from crates.io.
 
 ## Dependency Chain
 
