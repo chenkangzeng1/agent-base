@@ -41,13 +41,84 @@ phi> /exit
 把 phi-agent 作为库加入已有项目：
 
 ```bash
-cargo add phi-agent
-cargo add tokio --features full
-cargo add anyhow
-cargo add dotenvy
-cargo add async-trait
-cargo add serde_json
-cargo add chrono
+cargo add phi-agent tokio --features full anyhow dotenvy async-trait serde_json chrono
 ```
 
-然后复制 `ClockTool` 示例代码到你的 `main.rs` 即可。
+完整示例 `src/main.rs`：
+
+```rust
+use phi_agent::{
+    base_agent_builder, build_system_prompt,
+    PhiAgent, PhiAgentConfig, OpenAiClient,
+    SafetyConfig, ReasoningEffort,
+    OutputFormat, create_stdout_renderer,
+    AgentResult, Tool, ToolContext, ToolControlFlow, ToolOutput,
+};
+use async_trait::async_trait;
+use serde_json::{Value, json};
+use std::sync::Arc;
+
+// 1. 定义你的工具
+struct ClockTool;
+
+#[async_trait]
+impl Tool for ClockTool {
+    fn name(&self) -> &'static str { "get_time" }
+
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "get_time",
+                "description": "获取当前日期和时间",
+                "parameters": { "type": "object", "properties": {} }
+            }
+        })
+    }
+
+    async fn call(&self, _args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
+        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        Ok(ToolOutput {
+            summary: format!("当前时间：{}", now),
+            control_flow: ToolControlFlow::Continue,
+            raw: None, truncation: None,
+        })
+    }
+}
+
+// 2. 注册工具，构建 Agent
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    dotenvy::dotenv().ok();
+
+    let model = std::env::var("LLM_MODEL").unwrap_or_else(|_| "gpt-4o".into());
+    let llm = Arc::new(OpenAiClient::new(
+        std::env::var("LLM_API_KEY")?,
+        model.clone(),
+        std::env::var("LLM_BASE_URL").ok(),
+    ));
+
+    let agent = PhiAgent::build(
+        base_agent_builder(llm)
+            .system_prompt(build_system_prompt())
+            .register_tool(ClockTool),      // 注册你的工具
+        PhiAgentConfig {
+            model,
+            enable_thinking: true,
+            thinking_budget: None,
+            thinking_effort: ReasoningEffort::Medium,
+            safety: SafetyConfig::default(),
+        },
+    )?;
+
+    // 3. 运行
+    let session = agent.create_session().await;
+    let mut renderer = create_stdout_renderer(&OutputFormat::Terminal {
+        show_thinking: true, show_tool_args: true, color: true,
+    });
+    agent.run_turn(session, "现在几点了？", |event| renderer.render(event)).await?;
+    Ok(())
+}
+```
+
+三步：定义 Tool → 注册到 Agent → 运行。更多工具示例见 [自定义工具](custom-tool.md)。
