@@ -32,33 +32,11 @@ phi> What time is it?
 phi> /exit
 ```
 
-Open `src/main.rs` — you'll see the full `ClockTool` implementation. Write your own tool the same way, register it with the agent, done.
+Open `src/main.rs` — you'll see three parts:
 
-See [Custom Tools](custom-tool.md) for details.
-
-## Option 2: Library integration
-
-Add phi-agent as a library to an existing project:
-
-```bash
-cargo add phi-agent tokio --features full anyhow dotenvy async-trait serde_json chrono
-```
-
-Full example `src/main.rs`:
+**1. Define a tool** — implement the `Tool` trait:
 
 ```rust
-use phi_agent::{
-    base_agent_builder, build_system_prompt,
-    PhiAgent, PhiAgentConfig, OpenAiClient,
-    SafetyConfig, ReasoningEffort,
-    OutputFormat, create_stdout_renderer,
-    AgentResult, Tool, ToolContext, ToolControlFlow, ToolOutput,
-};
-use async_trait::async_trait;
-use serde_json::{Value, json};
-use std::sync::Arc;
-
-// 1. Define your tool
 struct ClockTool;
 
 #[async_trait]
@@ -85,40 +63,29 @@ impl Tool for ClockTool {
         })
     }
 }
-
-// 2. Register tool, build Agent
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    dotenvy::dotenv().ok();
-
-    let model = std::env::var("LLM_MODEL").unwrap_or_else(|_| "gpt-4o".into());
-    let llm = Arc::new(OpenAiClient::new(
-        std::env::var("LLM_API_KEY")?,
-        model.clone(),
-        std::env::var("LLM_BASE_URL").ok(),
-    ));
-
-    let agent = PhiAgent::build(
-        base_agent_builder(llm)
-            .system_prompt(build_system_prompt())
-            .register_tool(ClockTool),      // register your tool
-        PhiAgentConfig {
-            model,
-            enable_thinking: true,
-            thinking_budget: None,
-            thinking_effort: ReasoningEffort::Medium,
-            safety: SafetyConfig::default(),
-        },
-    )?;
-
-    // 3. Run
-    let session = agent.create_session().await;
-    let mut renderer = create_stdout_renderer(&OutputFormat::Terminal {
-        show_thinking: true, show_tool_args: true, color: true,
-    });
-    agent.run_turn(session, "What time is it?", |event| renderer.render(event)).await?;
-    Ok(())
-}
 ```
 
-Three steps: Define Tool → Register → Run. See [Custom Tools](custom-tool.md) for more examples.
+**2. Register the tool** — attach it to the Agent:
+
+```rust
+let agent = PhiAgent::build(
+    base_agent_builder(llm)
+        .system_prompt(build_system_prompt())
+        .register_tool(ClockTool),      // ← register here
+    PhiAgentConfig { ... },
+)?;
+```
+
+**3. REPL** — the Agent decides when to call your tool.
+
+Model your own tool after `ClockTool`. See [Custom Tools](custom-tool.md) for more examples.
+
+## Option 2: Library integration
+
+Add phi-agent to an existing project:
+
+```bash
+cargo add phi-agent tokio --features full anyhow dotenvy async-trait serde_json chrono
+```
+
+Then write your `main.rs` following the `ClockTool` example above.
