@@ -31,11 +31,19 @@ cp .env.example .env
 
 ## 4. 运行
 
-`phi init` 已经生成了可用的 `src/main.rs`，直接运行：
+`phi init` 已经生成了带 REPL 的 `src/main.rs`，直接运行：
 
 ```bash
 cargo run
 ```
+
+```
+phi> 什么是 Rust？
+Rust 是一门系统级编程语言...
+
+phi> /exit
+```
+输入 `/exit` 退出。
 
 ## 下一步
 

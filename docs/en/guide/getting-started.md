@@ -31,11 +31,19 @@ cp .env.example .env
 
 ## 4. Run
 
-`phi init` already generated a working `src/main.rs`. Just run it:
+`phi init` already generated a working `src/main.rs` with a REPL. Just run it:
 
 ```bash
 cargo run
 ```
+
+```
+phi> What is Rust?
+Rust is a systems programming language...
+
+phi> /exit
+```
+Type `/exit` to quit.
 
 ## What's Next
 
