@@ -50,6 +50,8 @@ phi> 现在几点了？
 phi> /exit
 ```
 
+### 源码解读
+
 打开 `src/main.rs`，你会看到三部分：
 
 **1. 定义工具** — 实现 `Tool` trait，告诉 Agent 这个工具叫什么、能干什么：
@@ -122,6 +124,8 @@ cp .env.example .env
 ```bash
 cargo run
 ```
+
+### 源码区别
 
 打开 `src/main.rs`，同样的 ClockTool，运行时变成单次调用：
 

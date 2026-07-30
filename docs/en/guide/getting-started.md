@@ -50,6 +50,8 @@ Current time: 2025-07-30 19:30:00
 phi> /exit
 ```
 
+### Code walkthrough
+
 Open `src/main.rs` — you'll see three parts:
 
 **1. Define a tool** — implement the `Tool` trait:
@@ -120,6 +122,8 @@ Edit `.env` — same as above.
 ```bash
 cargo run
 ```
+
+### Code walkthrough
 
 Open `src/main.rs` — same ClockTool, but runs as a single call instead of a REPL:
 
