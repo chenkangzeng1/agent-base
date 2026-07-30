@@ -14,22 +14,24 @@ const MAIN_RS: &str = r#"use phi_agent::{
     SafetyConfig, ReasoningEffort,
     OutputFormat, create_stdout_renderer,
 };
+use rustyline::DefaultEditor;
 use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
+    let model = std::env::var("LLM_MODEL").unwrap_or_else(|_| "gpt-4o".into());
     let llm = Arc::new(OpenAiClient::new(
         std::env::var("LLM_API_KEY")?,
-        std::env::var("LLM_MODEL").unwrap_or_else(|_| "gpt-4o".into()),
+        model.clone(),
         std::env::var("LLM_BASE_URL").ok(),
     ));
 
     let agent = PhiAgent::build(
         base_agent_builder(llm).system_prompt(build_system_prompt()),
         PhiAgentConfig {
-            model: std::env::var("LLM_MODEL").unwrap_or_else(|_| "gpt-4o".into()),
+            model,
             enable_thinking: true,
             thinking_budget: None,
             thinking_effort: ReasoningEffort::Medium,
@@ -37,14 +39,26 @@ async fn main() -> anyhow::Result<()> {
         },
     )?;
 
-    let session = agent.create_session().await;
+    let mut rl = DefaultEditor::new()?;
     let mut renderer = create_stdout_renderer(&OutputFormat::Terminal {
         show_thinking: true,
         show_tool_args: true,
         color: true,
     });
 
-    agent.run_turn(session, "Hello, who are you?", |event| renderer.render(event)).await?;
+    println!("phi-agent REPL — type /exit to quit\n");
+    loop {
+        let line = rl.readline("> ")?;
+        let input = line.trim().to_string();
+        if input.is_empty() { continue; }
+        if input == "/exit" { break; }
+        rl.add_history_entry(&input)?;
+
+        let session = agent.create_session().await;
+        agent.run_turn(session, &input, |event| renderer.render(event)).await?;
+        println!();
+    }
+
     Ok(())
 }
 "#;
@@ -75,6 +89,7 @@ phi-agent = "{}"
 tokio = {{ version = "1", features = ["full"] }}
 anyhow = "1"
 dotenvy = "0.15"
+rustyline = "15"
 "#,
             project_name,
             env!("CARGO_PKG_VERSION")
