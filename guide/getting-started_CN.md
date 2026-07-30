@@ -23,16 +23,6 @@ cp .env.example .env
 cargo run
 ```
 
-## 方式二：库集成
-
-```bash
-phi init --lib my-agent
-cd my-agent
-cp .env.example .env
-# 编辑 .env，填入你的 LLM_API_KEY=sk-xxx
-cargo run
-```
-
 ```
 phi> 现在几点了？
 🔧 get_time
@@ -88,3 +78,35 @@ let agent = PhiAgent::build(
 **3. REPL** — 交互对话，Agent 自动决定何时调用工具。
 
 照着 `ClockTool` 写你自己的工具就行。[自定义工具](custom-tool.md) 里有更多示例。
+
+## 方式二：库集成
+
+生成单次调用版本（不含 REPL），适合嵌入已有项目：
+
+```bash
+phi init --lib my-agent
+cd my-agent
+cp .env.example .env
+# 编辑 .env，填入你的 LLM_API_KEY=sk-xxx
+cargo run
+```
+
+打开 `src/main.rs`，同样是三步，但没有 REPL 循环，直接调用一次：
+
+**1. 定义工具** — 同上
+
+**2. 注册工具** — 同上
+
+**3. 单次调用** — 不进入 REPL，直接跑一次：
+
+```rust
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // ... 构建 agent ...
+    let session = agent.create_session().await;
+    agent.run_turn(session, "现在几点了？", |event| renderer.render(event)).await?;
+    Ok(())
+}
+```
+
+两个方式的工具定义完全相同，区别只在运行方式。[自定义工具](custom-tool.md) 里有更多示例。

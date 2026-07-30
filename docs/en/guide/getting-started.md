@@ -81,6 +81,8 @@ Model your own tool after `ClockTool`. See [Custom Tools](custom-tool.md) for mo
 
 ## Option 2: Library integration
 
+Generates a single-shot version (no REPL) for embedding in existing projects:
+
 ```bash
 phi init --lib my-agent
 cd my-agent
@@ -89,6 +91,23 @@ cp .env.example .env
 cargo run
 ```
 
-The generated code shows the three-step pattern: Define Tool → Register → Run.
-Open `src/main.rs` — model your own tool after `ClockTool`.
+Open `src/main.rs` — same three steps, but a single `run_turn()` call instead of a REPL loop:
+
+**1. Define a tool** — same as above
+
+**2. Register the tool** — same as above
+
+**3. Single call** — runs once and exits:
+
+```rust
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    // ... build agent ...
+    let session = agent.create_session().await;
+    agent.run_turn(session, "What time is it?", |event| renderer.render(event)).await?;
+    Ok(())
+}
+```
+
+The tool definition is identical between the two options. The only difference is how it runs.
 See [Custom Tools](custom-tool.md) for more examples.
