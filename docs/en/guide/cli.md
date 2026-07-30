@@ -1,68 +1,72 @@
 # CLI Usage
 
-The `phi` binary supports REPL (interactive) and one-shot modes. It uses `OpenAiClient` — any OpenAI-compatible API works.
+The `phi` CLI supports three modes: REPL, one-shot, and project scaffolding.
 
-## Quick Start
-
-```bash
-# Build
-cargo build --release
-
-# One-shot
-cargo run -- "What's 2+2?"
-
-# REPL (interactive)
-cargo run
-```
-
-## Configuration
-
-Create a `.env` file or set environment variables:
+## Install
 
 ```bash
-LLM_API_KEY=sk-your-key-here
-LLM_MODEL=gpt-4o
-# LLM_BASE_URL defaults to https://api.openai.com/v1
+cargo install phi-agent
 ```
 
-See [Configuration](configuration.md) for all options.
-
-## One-Shot Mode
+## Create a project
 
 ```bash
-phi "Explain this codebase"
-phi "List all Rust files" --model opus
-phi "Check the architecture" --json | jq '.type'
-phi "Run silently" --quiet
+phi init my-agent          # REPL with ClockTool example
+phi init --lib my-agent    # Single-shot, for library integration
 ```
 
-## REPL Mode
+## REPL mode
 
 ```bash
 phi
-# Type queries, press Enter
-# Ctrl+C to cancel current turn
-# Ctrl+D to exit
+# phi> Type your question, press Enter
+# phi> /exit to quit
 ```
 
-## CLI Flags
-
-| Flag | Description |
-|------|-------------|
-| `QUERY` | Positional — one-shot query (absent = REPL) |
-| `-m, --model` | Override model name |
-| `--base-url` | Override API base URL |
-| `-s, --session` | Session ID (resume previous session) |
-| `--no-thinking` | Disable extended thinking |
-| `--json` | JSON stream output (pipe-friendly) |
-| `--quiet` | No output |
-
-## Session Persistence
-
-Sessions auto-save to `~/.phi-agent/sessions/<id>/`. Resume with `--session`:
+## One-shot
 
 ```bash
-phi --session 20250728_a1b2c3d4
+phi "What time is it?"
+phi "List all .rs files" --model gpt-4o
+phi "Show architecture" --format json | jq '.type'
 ```
 
-Inactive sessions (> 7 days) are auto-cleaned.
+## View metrics
+
+```bash
+phi metrics list              # All sessions
+phi metrics show <session-id> # Session details
+phi metrics last              # Most recent session
+```
+
+## CLI options
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `QUERY` | Positional — one-shot question | — |
+| `-m, --model` | Override model name | — |
+| `--base-url` | Override API base URL | — |
+| `-s, --session-id` | Session ID for resume | — |
+| `--format` | Output: `terminal` / `json` / `quiet` | `terminal` |
+| `--thinking-effort` | Reasoning: `low` / `medium` / `high` / `xhigh` | `medium` |
+| `--thinking-budget` | Max thinking tokens | — |
+| `--no-thinking` | Disable thinking | — |
+| `--no-tool-args` | Hide tool arguments | — |
+| `--no-color` | Disable colors | — |
+| `-y, --auto-approve` | Auto-approve all operations | — |
+| `--shell-timeout-ms` | Shell timeout (ms) | `30000` |
+| `--log-dir` | Log directory | `~/.phi-agent` |
+| `--log-level` | Log level | `info` |
+| `--no-log` | Disable file logging | — |
+| `--max-tool-calls` | Max tool calls per turn | — |
+| `--max-failures` | Max consecutive failures | — |
+
+## Session persistence
+
+Sessions are saved to `~/.phi-agent/sessions/<id>/`. Resume with `--session-id`:
+
+```bash
+phi --session-id 20250728_a1b2c3d4
+```
+
+Sessions inactive for 7 days are auto-cleaned.

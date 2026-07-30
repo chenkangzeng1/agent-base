@@ -1,68 +1,72 @@
 # CLI 使用
 
-`phi` 二进制支持 REPL（交互式）和单次执行两种模式。基于 `OpenAiClient`，兼容任何 OpenAI 格式的 API。
+`phi` 命令行工具支持三种模式：REPL 交互、单次执行、项目脚手架。
 
-## 快速开始
+## 安装
 
 ```bash
-# 编译
-cargo build --release
-
-# 单次执行
-cargo run -- "2+2 等于多少？"
-
-# REPL 交互模式
-cargo run
+cargo install phi-agent
 ```
 
-## 配置
-
-创建 `.env` 文件或设置环境变量：
+## 创建项目
 
 ```bash
-LLM_API_KEY=sk-your-key-here
-LLM_MODEL=gpt-4o
-# LLM_BASE_URL 默认为 https://api.openai.com/v1
-```
-
-详细配置见 [配置详解](configuration.md)。
-
-## 单次执行
-
-```bash
-phi "解释一下这个代码库"
-phi "列出所有 Rust 文件" --model opus
-phi "查看架构" --json | jq '.type'
-phi "静默运行" --quiet
+phi init my-agent          # REPL 交互，带 ClockTool 示例
+phi init --lib my-agent    # 单次调用，适合库集成
 ```
 
 ## REPL 模式
 
 ```bash
 phi
-# 输入问题，回车发送
-# Ctrl+C 取消当前轮次
-# Ctrl+D 退出
+# phi> 输入问题，回车发送
+# phi> /exit 退出
+```
+
+## 单次执行
+
+```bash
+phi "现在几点了？"
+phi "列出所有 .rs 文件" --model gpt-4o
+phi "查看架构" --format json | jq '.type'
+```
+
+## 查看观测数据
+
+```bash
+phi metrics list              # 所有会话列表
+phi metrics show <session-id> # 指定会话详情
+phi metrics last              # 最近一次会话
 ```
 
 ## CLI 参数
 
-| 参数 | 说明 |
-|------|------|
-| `QUERY` | 位置参数 — 单次执行的问题（不传则进入 REPL） |
-| `-m, --model` | 覆盖模型名称 |
-| `--base-url` | 覆盖 API 基础 URL |
-| `-s, --session` | 会话 ID（恢复之前的会话） |
-| `--no-thinking` | 禁用扩展思考 |
-| `--json` | JSON 流输出（方便管道） |
-| `--quiet` | 无输出 |
+| 参数 | 说明 | 默认值 |
+|------|------|--------|
+| `QUERY` | 位置参数 — 单次执行的问题 | — |
+| `-m, --model` | 覆盖模型名称 | — |
+| `--base-url` | 覆盖 API 基础 URL | — |
+| `-s, --session-id` | 会话 ID（用于恢复） | — |
+| `--format` | 输出格式：`terminal` / `json` / `quiet` | `terminal` |
+| `--thinking-effort` | 思考强度：`low` / `medium` / `high` / `xhigh` | `medium` |
+| `--thinking-budget` | 思考 token 上限 | — |
+| `--no-thinking` | 禁用思考 | — |
+| `--no-tool-args` | 隐藏工具参数 | — |
+| `--no-color` | 禁用终端颜色 | — |
+| `-y, --auto-approve` | 自动批准所有操作 | — |
+| `--shell-timeout-ms` | Shell 命令超时（毫秒） | `30000` |
+| `--log-dir` | 日志目录 | `~/.phi-agent` |
+| `--log-level` | 日志级别 | `info` |
+| `--no-log` | 禁用文件日志 | — |
+| `--max-tool-calls` | 每轮工具调用上限 | — |
+| `--max-failures` | 连续失败上限 | — |
 
 ## 会话持久化
 
-会话自动保存到 `~/.phi-agent/sessions/<id>/`。使用 `--session` 恢复：
+会话自动保存到 `~/.phi-agent/sessions/<id>/`。使用 `--session-id` 恢复：
 
 ```bash
-phi --session 20250728_a1b2c3d4
+phi --session-id 20250728_a1b2c3d4
 ```
 
 超过 7 天不活跃的会话会自动清理。
