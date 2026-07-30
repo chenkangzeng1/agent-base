@@ -91,23 +91,40 @@ cp .env.example .env
 cargo run
 ```
 
-Open `src/main.rs` — same three steps, but a single `run_turn()` call instead of a REPL loop:
-
-**1. Define a tool** — same as above
-
-**2. Register the tool** — same as above
-
-**3. Single call** — runs once and exits:
+Open `src/main.rs` — same ClockTool, but runs as a single call instead of a REPL:
 
 ```rust
+// ClockTool definition (same as Option 1)
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // ... build agent ...
+    dotenvy::dotenv().ok();
+
+    let api_key = std::env::var("LLM_API_KEY")?;
+    let model = std::env::var("LLM_MODEL").unwrap_or_else(|_| "gpt-4o".into());
+    let llm = Arc::new(OpenAiClient::new(api_key, model.clone(), std::env::var("LLM_BASE_URL").ok()));
+
+    let agent = PhiAgent::build(
+        base_agent_builder(llm)
+            .system_prompt(build_system_prompt())
+            .register_tool(ClockTool),
+        PhiAgentConfig {
+            model,
+            enable_thinking: true,
+            thinking_budget: None,
+            thinking_effort: ReasoningEffort::Medium,
+            safety: SafetyConfig::default(),
+        },
+    )?;
+
     let session = agent.create_session().await;
+    let mut renderer = create_stdout_renderer(&OutputFormat::Terminal {
+        show_thinking: true, show_tool_args: true, color: true,
+    });
     agent.run_turn(session, "What time is it?", |event| renderer.render(event)).await?;
     Ok(())
 }
 ```
 
-The tool definition is identical between the two options. The only difference is how it runs.
+Difference from Option 1: no `rustyline`, no REPL loop, just a single `run_turn()` call.
 See [Custom Tools](custom-tool.md) for more examples.

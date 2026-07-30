@@ -91,22 +91,40 @@ cp .env.example .env
 cargo run
 ```
 
-打开 `src/main.rs`，同样是三步，但没有 REPL 循环，直接调用一次：
-
-**1. 定义工具** — 同上
-
-**2. 注册工具** — 同上
-
-**3. 单次调用** — 不进入 REPL，直接跑一次：
+打开 `src/main.rs`，同样的 ClockTool，运行时变成单次调用：
 
 ```rust
+// ClockTool 定义（同方式一）
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // ... 构建 agent ...
+    dotenvy::dotenv().ok();
+
+    let api_key = std::env::var("LLM_API_KEY")?;
+    let model = std::env::var("LLM_MODEL").unwrap_or_else(|_| "gpt-4o".into());
+    let llm = Arc::new(OpenAiClient::new(api_key, model.clone(), std::env::var("LLM_BASE_URL").ok()));
+
+    let agent = PhiAgent::build(
+        base_agent_builder(llm)
+            .system_prompt(build_system_prompt())
+            .register_tool(ClockTool),
+        PhiAgentConfig {
+            model,
+            enable_thinking: true,
+            thinking_budget: None,
+            thinking_effort: ReasoningEffort::Medium,
+            safety: SafetyConfig::default(),
+        },
+    )?;
+
     let session = agent.create_session().await;
+    let mut renderer = create_stdout_renderer(&OutputFormat::Terminal {
+        show_thinking: true, show_tool_args: true, color: true,
+    });
     agent.run_turn(session, "现在几点了？", |event| renderer.render(event)).await?;
     Ok(())
 }
 ```
 
-两个方式的工具定义完全相同，区别只在运行方式。[自定义工具](custom-tool.md) 里有更多示例。
+和方式一的区别：没有 `rustyline`，没有 REPL 循环，直接调用一次 `run_turn`。
+[自定义工具](custom-tool.md) 里有更多示例。
