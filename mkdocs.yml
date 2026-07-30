@@ -59,6 +59,7 @@ plugins:
                 - CLI Usage: guide/cli.md
                 - Focus: guide/focus.md
                 - Architecture: guide/architecture.md
+                - Observability: guide/observability.md
                 - Advanced Usage: guide/advanced.md
             - Reference:
                 - API Reference: api.md
@@ -75,6 +76,7 @@ plugins:
                 - CLI 使用: guide/cli.md
                 - Focus 专注判断: guide/focus.md
                 - 架构设计: guide/architecture.md
+                - 可观测性: guide/observability.md
                 - 高级用法: guide/advanced.md
             - 参考:
                 - API 参考: api.md
