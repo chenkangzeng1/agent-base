@@ -13,9 +13,44 @@ const MAIN_RS: &str = r#"use phi_agent::{
     PhiAgent, PhiAgentConfig, OpenAiClient,
     SafetyConfig, ReasoningEffort,
     OutputFormat, create_stdout_renderer,
+    AgentResult, Tool, ToolContext, ToolControlFlow, ToolOutput,
 };
+use async_trait::async_trait;
 use rustyline::DefaultEditor;
+use serde_json::{Value, json};
 use std::sync::Arc;
+
+// ── ClockTool: 一个最简单的自定义工具 ──
+
+struct ClockTool;
+
+#[async_trait]
+impl Tool for ClockTool {
+    fn name(&self) -> &'static str { "get_time" }
+
+    fn definition(&self) -> Value {
+        json!({
+            "name": "get_time",
+            "description": "获取当前日期和时间",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        })
+    }
+
+    async fn call(&self, _args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
+        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        Ok(ToolOutput {
+            summary: format!("当前时间：{}", now),
+            control_flow: ToolControlFlow::Continue,
+            raw: None,
+            truncation: None,
+        })
+    }
+}
+
+// ── REPL ──
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -29,7 +64,9 @@ async fn main() -> anyhow::Result<()> {
     ));
 
     let agent = PhiAgent::build(
-        base_agent_builder(llm).system_prompt(build_system_prompt()),
+        base_agent_builder(llm)
+            .system_prompt(build_system_prompt())
+            .register_tool(ClockTool),
         PhiAgentConfig {
             model,
             enable_thinking: true,
@@ -47,6 +84,7 @@ async fn main() -> anyhow::Result<()> {
     });
 
     println!("phi-agent REPL — type /exit to quit\n");
+    println!("Try: 现在几点了？\n");
     loop {
         let line = rl.readline("phi> ")?;
         let input = line.trim().to_string();
@@ -90,6 +128,9 @@ tokio = {{ version = "1", features = ["full"] }}
 anyhow = "1"
 dotenvy = "0.15"
 rustyline = "15"
+async-trait = "0.1"
+serde_json = "1"
+chrono = "0.4"
 "#,
             project_name,
             env!("CARGO_PKG_VERSION")
