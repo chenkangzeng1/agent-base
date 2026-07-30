@@ -1,3 +1,6 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use tokio::sync::broadcast;
 
 use crate::types::{AgentResult, RuntimeEvent};
@@ -6,12 +9,20 @@ use crate::types::{AgentResult, RuntimeEvent};
 #[derive(Clone)]
 pub(crate) struct EventBus {
     sender: broadcast::Sender<RuntimeEvent>,
+    /// Count of PlanUpdated events emitted since last reset.
+    plan_updates: Arc<AtomicU32>,
+    /// Count of AwaitingApproval events emitted since last reset.
+    approval_count: Arc<AtomicU32>,
 }
 
 impl EventBus {
     pub fn new(capacity: usize) -> Self {
         let (sender, _) = broadcast::channel(capacity);
-        Self { sender }
+        Self {
+            sender,
+            plan_updates: Arc::new(AtomicU32::new(0)),
+            approval_count: Arc::new(AtomicU32::new(0)),
+        }
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<RuntimeEvent> {
@@ -19,7 +30,26 @@ impl EventBus {
     }
 
     pub fn emit(&self, event: RuntimeEvent) {
+        match &event {
+            RuntimeEvent::PlanUpdated { .. } => {
+                self.plan_updates.fetch_add(1, Ordering::Relaxed);
+            }
+            RuntimeEvent::AwaitingApproval { .. } => {
+                self.approval_count.fetch_add(1, Ordering::Relaxed);
+            }
+            _ => {}
+        }
         let _ = self.sender.send(event);
+    }
+
+    /// Take and reset the plan-update counter for the current turn.
+    pub fn take_plan_updates(&self) -> u32 {
+        self.plan_updates.swap(0, Ordering::Relaxed)
+    }
+
+    /// Take and reset the approval counter for the current turn.
+    pub fn take_approval_count(&self) -> u32 {
+        self.approval_count.swap(0, Ordering::Relaxed)
     }
 
     /// Drain pending events from the broadcast receiver, forwarding each

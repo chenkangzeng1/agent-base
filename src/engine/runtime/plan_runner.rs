@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock as StdRwLock};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
@@ -8,7 +8,10 @@ use crate::engine::runtime::event_bus::EventBus;
 use crate::engine::runtime::llm_engine::LlmEngine;
 use crate::engine::runtime::session_manager::SessionManager;
 use crate::engine::runtime::tool_engine::ToolEngine;
-use crate::types::AgentConfig;
+use crate::types::{AgentConfig, TurnContext};
+
+/// Turn-end callback type: receives TurnContext, no return value.
+pub type TurnEndCallback = Arc<dyn Fn(&TurnContext) + Send + Sync>;
 
 pub(crate) struct RuntimeCore {
     pub(crate) config: Arc<RwLock<AgentConfig>>,
@@ -19,6 +22,9 @@ pub(crate) struct RuntimeCore {
     pub(crate) context_manager: Option<ContextWindowManager>,
     pub(crate) middlewares: Vec<MiddlewareRef>,
     pub(crate) cancel_token: Mutex<CancellationToken>,
+    /// Turn-end callbacks registered by consumers.
+    /// Uses std::sync::RwLock — registration is cold-path and read-lock is brief.
+    pub(crate) turn_end_callbacks: StdRwLock<Vec<TurnEndCallback>>,
 }
 
 impl RuntimeCore {
@@ -40,6 +46,7 @@ impl RuntimeCore {
             context_manager,
             middlewares,
             cancel_token: Mutex::new(CancellationToken::new()),
+            turn_end_callbacks: StdRwLock::new(Vec::new()),
         }
     }
 

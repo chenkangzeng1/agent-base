@@ -5,8 +5,8 @@ use crate::engine::recovery::ToolErrorAction;
 use crate::engine::runtime::event_bus::EventBus;
 use crate::engine::runtime::llm_engine::LlmTurnResult;
 use crate::types::{
-    AgentError, AgentResult, ChatMessage, CheckpointData, CheckpointStep, MessageRole, RunOutcome,
-    RuntimeEvent, SessionId,
+    AgentError, AgentResult, CheckpointData, CheckpointStep, MessageRole, RunOutcome, RuntimeEvent,
+    SessionId,
 };
 
 use super::plan_runner::RuntimeCore;
@@ -571,10 +571,33 @@ impl RuntimeCore {
 
         loop {
             turn_count += 1;
+            let turn_start = std::time::Instant::now();
+            let model = self.llm_engine.get_client().model_name().to_string();
 
             // Check for cancellation at the top of each iteration
             if self.is_cancelled() {
                 tracing::info!(session_id = session_id.id, "run_turn_loop cancelled");
+                self.fire_turn_end(
+                    session_id,
+                    turn_count,
+                    turn_start,
+                    &model,
+                    user_input_owned,
+                    0,
+                    0,
+                    0,
+                    &None,
+                    0,
+                    false,
+                    0,
+                    &[],
+                    0,
+                    0,
+                    RunOutcome::Cancelled,
+                    None,
+                    0,
+                )
+                .await;
                 return Ok((RunOutcome::Cancelled, turn_count));
             }
 
@@ -585,6 +608,27 @@ impl RuntimeCore {
                     max_turns,
                     "max turns exceeded"
                 );
+                self.fire_turn_end(
+                    session_id,
+                    turn_count,
+                    turn_start,
+                    &model,
+                    user_input_owned,
+                    0,
+                    0,
+                    0,
+                    &None,
+                    0,
+                    false,
+                    0,
+                    &[],
+                    0,
+                    0,
+                    RunOutcome::MaxTurnsExceeded { turns: turn_count },
+                    Some("max turns exceeded"),
+                    0,
+                )
+                .await;
                 self.event_bus.emit(RuntimeEvent::RunFinished {
                     session_id: session_id.clone(),
                 });
@@ -701,7 +745,9 @@ impl RuntimeCore {
                     reasoning_text,
                     is_tool_call,
                     tool_calls,
-                    usage: _,
+                    usage,
+                    ttft_ms,
+                    llm_duration_ms,
                 }) => {
                     tracing::info!(
                         session_id = session_id.id,
@@ -711,6 +757,9 @@ impl RuntimeCore {
                         tool_call_count = tool_calls.len(),
                         "LLM turn result"
                     );
+                    // Capture text info before moves
+                    let text_len = full_text.len() as u64;
+                    let has_thinking = !reasoning_text.is_empty();
                     let tool_calls_parsed: Vec<(String, String, String)> = tool_calls
                         .iter()
                         .map(|tc| {
@@ -807,6 +856,14 @@ impl RuntimeCore {
                             },
                         });
 
+                        let tool_start = std::time::Instant::now();
+                        let tool_call_count = result.tool_calls.len() as u32;
+                        let tool_names: Vec<String> = result
+                            .tool_calls
+                            .iter()
+                            .map(|(_, name, _)| name.clone())
+                            .collect();
+
                         match self
                             .handle_tool_calls(
                                 session_id,
@@ -818,6 +875,28 @@ impl RuntimeCore {
                             .await
                         {
                             Ok(ToolCallResult::Continue) => {
+                                let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
+                                self.fire_turn_end(
+                                    session_id,
+                                    turn_count,
+                                    turn_start,
+                                    &model,
+                                    user_input_owned,
+                                    ttft_ms,
+                                    llm_duration_ms,
+                                    tool_duration_ms,
+                                    &usage,
+                                    text_len,
+                                    has_thinking,
+                                    tool_call_count,
+                                    &tool_names,
+                                    tool_call_count, // all success
+                                    0,               // no failures
+                                    RunOutcome::Completed,
+                                    None,
+                                    1,
+                                )
+                                .await;
                                 tracing::info!(
                                     session_id = session_id.id,
                                     turn = turn_count,
@@ -844,6 +923,28 @@ impl RuntimeCore {
                                 continue;
                             }
                             Ok(ToolCallResult::Break) => {
+                                let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
+                                self.fire_turn_end(
+                                    session_id,
+                                    turn_count,
+                                    turn_start,
+                                    &model,
+                                    user_input_owned,
+                                    ttft_ms,
+                                    llm_duration_ms,
+                                    tool_duration_ms,
+                                    &usage,
+                                    text_len,
+                                    has_thinking,
+                                    tool_call_count,
+                                    &tool_names,
+                                    tool_call_count,
+                                    0,
+                                    RunOutcome::Completed,
+                                    None,
+                                    1,
+                                )
+                                .await;
                                 tracing::info!(
                                     session_id = session_id.id,
                                     turn = turn_count,
@@ -862,6 +963,8 @@ impl RuntimeCore {
                                 return Ok((RunOutcome::Completed, turn_count));
                             }
                             Err(e) => {
+                                let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
+                                let error_msg = e.to_string();
                                 if let Some(outcome) = self
                                     .handle_tool_error(
                                         session_id,
@@ -872,8 +975,55 @@ impl RuntimeCore {
                                     )
                                     .await?
                                 {
+                                    self.fire_turn_end(
+                                        session_id,
+                                        turn_count,
+                                        turn_start,
+                                        &model,
+                                        user_input_owned,
+                                        ttft_ms,
+                                        llm_duration_ms,
+                                        tool_duration_ms,
+                                        &usage,
+                                        text_len,
+                                        has_thinking,
+                                        tool_call_count,
+                                        &tool_names,
+                                        0,
+                                        tool_call_count,
+                                        RunOutcome::Failed {
+                                            error: error_msg.clone(),
+                                        },
+                                        Some(&error_msg),
+                                        1,
+                                    )
+                                    .await;
                                     return Ok((outcome, turn_count));
                                 }
+                                // Retry: record metrics for the failed attempt
+                                self.fire_turn_end(
+                                    session_id,
+                                    turn_count,
+                                    turn_start,
+                                    &model,
+                                    user_input_owned,
+                                    ttft_ms,
+                                    llm_duration_ms,
+                                    tool_duration_ms,
+                                    &usage,
+                                    text_len,
+                                    has_thinking,
+                                    tool_call_count,
+                                    &tool_names,
+                                    0,
+                                    tool_call_count,
+                                    RunOutcome::Failed {
+                                        error: error_msg.clone(),
+                                    },
+                                    Some(&error_msg),
+                                    1,
+                                )
+                                .await;
                                 continue;
                             }
                         }
@@ -884,6 +1034,27 @@ impl RuntimeCore {
                         turn = turn_count,
                         "text-only response, run completed"
                     );
+                    self.fire_turn_end(
+                        session_id,
+                        turn_count,
+                        turn_start,
+                        &model,
+                        user_input_owned,
+                        ttft_ms,
+                        llm_duration_ms,
+                        0, // no tools
+                        &usage,
+                        text_len,
+                        has_thinking,
+                        0,
+                        &[],
+                        0,
+                        0,
+                        RunOutcome::Completed,
+                        None,
+                        1,
+                    )
+                    .await;
                     self.event_bus.emit(RuntimeEvent::RunFinished {
                         session_id: session_id.clone(),
                     });
@@ -891,6 +1062,35 @@ impl RuntimeCore {
                     return Ok((RunOutcome::Completed, turn_count));
                 }
                 Err(e) => {
+                    // Fire turn-end callback for LLM stream error
+                    let stream_outcome = if e.is_cancelled() {
+                        RunOutcome::Cancelled
+                    } else {
+                        RunOutcome::Failed {
+                            error: e.to_string(),
+                        }
+                    };
+                    self.fire_turn_end(
+                        session_id,
+                        turn_count,
+                        turn_start,
+                        &model,
+                        user_input_owned,
+                        0, // no TTFT if stream errored
+                        0, // no LLM duration
+                        0,
+                        &None,
+                        0,
+                        false,
+                        0,
+                        &[],
+                        0,
+                        0,
+                        stream_outcome,
+                        Some(&e.to_string()),
+                        0,
+                    )
+                    .await;
                     // Persist session on cancellation (LLM-stream path bypasses handle_tool_error)
                     if e.is_cancelled() {
                         if let Ok(session) = self.session_manager.session_or_err(session_id).await {
@@ -987,5 +1187,73 @@ impl RuntimeCore {
         F: FnOnce(&mut crate::engine::AgentSession) -> R,
     {
         self.session_manager.with_session_mut(session_id, f).await
+    }
+
+    /// Build a TurnContext and fire all registered turn-end callbacks.
+    /// agent-base does NOT store, aggregate, or persist metrics — consumers
+    /// (e.g. phi-telemetry) do that via their registered callback.
+    #[allow(clippy::too_many_arguments)]
+    async fn fire_turn_end(
+        &self,
+        session_id: &SessionId,
+        turn_number: u32,
+        turn_start: std::time::Instant,
+        model: &str,
+        user_input: &str,
+        ttft_ms: u64,
+        llm_duration_ms: u64,
+        tool_duration_ms: u64,
+        usage: &Option<crate::llm::UsageInfo>,
+        text_length: u64,
+        has_thinking: bool,
+        tool_call_count: u32,
+        tools_used: &[String],
+        tool_success: u32,
+        tool_failed: u32,
+        outcome: RunOutcome,
+        error_message: Option<&str>,
+        llm_calls: u32,
+    ) {
+        let duration_ms = turn_start.elapsed().as_millis() as u64;
+
+        let ctx = crate::types::TurnContext {
+            session_id: session_id.id,
+            turn_number,
+            ttft_ms,
+            llm_duration_ms,
+            duration_ms,
+            tool_duration_ms,
+            usage: usage.clone(),
+            full_text_len: text_length,
+            has_thinking,
+            tools_used: tools_used.to_vec(),
+            tool_call_count,
+            tool_success,
+            tool_failed,
+            outcome,
+            error_message: error_message.map(|s| s.to_string()),
+            user_input: truncate_for_context(user_input),
+            model: model.to_string(),
+            plan_updates: self.event_bus.take_plan_updates(),
+            approval_count: self.event_bus.take_approval_count(),
+            llm_calls,
+        };
+
+        let callbacks = self.turn_end_callbacks.read().unwrap();
+        for cb in callbacks.iter() {
+            cb(&ctx);
+        }
+        drop(callbacks);
+    }
+}
+
+/// Truncate a string to 80 characters (respecting UTF-8 boundaries),
+/// appending "..." if truncated.
+fn truncate_for_context(s: &str) -> String {
+    if s.chars().count() > 80 {
+        let truncated: String = s.chars().take(80).collect();
+        format!("{}...", truncated)
+    } else {
+        s.to_string()
     }
 }

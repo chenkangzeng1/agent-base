@@ -72,7 +72,7 @@ fn normalize_step_text(raw: &str) -> String {
     });
 
     // Step 4: Truncate to 60 chars max
-    let mut text = if text.chars().count() > 60 {
+    let text = if text.chars().count() > 60 {
         let truncated: String = text.chars().take(57).collect();
         format!("{truncated}...")
     } else {

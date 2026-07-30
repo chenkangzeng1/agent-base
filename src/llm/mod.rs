@@ -79,4 +79,10 @@ pub trait LlmClient: Send + Sync {
     ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>>;
 
     fn capabilities(&self) -> LlmCapabilities;
+
+    /// The model name used by this client (e.g. "claude-sonnet", "gpt-4o").
+    /// Default: "unknown".
+    fn model_name(&self) -> &str {
+        "unknown"
+    }
 }

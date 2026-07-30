@@ -7,6 +7,7 @@ mod message;
 mod outcome;
 mod plan_update;
 mod session;
+mod turn_context;
 
 pub use approval::{ApprovalDecision, ApprovalRequest, RiskLevel};
 pub use checkpoint::{CheckpointData, CheckpointStep, ToolResultData};
@@ -22,3 +23,4 @@ pub use plan_update::{PlanItem, PlanStepStatus, UpdatePlanArgs};
 pub use session::{
     AtomicU64SessionIdGenerator, SessionId, SessionIdGenerator, UuidSessionIdGenerator,
 };
+pub use turn_context::TurnContext;

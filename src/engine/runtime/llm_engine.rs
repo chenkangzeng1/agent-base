@@ -132,6 +132,7 @@ impl LlmEngine {
                         Ok(StreamChunk::Text(text)) => {
                             if first_token {
                                 let ttft = start.elapsed();
+                                aggregator.ttft_ms = ttft.as_millis() as u64;
                                 tracing::info!(session_id = session_id.id, ?ttft, "LLM first token received");
                                 first_token = false;
                             }
@@ -206,6 +207,7 @@ impl LlmEngine {
         }
 
         let total_elapsed = start.elapsed();
+        let _ttft_ms = aggregator.ttft_ms;
 
         // Fallback: some models (e.g. qwen3.7-max) put the final answer in
         // reasoning_content instead of content when thinking is enabled.
@@ -259,6 +261,8 @@ impl LlmEngine {
             is_tool_call: aggregator.is_tool_call,
             tool_calls,
             usage: aggregator.usage,
+            ttft_ms: aggregator.ttft_ms,
+            llm_duration_ms: total_elapsed.as_millis() as u64,
         })
     }
 
@@ -278,6 +282,10 @@ pub struct LlmTurnResult {
     pub is_tool_call: bool,
     pub tool_calls: Vec<Value>,
     pub usage: Option<UsageInfo>,
+    /// Time to first token in milliseconds (user-perceived latency).
+    pub ttft_ms: u64,
+    /// LLM stream duration in milliseconds (from stream start to end).
+    pub llm_duration_ms: u64,
 }
 
 struct StreamAggregator {
@@ -289,6 +297,8 @@ struct StreamAggregator {
     pub is_tool_call: bool,
     pub partials: std::collections::HashMap<usize, (String, String, String)>,
     pub usage: Option<UsageInfo>,
+    /// Time to first token in milliseconds.
+    pub ttft_ms: u64,
 }
 
 impl StreamAggregator {
@@ -299,6 +309,7 @@ impl StreamAggregator {
             is_tool_call: false,
             partials: std::collections::HashMap::new(),
             usage: None,
+            ttft_ms: 0,
         }
     }
 }

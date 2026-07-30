@@ -457,4 +457,8 @@ impl LlmClient for AnthropicClient {
             max_output_tokens: Some(8_192),
         }
     }
+
+    fn model_name(&self) -> &str {
+        &self.model
+    }
 }

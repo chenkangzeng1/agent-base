@@ -470,4 +470,8 @@ impl LlmClient for OpenAiClient {
             max_output_tokens: Some(16_384),
         }
     }
+
+    fn model_name(&self) -> &str {
+        &self.model
+    }
 }

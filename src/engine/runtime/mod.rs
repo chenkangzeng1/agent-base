@@ -6,7 +6,7 @@ use crate::engine::AgentSession;
 use crate::engine::session_store::SessionStore;
 use crate::types::{
     AgentConfig, AgentError, AgentResult, CheckpointData, MessageRole, RunOutcome, RuntimeEvent,
-    SessionId,
+    SessionId, TurnContext,
 };
 
 use super::approval::ApprovalHandler;
@@ -270,6 +270,23 @@ impl AgentRuntime {
 
     pub fn session_store(&self) -> Arc<dyn SessionStore> {
         self.runner.session_manager.session_store().clone()
+    }
+
+    // ── Observability hook ──
+
+    /// Register a turn-end callback. The callback receives a [`TurnContext`]
+    /// with raw data about the completed turn iteration. Consumers (e.g.
+    /// phi-telemetry) use this to build their own metrics without agent-base
+    /// knowing anything about metrics.
+    pub fn on_turn_end<F>(&self, f: F)
+    where
+        F: Fn(&TurnContext) + Send + Sync + 'static,
+    {
+        self.runner
+            .turn_end_callbacks
+            .write()
+            .unwrap()
+            .push(Arc::new(f));
     }
 
     // --- Cancellation support ---

@@ -212,7 +212,7 @@ impl ToolEngine {
         session_id: &SessionId,
         tool_name: &str,
         args: &Value,
-        tool_args_json: &str,
+        _tool_args_json: &str,
         ctx: &ExecutionContext,
         event_rx: &mut broadcast::Receiver<RuntimeEvent>,
         on_event: &mut F,
