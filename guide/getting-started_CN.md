@@ -117,7 +117,13 @@ cd my-agent
 cp .env.example .env
 ```
 
-编辑 `.env`，同上。
+编辑 `.env`：
+
+```
+LLM_API_KEY=sk-your-key-here
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_MODEL=gpt-4o
+```
 
 **3. 运行**
 
