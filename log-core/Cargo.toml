@@ -1,10 +1,10 @@
 [package]
 name = "log-core"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Unified logging foundation — LogSink trait + Logger combinator with terminal, file, and cloud backends"
 license = "MIT"
-repository = "https://github.com/chenkangzeng1/log-core"
+repository = "https://github.com/hibuka-labs/phi-agent"
 readme = "README.md"
 keywords = ["logging", "sink", "file", "console", "tracing"]
 categories = ["development-tools", "asynchronous"]

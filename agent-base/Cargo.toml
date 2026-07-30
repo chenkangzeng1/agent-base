@@ -1,10 +1,10 @@
 [package]
 name = "agent-base"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2024"
 description = "A lightweight Agent Runtime Kernel for building AI agents in Rust"
 license = "MIT"
-repository = "https://github.com/hibuka-labs/agent-base"
+repository = "https://github.com/hibuka-labs/phi-agent"
 readme = "README.md"
 keywords = ["agent", "ai", "llm", "runtime", "tool-calling"]
 categories = ["development-tools", "asynchronous"]
