@@ -13,12 +13,20 @@
 cargo install phi-agent
 ```
 
-## 方式一：一键生成（推荐）
-
-用 `phi init` 生成完整项目，包含一个示例工具和 REPL：
+## 方式一：REPL 交互（推荐）
 
 ```bash
 phi init my-agent
+cd my-agent
+cp .env.example .env
+# 编辑 .env，填入你的 LLM_API_KEY=sk-xxx
+cargo run
+```
+
+## 方式二：库集成
+
+```bash
+phi init --lib my-agent
 cd my-agent
 cp .env.example .env
 # 编辑 .env，填入你的 LLM_API_KEY=sk-xxx

@@ -109,7 +109,93 @@ async fn main() -> anyhow::Result<()> {
 }
 "#;
 
-pub fn run(name: &str) -> Result<()> {
+const LIB_RS: &str = r#"//! phi-agent library integration example.
+//!
+//! Three steps: define a tool → register → run.
+//! Run:  cargo run
+
+use phi_agent::{
+    base_agent_builder, build_system_prompt,
+    PhiAgent, PhiAgentConfig, OpenAiClient,
+    SafetyConfig, ReasoningEffort,
+    OutputFormat, create_stdout_renderer,
+    AgentResult, Tool, ToolContext, ToolControlFlow, ToolOutput,
+};
+use async_trait::async_trait;
+use serde_json::{Value, json};
+use std::sync::Arc;
+
+// ── ClockTool ──
+
+struct ClockTool;
+
+#[async_trait]
+impl Tool for ClockTool {
+    fn name(&self) -> &'static str { "get_time" }
+
+    fn definition(&self) -> Value {
+        json!({
+            "type": "function",
+            "function": {
+                "name": "get_time",
+                "description": "获取当前日期和时间",
+                "parameters": { "type": "object", "properties": {} }
+            }
+        })
+    }
+
+    async fn call(&self, _args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
+        let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+        Ok(ToolOutput {
+            summary: format!("当前时间：{}", now),
+            control_flow: ToolControlFlow::Continue,
+            raw: None, truncation: None,
+        })
+    }
+}
+
+// ── Main ──
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    dotenvy::dotenv().ok();
+
+    let api_key = std::env::var("LLM_API_KEY")
+        .map_err(|_| anyhow::anyhow!(
+            "LLM_API_KEY not found.\n\n\
+             Create a .env file:\n  cp .env.example .env\n  # edit with your API key"
+        ))?;
+    let model = std::env::var("LLM_MODEL").unwrap_or_else(|_| "gpt-4o".into());
+    let llm = Arc::new(OpenAiClient::new(
+        api_key,
+        model.clone(),
+        std::env::var("LLM_BASE_URL").ok(),
+    ));
+
+    let agent = PhiAgent::build(
+        base_agent_builder(llm)
+            .system_prompt(build_system_prompt())
+            .register_tool(ClockTool),
+        PhiAgentConfig {
+            model,
+            enable_thinking: true,
+            thinking_budget: None,
+            thinking_effort: ReasoningEffort::Medium,
+            safety: SafetyConfig::default(),
+        },
+    )?;
+
+    let session = agent.create_session().await;
+    let mut renderer = create_stdout_renderer(&OutputFormat::Terminal {
+        show_thinking: true, show_tool_args: true, color: true,
+    });
+
+    agent.run_turn(session, "现在几点了？", |event| renderer.render(event)).await?;
+    Ok(())
+}
+"#;
+
+pub fn run(name: &str, is_lib: bool) -> Result<()> {
     let dir = Path::new(name);
     let project_name = dir.file_name()
         .and_then(|n| n.to_str())
@@ -121,7 +207,8 @@ pub fn run(name: &str) -> Result<()> {
 
     fs::create_dir_all(dir.join("src"))?;
 
-    // Cargo.toml
+    // Cargo.toml — lib mode skips rustyline
+    let rustyline_dep = if is_lib { "" } else { "rustyline = \"15\"\n" };
     fs::write(
         dir.join("Cargo.toml"),
         format!(
@@ -135,13 +222,13 @@ phi-agent = "{}"
 tokio = {{ version = "1", features = ["full"] }}
 anyhow = "1"
 dotenvy = "0.15"
-rustyline = "15"
-async-trait = "0.1"
+{}async-trait = "0.1"
 serde_json = "1"
 chrono = "0.4"
 "#,
             project_name,
-            env!("CARGO_PKG_VERSION")
+            env!("CARGO_PKG_VERSION"),
+            rustyline_dep,
         ),
     )?;
 
@@ -149,9 +236,11 @@ chrono = "0.4"
     fs::write(dir.join(".env.example"), ENV_EXAMPLE)?;
 
     // src/main.rs
-    fs::write(dir.join("src").join("main.rs"), MAIN_RS)?;
+    let code = if is_lib { LIB_RS } else { MAIN_RS };
+    fs::write(dir.join("src").join("main.rs"), code)?;
 
-    println!("✅ Created project: {}", name);
+    let mode = if is_lib { "library integration" } else { "REPL" };
+    println!("✅ Created project: {} ({})", name, mode);
     println!();
     println!("Next steps:");
     println!("  cd {}", name);

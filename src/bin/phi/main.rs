@@ -28,7 +28,7 @@ async fn main() -> Result<()> {
     // Handle subcommands (no agent needed)
     if let Some(cmd) = &args.command {
         match cmd {
-            SubCommand::Init { name } => return init::run(name),
+            SubCommand::Init { name, lib } => return init::run(name, *lib),
             SubCommand::Metrics { cmd } => return handle_metrics(cmd, &args),
         }
     }

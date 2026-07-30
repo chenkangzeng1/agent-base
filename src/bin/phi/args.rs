@@ -129,6 +129,9 @@ pub enum SubCommand {
     Init {
         /// Project name
         name: String,
+        /// Generate a single-shot example instead of REPL
+        #[arg(long)]
+        lib: bool,
     },
 }
 
