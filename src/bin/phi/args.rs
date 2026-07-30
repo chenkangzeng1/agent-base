@@ -15,12 +15,8 @@ pub struct CliArgs {
     #[arg(value_name = "QUERY")]
     pub query: Option<String>,
 
-    /// Metrics subcommand — view session observability data.
-    ///
-    /// Reads `session_metrics.json` files from the sessions directory.
-    /// No agent is started for these commands.
     #[command(subcommand)]
-    pub metrics_cmd: Option<MetricsCmd>,
+    pub command: Option<SubCommand>,
 
     // ── Output control ──
     #[arg(long, value_enum, default_value = "terminal")]
@@ -123,23 +119,28 @@ impl From<ReasoningEffortArg> for ReasoningEffort {
 }
 
 #[derive(Subcommand, Debug)]
-#[command(name = "metrics")]
+pub enum SubCommand {
+    /// Manage observability data.
+    Metrics {
+        #[command(subcommand)]
+        cmd: MetricsCmd,
+    },
+    /// Scaffold a new phi-agent project.
+    Init {
+        /// Project name
+        name: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
 pub enum MetricsCmd {
     /// List all sessions with token usage, cost, and outcome.
-    ///
-    /// Scans ~/.phi-agent/sessions/ for session_metrics.json files
-    /// and displays a table sorted by creation time (newest first).
     List,
     /// Show detailed metrics for a specific session.
-    ///
-    /// Displays session summary (model, turns, duration, P50/P95/P99 latency,
-    /// token breakdown, tool usage) followed by per-turn details.
     Show {
         /// Session ID (e.g. "20260730_c52b4c91")
         session_id: String,
     },
-    /// Show detailed metrics for the most recent session.
-    ///
-    /// Convenience shortcut — equivalent to `phi metrics show <latest-id>`.
+    /// Show the most recent session.
     Last,
 }

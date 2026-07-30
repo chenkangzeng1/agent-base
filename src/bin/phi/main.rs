@@ -1,11 +1,12 @@
 mod approval;
 mod args;
+mod init;
 mod tools;
 
 use std::sync::Arc;
 
 use anyhow::Result;
-use args::{CliArgs, MetricsCmd, OutputFormatArg};
+use args::{CliArgs, MetricsCmd, OutputFormatArg, SubCommand};
 use clap::Parser;
 use phi_agent::config::resolve_llm_config;
 use phi_agent::render::{OutputFormat, create_stdout_renderer};
@@ -24,9 +25,12 @@ async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     let args = CliArgs::parse();
 
-    // Handle metrics subcommand (no agent needed)
-    if let Some(cmd) = &args.metrics_cmd {
-        return handle_metrics(cmd, &args);
+    // Handle subcommands (no agent needed)
+    if let Some(cmd) = &args.command {
+        match cmd {
+            SubCommand::Init { name } => return init::run(name),
+            SubCommand::Metrics { cmd } => return handle_metrics(cmd, &args),
+        }
     }
 
     // 1. Resolve log directory
