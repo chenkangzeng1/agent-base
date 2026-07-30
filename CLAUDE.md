@@ -13,24 +13,71 @@ A general-purpose AI Agent framework in Rust, built on `agent-base` and `agent-w
 Browser tools (21 tools via CDP) live on the `browser-tools` branch and in phi-tools' `browser-tools` branch. Not yet open-sourced.
 
 ### Dependency Chain
+
+All crates are **independent git repositories** with **pure version dependencies** on crates.io:
+
 ```
-agent-base (runtime kernel + Tool trait)
+agent-base (runtime kernel)    ← github.com/hibuka-labs/agent-base
     ↑
-agent-works (MCP, Skills, Focus)
+agent-works (MCP, Skills)      ← github.com/hibuka-labs/agent-works
     ↑
-phi-agent (lib) ← framework, no tools
-    ↑
-forge (bin) ← CLI, registers tools here
+phi-agent (framework + CLI)    ← github.com/hibuka-labs/phi-agent  (this repo)
 ```
 
-### Key Crates (separate repos, sibling dirs)
-- `agent-base` — AgentRuntime, Tool trait, RuntimeEvent, LLM clients (OpenAI + Anthropic)
-- `agent-works` — MCP, Skills, built-in file tools, Focus
-- `phi-tools` — Tool implementations (LocalShellTool only on master)
-- `log-core` — Structured file logging
-- `phi-agent` — This crate
+Additional optional deps (pulled from crates.io):
+- `phi-tools` — optional, contains LocalShellTool
+- `phi-telemetry` — optional, metrics collection
+- `log-core` — optional, structured logging
+
+### Key Crates (independent repos)
+| Crate | GitHub | crates.io |
+|-------|--------|-----------|
+| agent-base | hibuka-labs/agent-base | agent-base |
+| agent-works | hibuka-labs/agent-works | agent-works |
+| phi-agent | hibuka-labs/phi-agent | phi-agent |
+| phi-tools | hibuka-labs/phi-tools | phi-tools |
+| phi-telemetry | hibuka-labs/phi-telemetry | phi-telemetry |
+| log-core | hibuka-labs/log-core | log-core |
 
 All repos have 3 remotes: `github`, `gitee`, `origin`.
+
+### Development Workflow
+
+**This repo uses pure version dependencies.** All `Cargo.toml` files contain only `version` (no `path`). This means:
+
+```toml
+# phi-agent/Cargo.toml — committed as-is
+agent-base = "0.1.6"
+agent-works = "0.1.4"
+```
+
+**To modify a dependency locally:**
+
+1. Clone the dependency repo to a sibling directory:
+   ```bash
+   git clone git@github.com:hibuka-labs/agent-base.git ../agent-base
+   ```
+
+2. Temporarily add `path` to Cargo.toml (**DO NOT COMMIT this change**):
+   ```toml
+   agent-base = { version = "0.1.6", path = "../agent-base" }
+   ```
+
+3. Remove `path` before committing.
+
+**After publishing a new version of a dependency:**
+
+```bash
+cargo update -p agent-base    # update to latest crates.io version
+# Update Cargo.toml version number if needed
+```
+
+### Why no monorepo?
+
+Each crate is an independent repo to maintain clear boundaries:
+- AI assistance sessions work within a single crate — prevents cross-crate contamination
+- Each crate has its own release cycle
+- Contributors can fork and modify individual crates without the entire workspace
 
 ### Project Structure
 ```
@@ -97,17 +144,12 @@ phi-agent/
 
 ### Pre-Push Checklist
 
-CI runs `cargo fmt --check` + `cargo clippy --all-targets -- -D warnings` across **all** dependency repos.
-**Run this locally before every push:**
-
 ```bash
 cargo fmt --check && cargo clippy --all-targets -- -D warnings
 ```
 
 If `cargo fmt` reports diffs, fix them: `cargo fmt` (no `--check`).  
-If clippy warns, fix the warnings — CI treats all warnings as errors.  
-Note: due to path dependencies, this also checks `agent-base`, `agent-works`, `phi-tools`.  
-**If you modified any dependency repo, push it BEFORE pushing phi-agent** — CI clones them fresh from `hibuka-labs` on each run.
+If clippy warns, fix the warnings — CI treats all warnings as errors.
 
 ### Documentation Deployment
 
