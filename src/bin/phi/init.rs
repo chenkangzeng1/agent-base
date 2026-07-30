@@ -32,13 +32,13 @@ async fn main() -> anyhow::Result<()> {
             model: std::env::var("LLM_MODEL").unwrap_or_else(|_| "gpt-4o".into()),
             enable_thinking: true,
             thinking_budget: None,
-            reasoning_effort: ReasoningEffort::Medium,
+            thinking_effort: ReasoningEffort::Medium,
             safety: SafetyConfig::default(),
         },
     )?;
 
     let session = agent.create_session().await;
-    let renderer = create_stdout_renderer(&OutputFormat::Terminal {
+    let mut renderer = create_stdout_renderer(&OutputFormat::Terminal {
         show_thinking: true,
         show_tool_args: true,
         color: true,
