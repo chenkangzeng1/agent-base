@@ -48,7 +48,7 @@ async fn main() -> anyhow::Result<()> {
 
     println!("phi-agent REPL — type /exit to quit\n");
     loop {
-        let line = rl.readline("> ")?;
+        let line = rl.readline("phi> ")?;
         let input = line.trim().to_string();
         if input.is_empty() { continue; }
         if input == "/exit" { break; }
