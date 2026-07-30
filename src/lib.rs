@@ -23,6 +23,7 @@ pub use agent_base::{
 };
 
 // ── phi-telemetry (metrics types and storage) ──
+#[cfg(feature = "telemetry")]
 pub use phi_telemetry::{
     SessionMetrics, SessionOutcome, SessionSummary, TurnMetrics, TurnOutcome, list_all_metrics, load_metrics,
     save_metrics, try_load_metrics,

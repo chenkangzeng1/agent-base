@@ -16,12 +16,14 @@ categories = ["development-tools", "command-line-utilities", "asynchronous"]
 [[bin]]
 name = "phi"
 path = "src/bin/phi/main.rs"
+required-features = ["tools", "telemetry", "logging"]
 
 [dependencies]
 agent-base = { version = "0.1.5", path = "agent-base" }
 agent-works = { version = "0.1.3", path = "agent-works" }
-phi-tools = { version = "0.1.1", path = "phi-tools" }
-phi-telemetry = { version = "0.1.2", path = "phi-telemetry" }
+phi-tools = { version = "0.1.1", path = "phi-tools", optional = true }
+phi-telemetry = { version = "0.1.2", path = "phi-telemetry", optional = true }
+log-core = { version = "0.1.1", path = "log-core", optional = true }
 anyhow = "1"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
@@ -37,7 +39,12 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
 rustyline = "15"
-log-core = { version = "0.1.1", path = "log-core" }
+
+[features]
+default = ["tools", "telemetry", "logging"]
+tools = ["phi-tools"]
+telemetry = ["phi-telemetry"]
+logging = ["log-core"]
 
 [dev-dependencies]
 tempfile = "3"
