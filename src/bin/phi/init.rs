@@ -59,9 +59,14 @@ impl Tool for ClockTool {
 async fn main() -> anyhow::Result<()> {
     dotenvy::dotenv().ok();
 
+    let api_key = std::env::var("LLM_API_KEY")
+        .map_err(|_| anyhow::anyhow!(
+            "LLM_API_KEY not found.\n\n\
+             Create a .env file:\n  cp .env.example .env\n  # edit with your API key"
+        ))?;
     let model = std::env::var("LLM_MODEL").unwrap_or_else(|_| "gpt-4o".into());
     let llm = Arc::new(OpenAiClient::new(
-        std::env::var("LLM_API_KEY")?,
+        api_key,
         model.clone(),
         std::env::var("LLM_BASE_URL").ok(),
     ));
