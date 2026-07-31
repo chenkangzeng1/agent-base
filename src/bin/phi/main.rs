@@ -156,7 +156,7 @@ async fn main() -> Result<()> {
     // 14. Run
     if let Some(query) = args.query {
         // Set up telemetry
-        let node_id = std::env::var("PHI_NODE_ID").unwrap_or_default();
+        let node_id = std::env::var("PHI_NODE_ID").unwrap_or_else(|_| default_node_id());
         let metrics_enabled = std::env::var("PHI_METRICS_ENABLED")
             .map(|v| {
                 let v = v.to_lowercase();
@@ -428,6 +428,15 @@ fn print_welcome_banner(agent: &PhiAgent, session_ctx: &SessionContext) {
     println!();
 }
 
+/// Default node_id: phi-{current_dir_name}, or phi-unknown.
+fn default_node_id() -> String {
+    let dir = std::env::current_dir()
+        .ok()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        .unwrap_or_else(|| "unknown".to_string());
+    format!("phi-{}", dir)
+}
+
 fn truncate_str(s: &str, max_chars: usize) -> String {
     if s.chars().count() > max_chars {
         let truncated: String = s.chars().take(max_chars).collect();
@@ -451,8 +460,8 @@ fn handle_metrics(cmd: &MetricsCmd, args: &CliArgs) -> Result<()> {
                 return Ok(());
             }
 
-            println!("  {:<30} {:<18} {:>6} {:>10} {:>8}  {}", "Session", "Node", "Turns", "Tokens", "Cost", "Outcome");
-            println!("  {}", "-".repeat(90));
+            println!("  {:<30} {:<22} {:>6} {:>10}  Outcome", "Session", "Node", "Turns", "Chars");
+            println!("  {}", "-".repeat(80));
 
             for s in &summaries {
                 let label = if let Some(ref product) = s.product {
@@ -469,12 +478,11 @@ fn handle_metrics(cmd: &MetricsCmd, args: &CliArgs) -> Result<()> {
                 };
 
                 println!(
-                    "  {:<30} {:<18} {:>6} {:>10} ${:>7.2}  {}",
+                    "  {:<30} {:<22} {:>6} {:>10}  {}",
                     truncate_str(&label, 29),
                     if s.node_id.is_empty() { "-" } else { &s.node_id },
                     s.total_turns,
-                    format_number(s.total_tokens),
-                    s.estimated_cost,
+                    format_number(s.total_chars),
                     outcome_icon,
                 );
             }
@@ -513,9 +521,8 @@ fn handle_metrics(cmd: &MetricsCmd, args: &CliArgs) -> Result<()> {
 fn print_session_detail(metrics: &phi_agent::SessionMetrics, session_id: &str) {
     println!();
     println!("  Session:    {}", session_id);
-    if !metrics.node_id.is_empty() {
-        println!("  Node:       {}", metrics.node_id);
-    }
+    // Node: always show (default_node_id ensures it's never empty)
+    println!("  Node:       {}", metrics.node_id);
     println!("  Model:      {}", metrics.model);
 
     // Product info from custom
@@ -534,22 +541,17 @@ fn print_session_detail(metrics: &phi_agent::SessionMetrics, session_id: &str) {
         metrics.p99_turn_ms / 1000,
     );
     println!("  ─────────────────────────────────────────");
-    println!(
-        "  Tokens:     {} in / {} out",
-        format_number(metrics.total_input_tokens),
-        format_number(metrics.total_output_tokens),
-    );
-    println!("  Cost:       ${:.2}", metrics.estimated_cost);
+    println!("  Chars:      {}", format_number(metrics.total_chars));
     println!("  ─────────────────────────────────────────");
     println!(
         "  LLM:        {}s ({}%)",
         metrics.total_llm_ms / 1000,
-        if metrics.total_duration_ms > 0 { (metrics.total_llm_ms * 100) / metrics.total_duration_ms } else { 0 }
+        (metrics.total_llm_ms * 100).checked_div(metrics.total_duration_ms).unwrap_or(0)
     );
     println!(
         "  Tool:       {}s ({}%)",
         metrics.total_tool_ms / 1000,
-        if metrics.total_duration_ms > 0 { (metrics.total_tool_ms * 100) / metrics.total_duration_ms } else { 0 }
+        (metrics.total_tool_ms * 100).checked_div(metrics.total_duration_ms).unwrap_or(0)
     );
     if !metrics.tool_breakdown.is_empty() {
         let tools: Vec<String> =
