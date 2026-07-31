@@ -26,19 +26,29 @@ Rust 通用 AI Agent 框架 — 简单、纯粹、可预测。
 
     ---
 
-    异步、类型安全、零成本抽象。从云端到边缘，一个二进制文件。
+    异步、类型安全、零成本抽象。一个二进制，从云端到边缘随处运行。
 
 -   :material-lightbulb-on-outline:{ .lg .middle } **简单**
 
     ---
 
-    无隐藏状态、无向量数据库、无黑魔法。一切显式可控、可追溯。
+    无隐藏状态，无黑魔法。显式控制流 — 可读、可追踪、可信赖。
+
+</div>
+
+<div class="grid cards" markdown>
 
 -   :material-toy-brick-outline:{ .lg .middle } **你说了算**
 
     ---
 
-    框架不内置工具。你通过 `Tool` trait 注册自己需要的工具，完全掌控。
+    零内置工具。实现 `Tool` trait，按需注册，能力由你掌控。
+
+-   :material-chart-line:{ .lg .middle } **可观测**
+
+    ---
+
+    内置对话日志、指标采集、链路追踪。每个决策有记录，每次结果可度量。
 
 </div>
 

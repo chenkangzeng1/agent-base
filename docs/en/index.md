@@ -26,19 +26,29 @@ General-purpose AI Agent Framework in Rust — simple, pure, predictable.
 
     ---
 
-    Async, type-safe, zero-cost abstractions. Runs from cloud to edge — a single binary.
+    Async, type-safe, zero-cost abstractions. A single binary that runs from cloud to edge.
 
 -   :material-lightbulb-on-outline:{ .lg .middle } **Simple**
 
     ---
 
-    No hidden state, no vector DB, no magic. Everything is explicit and traceable.
+    No hidden state, no magic. Explicit control flow — readable, traceable, trustworthy.
+
+</div>
+
+<div class="grid cards" markdown>
 
 -   :material-toy-brick-outline:{ .lg .middle } **Your Rules**
 
     ---
 
-    The framework doesn't bundle tools. You register exactly what you need via the `Tool` trait.
+    Zero built-in tools. Implement the `Tool` trait, register what you need, own your capabilities.
+
+-   :material-chart-line:{ .lg .middle } **Observable**
+
+    ---
+
+    Built-in turn logging, metrics, and tracing. Every decision is recorded, every outcome measurable.
 
 </div>
 
