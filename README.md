@@ -4,7 +4,7 @@
 [![Crates.io](https://img.shields.io/crates/v/phi-agent.svg)](https://crates.io/crates/phi-agent)
 [![Docs.rs](https://docs.rs/phi-agent/badge.svg)](https://docs.rs/phi-agent)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Documentation](https://img.shields.io/badge/docs-book-green.svg)](https://hibuka-labs.github.io/phi-agent)
+[![Documentation](https://img.shields.io/badge/docs-book-green.svg)](https://docs.phi-agent.dev)
 
 A general-purpose AI Agent framework in Rust, built on [agent-base](https://crates.io/crates/agent-base) and [agent-works](https://crates.io/crates/agent-works).
 
@@ -17,7 +17,7 @@ phi-agent is part of a family of independent crates:
 | Crate | crates.io | Description |
 |-------|-----------|-------------|
 | `agent-base` | [![Crates.io](https://img.shields.io/crates/v/agent-base.svg)](https://crates.io/crates/agent-base) | Lightweight runtime kernel — LLM clients, Tool trait, event stream |
-| `agent-works` | [![Crates.io](https://img.shields.io/crates/v/agent-works.svg)](https://crates.io/crates/agent-works) | Batteries-included toolbox — MCP, Skills, built-in file tools |
+| `agent-works` | [![Crates.io](https://img.shields.io/crates/v/agent-works.svg)](https://crates.io/crates/agent-works) | Batteries-included toolbox — MCP, Skills, Focus |
 | `phi-agent` | [![Crates.io](https://img.shields.io/crates/v/phi-agent.svg)](https://crates.io/crates/phi-agent) | Full framework — builder factory, renderers, config, CLI binary |
 
 **Just need the runtime?** `cargo add agent-base`. **Need the full framework?** `cargo add phi-agent`.
@@ -36,7 +36,7 @@ phi-agent is part of a family of independent crates:
 ┌─────────▼─────────┐  ┌────────▼────────┐  ┌──────────▼──────────┐
 │    agent-works     │  │   phi-tools     │  │    your-tools       │
 │  MCP · Skills      │  │ LocalShellTool  │  │ Custom Tool impls   │
-│  Builtin tools     │  │                 │  │                     │
+│  Focus             │  │                 │  │                     │
 └─────────┬─────────┘  └────────┬────────┘  └──────────┬──────────┘
           │                      │                      │
           └──────────────────────┼──────────────────────┘
@@ -73,7 +73,7 @@ phi-agent is part of a family of independent crates:
 
 - **Builder factory** — `base_agent_builder()` with sensible defaults (thinking, recovery, limits)
 - **Three renderers** — Terminal (rich, colored, streaming), JSON stream (JSONL), Null (silent)
-- **CLI-ready** — REPL and one-shot modes with 30+ configurable flags
+- **CLI-ready** — REPL and one-shot modes with 20+ configurable flags
 - **Session management** — auto-cleanup, file locking, JSONL turn logging
 - **Tool-agnostic** — no built-in tools; register your own via `AgentBuilder`
 - **Extensible** — middleware, approval handlers, custom renderers
@@ -182,14 +182,17 @@ Full guide: [guide/custom-tool.md](guide/custom-tool.md)
 
 ## Documentation
 
-📖 **Full documentation**: [hibuka-labs.github.io/phi-agent](https://hibuka-labs.github.io/phi-agent)
+📖 **Full documentation**: [docs.phi-agent.dev](https://docs.phi-agent.dev)
 
 | Document | Description |
 |----------|-------------|
 | [Getting Started](guide/getting-started.md) | 5-minute quick start |
 | [Custom Tools](guide/custom-tool.md) | How to write a Tool |
+| [CLI Usage](guide/cli.md) | CLI flags, REPL, one-shot |
 | [Configuration](guide/configuration.md) | Config reference |
 | [Focus](guide/focus.md) | Structured single-purpose LLM calls |
+| [Architecture](guide/architecture.md) | Design decisions and internals |
+| [Observability](guide/observability.md) | Logging, tracing, metrics |
 | [Advanced](guide/advanced.md) | Middleware, sessions, event log |
 
 ## FAQ
@@ -223,5 +226,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed setup instructions and PR gu
 ## License
 
 MIT — see [LICENSE](LICENSE) for details.
+
+## Contact
+
+:material-email-outline: [phiagent@hibuka.com](mailto:phiagent@hibuka.com)
 
 [中文文档](README_CN.md)

@@ -75,3 +75,7 @@ Each crate is a separate repository under [hibuka-labs](https://github.com/hibuk
     Full Rustdoc on docs.rs.
 
 </div>
+
+---
+
+:material-email-outline: **Contact** &nbsp; [phiagent@hibuka.com](mailto:phiagent@hibuka.com)

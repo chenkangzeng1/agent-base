@@ -75,3 +75,7 @@ phi-agent (lib) ← 框架层，不含工具
     完整的 Rustdoc 文档。
 
 </div>
+
+---
+
+:material-email-outline: **联系** &nbsp; [phiagent@hibuka.com](mailto:phiagent@hibuka.com)

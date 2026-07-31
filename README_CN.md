@@ -4,11 +4,23 @@
 [![Crates.io](https://img.shields.io/crates/v/phi-agent.svg)](https://crates.io/crates/phi-agent)
 [![Docs.rs](https://docs.rs/phi-agent/badge.svg)](https://docs.rs/phi-agent)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Documentation](https://img.shields.io/badge/docs-book-green.svg)](https://hibuka-labs.github.io/phi-agent)
+[![Documentation](https://img.shields.io/badge/docs-book-green.svg)](https://docs.phi-agent.dev)
 
 通用 AI Agent 框架，基于 Rust 构建，底层依赖 [agent-base](https://crates.io/crates/agent-base) 和 [agent-works](https://crates.io/crates/agent-works)。
 
 **phi-agent 提供基础设施。工具由你来定义。**
+
+## 生态
+
+phi-agent 是一组独立 crate 的成员：
+
+| Crate | crates.io | 说明 |
+|-------|-----------|------|
+| `agent-base` | [![Crates.io](https://img.shields.io/crates/v/agent-base.svg)](https://crates.io/crates/agent-base) | 轻量运行时内核 — LLM 客户端、Tool trait、事件流 |
+| `agent-works` | [![Crates.io](https://img.shields.io/crates/v/agent-works.svg)](https://crates.io/crates/agent-works) | 功能工具箱 — MCP、Skills、Focus |
+| `phi-agent` | [![Crates.io](https://img.shields.io/crates/v/phi-agent.svg)](https://crates.io/crates/phi-agent) | 完整框架 — builder 工厂、渲染器、配置、CLI 二进制 |
+
+**只需要运行时？** `cargo add agent-base`。**需要完整框架？** `cargo add phi-agent`。
 
 ## 架构
 
@@ -24,7 +36,7 @@
 ┌─────────▼─────────┐  ┌────────▼────────┐  ┌──────────▼──────────┐
 │    agent-works     │  │   phi-tools     │  │     你的工具         │
 │  MCP · Skills      │  │ LocalShellTool  │  │  自定义 Tool 实现    │
-│  内置工具           │  │                 │  │                     │
+│  Focus             │  │                 │  │                     │
 └─────────┬─────────┘  └────────┬────────┘  └──────────┬──────────┘
           │                      │                      │
           └──────────────────────┼──────────────────────┘
@@ -61,7 +73,7 @@
 
 - **Builder 工厂** — `base_agent_builder()` 提供合理默认值（thinking、recovery、limits）
 - **三种渲染器** — Terminal（彩色、流式）、JSON stream（JSONL）、Null（静默）
-- **CLI 开箱即用** — REPL 和 one-shot 模式，30+ 可配置参数
+- **CLI 开箱即用** — REPL 和 one-shot 模式，20+ 可配置参数
 - **会话管理** — 自动清理、文件锁、JSONL 对话日志
 - **工具无关** — 不内置任何工具，通过 `AgentBuilder` 注册你自己的
 - **可扩展** — 中间件、审批处理器、自定义渲染器
@@ -175,14 +187,17 @@ impl Tool for HelloTool {
 
 ## 文档
 
-📖 **完整文档站**: [hibuka-labs.github.io/phi-agent](https://hibuka-labs.github.io/phi-agent)
+📖 **完整文档站**: [docs.phi-agent.dev](https://docs.phi-agent.dev)
 
 | 文档 | 说明 |
 |------|------|
 | [快速开始](guide/getting-started_CN.md) | 5 分钟上手 |
 | [自定义工具](guide/custom-tool_CN.md) | 如何编写 Tool |
+| [CLI 使用](guide/cli_CN.md) | CLI 参数、REPL、one-shot |
 | [配置详解](guide/configuration_CN.md) | 配置参考 |
 | [Focus 专注判断](guide/focus_CN.md) | 结构化单任务 LLM 调用 |
+| [架构设计](guide/architecture_CN.md) | 设计决策与内部原理 |
+| [可观测性](guide/observability_CN.md) | 日志、追踪、指标 |
 | [高级用法](guide/advanced_CN.md) | 中间件、会话、事件日志 |
 
 ## 常见问题
@@ -210,5 +225,9 @@ agent-base 是运行时内核（LLM 调用、工具编排、事件流）。phi-a
 ## 许可证
 
 MIT — 详见 [LICENSE](LICENSE)。
+
+## 联系
+
+:material-email-outline: [phiagent@hibuka.com](mailto:phiagent@hibuka.com)
 
 [English](README.md)
