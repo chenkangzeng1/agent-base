@@ -92,6 +92,8 @@ impl Tool for EnvVarTool {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    dotenvy::dotenv().ok();
+
     let api_key = std::env::var("LLM_API_KEY")
         .or_else(|_| std::env::var("OPENAI_API_KEY"))
         .expect("Set LLM_API_KEY or OPENAI_API_KEY environment variable");

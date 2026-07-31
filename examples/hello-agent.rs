@@ -17,6 +17,8 @@ use phi_agent::{
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    dotenvy::dotenv().ok();
+
     // 1. Resolve API key from environment
     let api_key = std::env::var("LLM_API_KEY")
         .or_else(|_| std::env::var("OPENAI_API_KEY"))
