@@ -144,6 +144,47 @@ phi
 phi --format json "列出文件"
 ```
 
+## 浏览器自动化
+
+phi-agent 内置 21 个浏览器工具（通过 `browser` Cargo feature 控制），支持网页浏览、表单交互、数据提取，基于 Chrome DevTools Protocol。
+
+### 快速开始
+
+```bash
+# 编译并启用浏览器功能
+cargo run --features browser -- --enable-browser "上网查今天天气"
+
+# Headed 模式（可见浏览器窗口，便于调试）
+cargo run --features browser -- --enable-browser --headed "打开淘宝搜索机械键盘"
+
+# 连接已有的 Chrome 实例
+# 首先启动 Chrome 并开启远程调试：
+#   /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
+cargo run --features browser -- --connect-ws ws://localhost:9222 "在当前页面查找..."
+```
+
+### 浏览器工具列表（21 个）
+
+| 类别 | 工具 |
+|---|---|
+| **导航** | `browser_navigate`, `browser_go_back`, `browser_go_forward`, `browser_wait` |
+| **交互** | `browser_click`, `browser_hover`, `browser_input_fill`, `browser_select`, `browser_press_key`, `browser_scroll` |
+| **查看** | `browser_snapshot`, `browser_screenshot`, `browser_get_markdown`, `browser_read_links`, `browser_evaluate` |
+| **标签页** | `browser_new_tab`, `browser_tab_list`, `browser_switch_tab`, `browser_close_tab` |
+| **控制** | `browser_close`, `browser_extract_content` |
+
+### 工作原理
+
+1. `--enable-browser` 启动一个无头 Chrome 实例
+2. `browser_navigate` 打开网页并返回 ARIA 无障碍快照，可交互元素带有数字索引
+3. AI 通过索引点击元素（如 `browser_click index=5`），无需编写脆弱的 CSS 选择器
+4. `browser_screenshot` 截取页面截图；`browser_get_markdown` 提取可读内容
+
+### 环境要求
+
+- 需安装 Chrome 或 Chromium
+- 编译需带 `--features browser`（`browser` feature 控制 `headless_chrome` 等重量级依赖）
+
 ## 自定义工具示例
 
 ```rust
