@@ -144,6 +144,47 @@ phi
 phi --format json "list files"
 ```
 
+## Browser Automation
+
+phi-agent includes 21 browser tools (gated behind the `browser` Cargo feature) for web browsing, form interaction, and data extraction via Chrome DevTools Protocol.
+
+### Quick Start
+
+```bash
+# Build and run with browser enabled
+cargo run --features browser -- --enable-browser "上网查今天天气"
+
+# Headed mode (visible browser window, useful for debugging)
+cargo run --features browser -- --enable-browser --headed "打开淘宝搜索机械键盘"
+
+# Connect to an existing Chrome instance
+# First, start Chrome with remote debugging:
+#   /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
+cargo run --features browser -- --connect-ws ws://localhost:9222 "在当前页面查找..."
+```
+
+### Available Browser Tools (21)
+
+| Category | Tools |
+|---|---|
+| **Navigation** | `browser_navigate`, `browser_go_back`, `browser_go_forward`, `browser_wait` |
+| **Interaction** | `browser_click`, `browser_hover`, `browser_input_fill`, `browser_select`, `browser_press_key`, `browser_scroll` |
+| **Viewing** | `browser_snapshot`, `browser_screenshot`, `browser_get_markdown`, `browser_read_links`, `browser_evaluate` |
+| **Tab** | `browser_new_tab`, `browser_tab_list`, `browser_switch_tab`, `browser_close_tab` |
+| **Control** | `browser_close`, `browser_extract_content` |
+
+### How It Works
+
+1. `--enable-browser` launches a headless Chrome instance
+2. `browser_navigate` opens a URL and returns an ARIA accessibility snapshot with numbered interactive elements
+3. The AI clicks elements by index (e.g., `browser_click index=5`) instead of writing fragile CSS selectors
+4. `browser_screenshot` captures visual snapshots; `browser_get_markdown` extracts readable content
+
+### Requirements
+
+- Chrome or Chromium installed
+- `cargo run --features browser` (the `browser` feature gates the heavy `headless_chrome` dependency)
+
 ## Custom Tool Example
 
 ```rust
