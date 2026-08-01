@@ -87,6 +87,19 @@ pub struct CliArgs {
     /// Shell command timeout (milliseconds)
     #[arg(long, default_value = "30000")]
     pub shell_timeout_ms: u64,
+
+    // ── Browser config ──
+    /// Enable browser automation tools (launches headless Chrome)
+    #[arg(long, default_value = "false")]
+    pub enable_browser: bool,
+
+    /// Run browser in headed mode (visible window, useful for debugging)
+    #[arg(long, default_value = "false")]
+    pub headed: bool,
+
+    /// Connect to an existing Chrome instance via WebSocket (e.g., ws://localhost:9222)
+    #[arg(long)]
+    pub connect_ws: Option<String>,
 }
 
 #[derive(Clone, Debug, clap::ValueEnum)]

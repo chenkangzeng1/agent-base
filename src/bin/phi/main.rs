@@ -18,6 +18,10 @@ use phi_agent::{
 use phi_telemetry::{self, SessionOutcome, list_all_metrics, load_metrics, save_metrics};
 
 use approval::CliApprovalHandler;
+#[cfg(feature = "browser")]
+use tools::{
+    register_browser_tools, BrowserConnectionOptions, BrowserLaunchOptions, BrowserToolset,
+};
 use tools::LocalShellTool;
 
 #[tokio::main]
@@ -94,6 +98,32 @@ async fn main() -> Result<()> {
         max_consecutive_failures: args.max_failures.unwrap_or(3),
     };
 
+    // 9.5. Browser setup (if enabled)
+    #[cfg(feature = "browser")]
+    let _browser = if args.enable_browser || args.connect_ws.is_some() {
+        let browser = if let Some(ws_url) = &args.connect_ws {
+            let opts = BrowserConnectionOptions::new(ws_url.as_str());
+            BrowserToolset::connect(opts)
+                .map_err(|e| anyhow::anyhow!("Failed to connect to browser: {}", e))?
+        } else {
+            let opts = BrowserLaunchOptions::new()
+                .headless(!args.headed)
+                .window_size(1280, 900);
+            BrowserToolset::launch(opts)
+                .map_err(|e| anyhow::anyhow!("Failed to launch browser: {}", e))?
+        };
+
+        if args.headed {
+            eprintln!("[phi] browser launched (headed mode)");
+        } else {
+            eprintln!("[phi] browser launched (headless)");
+        }
+
+        Some(browser)
+    } else {
+        None
+    };
+
     // 10. Output format
     let output_format = match args.format {
         OutputFormatArg::Terminal => OutputFormat::Terminal {
@@ -115,7 +145,8 @@ async fn main() -> Result<()> {
     };
 
     // 12. Assemble builder — register tools here
-    let builder = base_agent_builder(llm_client)
+    #[allow(unused_mut)]
+    let mut builder = base_agent_builder(llm_client)
         .system_prompt(system_prompt)
         .register_tool(LocalShellTool::new(args.shell_timeout_ms))
         .register_tool(
@@ -141,6 +172,12 @@ async fn main() -> Result<()> {
         .middleware(TurnFactMiddleware::new())
         .middleware(TurnToolLimitMiddleware::from_config(&safety_config))
         .apply_if(args.thinking_budget, |b, budget| b.thinking_budget(budget));
+
+    // Register browser tools if enabled
+    #[cfg(feature = "browser")]
+    if let Some(ref browser) = _browser {
+        builder = register_browser_tools(builder, browser);
+    }
 
     // 13. Build agent
     let agent = PhiAgent::build(builder, agent_config)?;
