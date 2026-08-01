@@ -92,4 +92,25 @@ impl PhiAgent {
     pub fn runtime(&self) -> &AgentRuntime {
         &self.runtime
     }
+
+    /// List all registered tools with their names and descriptions.
+    pub async fn list_tools(&self) -> Vec<(String, String)> {
+        let tools = self.runtime.tools_mut();
+        let registry = tools.read().await;
+        registry
+            .definitions()
+            .into_iter()
+            .map(|def| {
+                let name = def["function"]["name"]
+                    .as_str()
+                    .unwrap_or("unknown")
+                    .to_string();
+                let desc = def["function"]["description"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string();
+                (name, desc)
+            })
+            .collect()
+    }
 }

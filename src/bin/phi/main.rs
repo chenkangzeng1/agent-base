@@ -329,6 +329,22 @@ async fn run_repl(
             }
             continue;
         }
+        if input == "tools" {
+            let tools = agent.list_tools().await;
+            if matches!(format, OutputFormat::Terminal { .. }) {
+                println!();
+                if tools.is_empty() {
+                    println!("  (no tools registered)");
+                } else {
+                    println!("  Registered tools ({}):\n", tools.len());
+                    for (name, desc) in &tools {
+                        println!("  \x1b[1m{}\x1b[0m — {}", name, desc);
+                    }
+                }
+                println!();
+            }
+            continue;
+        }
 
         let _ = rl.save_history(&history_path);
 
@@ -423,7 +439,7 @@ fn print_welcome_banner(agent: &PhiAgent, session_ctx: &SessionContext) {
         println!("║  Status: Reusing session                            ║");
     }
     println!("║                                                   ║");
-    println!("║  Commands: exit/quit | reset                       ║");
+    println!("║  Commands: exit/quit | reset | tools              ║");
     println!("╚═══════════════════════════════════════════════════╝");
     println!();
 }
