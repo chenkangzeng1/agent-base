@@ -18,11 +18,9 @@ use phi_agent::{
 use phi_telemetry::{self, SessionOutcome, list_all_metrics, load_metrics, save_metrics};
 
 use approval::CliApprovalHandler;
-#[cfg(feature = "browser")]
-use tools::{
-    register_browser_tools, BrowserConnectionOptions, BrowserLaunchOptions, BrowserToolset,
-};
 use tools::LocalShellTool;
+#[cfg(feature = "browser")]
+use tools::{BrowserConnectionOptions, BrowserLaunchOptions, BrowserToolset, register_browser_tools};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -103,14 +101,10 @@ async fn main() -> Result<()> {
     let _browser = if args.enable_browser || args.connect_ws.is_some() {
         let browser = if let Some(ws_url) = &args.connect_ws {
             let opts = BrowserConnectionOptions::new(ws_url.as_str());
-            BrowserToolset::connect(opts)
-                .map_err(|e| anyhow::anyhow!("Failed to connect to browser: {}", e))?
+            BrowserToolset::connect(opts).map_err(|e| anyhow::anyhow!("Failed to connect to browser: {}", e))?
         } else {
-            let opts = BrowserLaunchOptions::new()
-                .headless(!args.headed)
-                .window_size(1280, 900);
-            BrowserToolset::launch(opts)
-                .map_err(|e| anyhow::anyhow!("Failed to launch browser: {}", e))?
+            let opts = BrowserLaunchOptions::new().headless(!args.headed).window_size(1280, 900);
+            BrowserToolset::launch(opts).map_err(|e| anyhow::anyhow!("Failed to launch browser: {}", e))?
         };
 
         if args.headed {
@@ -142,6 +136,7 @@ async fn main() -> Result<()> {
         thinking_budget: args.thinking_budget,
         thinking_effort: args.thinking_effort.clone().into(),
         safety: safety_config.clone(),
+        max_turns: args.max_turns,
     };
 
     // 12. Assemble builder — register tools here
@@ -171,7 +166,8 @@ async fn main() -> Result<()> {
         .approval_handler(approval_handler)
         .middleware(TurnFactMiddleware::new())
         .middleware(TurnToolLimitMiddleware::from_config(&safety_config))
-        .apply_if(args.thinking_budget, |b, budget| b.thinking_budget(budget));
+        .apply_if(args.thinking_budget, |b, budget| b.thinking_budget(budget))
+        .apply_if(args.max_turns, |b, n| b.execution_max_turns(n));
 
     // Register browser tools if enabled
     #[cfg(feature = "browser")]

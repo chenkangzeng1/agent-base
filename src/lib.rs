@@ -33,7 +33,7 @@ pub use phi_telemetry::{
 pub use agent_works::focus::{Context as FocusContext, Focus, FocusError, FocusInput, FocusOutput};
 
 // ── phi-agent types ──
-pub use agent::{PhiAgent, PhiAgentConfig, base_agent_builder};
+pub use agent::{CompressionConfig, PhiAgent, PhiAgentConfig, SummarizingMiddleware, base_agent_builder};
 pub use cli::{ApprovalMode, AutoApprovalHandler};
 pub use config::{LlmConfig, resolve_llm_config};
 pub use event_log::{event_to_jsonl, event_to_value, save_turn_log};

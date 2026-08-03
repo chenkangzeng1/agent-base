@@ -24,6 +24,9 @@ pub struct PhiAgentConfig {
     pub thinking_effort: ReasoningEffort,
     /// Per-turn safety limits (max tool calls, max consecutive failures, etc.).
     pub safety: SafetyConfig,
+    /// React-loop iteration cap for a single run (one user input).
+    /// `None` means use the builder default (200 in [`base_agent_builder`]).
+    pub max_turns: Option<u32>,
 }
 
 /// A built Agent instance.
@@ -101,14 +104,8 @@ impl PhiAgent {
             .definitions()
             .into_iter()
             .map(|def| {
-                let name = def["function"]["name"]
-                    .as_str()
-                    .unwrap_or("unknown")
-                    .to_string();
-                let desc = def["function"]["description"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string();
+                let name = def["function"]["name"].as_str().unwrap_or("unknown").to_string();
+                let desc = def["function"]["description"].as_str().unwrap_or("").to_string();
                 (name, desc)
             })
             .collect();

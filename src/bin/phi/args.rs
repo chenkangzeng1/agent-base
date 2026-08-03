@@ -83,6 +83,10 @@ pub struct CliArgs {
     #[arg(long)]
     pub max_failures: Option<usize>,
 
+    /// Max react-loop iterations for a single run (one user input). Default: 200.
+    #[arg(long, env = "PHI_MAX_TURNS")]
+    pub max_turns: Option<u32>,
+
     // ── Tool config ──
     /// Shell command timeout (milliseconds)
     #[arg(long, default_value = "30000")]

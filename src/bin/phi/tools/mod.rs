@@ -5,13 +5,12 @@ pub use phi_tools::LocalShellTool;
 // ── Browser tools (feature = "browser") ──
 #[cfg(feature = "browser")]
 pub use phi_tools::{
+    BrowserClickTool, BrowserCloseTabTool, BrowserCloseTool, BrowserEvaluateTool, BrowserExtractTool,
+    BrowserGetMarkdownTool, BrowserGoBackTool, BrowserGoForwardTool, BrowserHoverTool, BrowserInputTool,
+    BrowserNavigateTool, BrowserNewTabTool, BrowserPressKeyTool, BrowserReadLinksTool, BrowserRestartTool,
+    BrowserScreenshotTool, BrowserScrollTool, BrowserSelectTool, BrowserSnapshotTool, BrowserSwitchTabTool,
+    BrowserTabListTool, BrowserToolset, BrowserWaitTool,
     browser::config::{ConnectionOptions as BrowserConnectionOptions, LaunchOptions as BrowserLaunchOptions},
-    BrowserClickTool, BrowserCloseTabTool, BrowserCloseTool, BrowserEvaluateTool,
-    BrowserExtractTool, BrowserGetMarkdownTool, BrowserGoBackTool, BrowserGoForwardTool,
-    BrowserHoverTool, BrowserInputTool, BrowserNavigateTool, BrowserNewTabTool,
-    BrowserPressKeyTool, BrowserReadLinksTool, BrowserScreenshotTool, BrowserScrollTool,
-    BrowserSelectTool, BrowserSnapshotTool, BrowserSwitchTabTool, BrowserTabListTool,
-    BrowserToolset, BrowserWaitTool,
 };
 
 #[cfg(feature = "browser")]
@@ -20,10 +19,7 @@ use agent_base::AgentBuilder;
 /// Register all browser automation tools on the builder.
 /// The `browser` session must outlive the agent.
 #[cfg(feature = "browser")]
-pub fn register_browser_tools(
-    mut builder: AgentBuilder,
-    browser: &BrowserToolset,
-) -> AgentBuilder {
+pub fn register_browser_tools(mut builder: AgentBuilder, browser: &BrowserToolset) -> AgentBuilder {
     let session = browser.session();
 
     builder = builder
@@ -47,7 +43,8 @@ pub fn register_browser_tools(
         .register_tool(BrowserSnapshotTool::new(session.clone()))
         .register_tool(BrowserScreenshotTool::new(session.clone()))
         .register_tool(BrowserEvaluateTool::new(session.clone()))
-        .register_tool(BrowserCloseTool::new(session.clone()));
+        .register_tool(BrowserCloseTool::new(session.clone()))
+        .register_tool(BrowserRestartTool::new(session.clone()));
 
     builder
 }

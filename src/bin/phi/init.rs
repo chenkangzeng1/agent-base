@@ -81,6 +81,7 @@ async fn main() -> anyhow::Result<()> {
             thinking_budget: None,
             thinking_effort: ReasoningEffort::Medium,
             safety: SafetyConfig::default(),
+            max_turns: None,
         },
     )?;
 
@@ -182,6 +183,7 @@ async fn main() -> anyhow::Result<()> {
             thinking_budget: None,
             thinking_effort: ReasoningEffort::Medium,
             safety: SafetyConfig::default(),
+            max_turns: None,
         },
     )?;
 
@@ -197,9 +199,7 @@ async fn main() -> anyhow::Result<()> {
 
 pub fn run(name: &str, is_lib: bool) -> Result<()> {
     let dir = Path::new(name);
-    let project_name = dir.file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(name);
+    let project_name = dir.file_name().and_then(|n| n.to_str()).unwrap_or(name);
 
     if dir.exists() {
         anyhow::bail!("directory '{}' already exists", name);
