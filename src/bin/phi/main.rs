@@ -273,7 +273,7 @@ async fn run_repl(
         print_welcome_banner(agent, session_ctx);
     }
 
-    let node_id = std::env::var("PHI_NODE_ID").unwrap_or_default();
+    let node_id = std::env::var("PHI_NODE_ID").unwrap_or_else(|_| default_node_id());
     let metrics_enabled = std::env::var("PHI_METRICS_ENABLED")
         .map(|v| {
             let v = v.to_lowercase();

@@ -99,6 +99,23 @@ async fn main() -> anyhow::Result<()> {
         let input = line.trim().to_string();
         if input.is_empty() { continue; }
         if input == "/exit" { break; }
+        if input == "tools" {
+            let tools = agent.list_tools().await;
+            if tools.is_empty() {
+                println!("
+  (no tools registered)
+");
+            } else {
+                println!("
+  Registered tools ({}):
+", tools.len());
+                for (name, desc) in &tools {
+                    println!("  [1m{}[0m — {}", name, desc);
+                }
+                println!();
+            }
+            continue;
+        }
         rl.add_history_entry(&input)?;
 
         let session = agent.create_session().await;
