@@ -191,6 +191,17 @@ impl Tool for UpdatePlanTool {
         })
     }
 
+    fn metadata(&self) -> crate::tool::ToolMetadata {
+        crate::tool::ToolMetadata {
+            name: self.name().to_string(),
+            description: "Create or update a task plan to show the user a checklist with progress."
+                .to_string(),
+            origin: "agent-base".to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            requirements: vec![],
+        }
+    }
+
     fn as_framework_tool(&self) -> Option<&dyn FrameworkTool> {
         Some(self)
     }

@@ -45,6 +45,17 @@ impl Tool for AutoContinueTool {
         })
     }
 
+    fn metadata(&self) -> crate::tool::ToolMetadata {
+        crate::tool::ToolMetadata {
+            name: self.name().to_string(),
+            description: "Request automatic continuation to the next turn without waiting for user input."
+                .to_string(),
+            origin: "agent-base".to_string(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            requirements: vec![],
+        }
+    }
+
     async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
         let reason = args
             .get("reason")

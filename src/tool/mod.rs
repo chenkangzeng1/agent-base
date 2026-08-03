@@ -69,6 +69,28 @@ impl ToolContext {
     }
 }
 
+
+/// Machine-readable metadata for a registered tool — origin, version, and
+/// runtime requirements in a stable shape consumers can inspect without
+/// parsing the LLM-facing definition JSON.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct ToolMetadata {
+    /// Tool name (matches [`Tool::name`]).
+    pub name: String,
+    /// Human-readable description (matches the description in [`Tool::definition`]).
+    pub description: String,
+    /// Where this tool comes from: a crate name (e.g. `"phi-tools"`), a
+    /// framework identifier (`"agent-base"`, `"agent-works"`), or
+    /// `"custom"` for user-defined tools.
+    pub origin: String,
+    /// Crate / package version, or `"unknown"` when built outside a crate.
+    pub version: String,
+    /// Optional runtime requirements or capabilities this tool depends on
+    /// (e.g. `["chrome-cdp"]` for browser tools). Empty when there are
+    /// none.
+    pub requirements: Vec<String>,
+}
+
 #[async_trait]
 pub trait Tool: Send + Sync {
     fn name(&self) -> &'static str;
@@ -81,6 +103,30 @@ pub trait Tool: Send + Sync {
     #[allow(private_interfaces)]
     fn as_framework_tool(&self) -> Option<&dyn FrameworkTool> {
         None
+    }
+
+    /// Machine-readable metadata for tool introspection.
+    ///
+    /// The default implementation extracts `name` and `description` from
+    /// [`Tool::name`] and [`Tool::definition`], sets `origin` to `"custom"`,
+    /// and leaves `requirements` empty. Tool authors are encouraged to
+    /// override this to provide an accurate `origin` and `version`.
+    fn metadata(&self) -> ToolMetadata {
+        let name = self.name().to_string();
+        let description = self
+            .definition()
+            .get("function")
+            .and_then(|f| f.get("description"))
+            .and_then(|d| d.as_str())
+            .unwrap_or("")
+            .to_string();
+        ToolMetadata {
+            name,
+            description,
+            origin: "custom".to_string(),
+            version: "unknown".to_string(),
+            requirements: vec![],
+        }
     }
 }
 
@@ -192,6 +238,17 @@ impl ToolRegistry {
 
     pub fn is_empty(&self) -> bool {
         self.tools.is_empty()
+    }
+
+    /// Collect metadata for every registered tool, sorted by name.
+    ///
+    /// This is the preferred introspection API for consumers — it returns a
+    /// stable `ToolMetadata` struct per tool instead of having callers parse
+    /// the LLM-facing JSON definitions.
+    pub fn metadatas(&self) -> Vec<ToolMetadata> {
+        let mut list: Vec<_> = self.tools.values().map(|tool| tool.metadata()).collect();
+        list.sort_by(|a, b| a.name.cmp(&b.name));
+        list
     }
 
     /// Inject the internal `EventBus` into framework-provided tools.
