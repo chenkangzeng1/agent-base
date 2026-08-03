@@ -83,6 +83,7 @@ fn test_base_agent_builder_constructs() {
         thinking_budget: None,
         thinking_effort: ReasoningEffort::Medium,
         safety: SafetyConfig::default(),
+        max_turns: Some(100),
     };
     let agent = phi_agent::PhiAgent::build(builder, config);
     assert!(agent.is_ok(), "Agent should build successfully");
@@ -141,6 +142,7 @@ fn test_config_default_values() {
         thinking_budget: Some(32000),
         thinking_effort: ReasoningEffort::High,
         safety: SafetyConfig::default(),
+        max_turns: None,
     };
     assert_eq!(config.model, "opus");
     assert!(config.enable_thinking);

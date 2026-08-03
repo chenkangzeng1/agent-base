@@ -41,6 +41,7 @@ async fn main() -> anyhow::Result<()> {
             thinking_budget: None,
             thinking_effort: ReasoningEffort::Medium,
             safety: SafetyConfig::default(),
+            max_turns: None,
         },
     )?;
 

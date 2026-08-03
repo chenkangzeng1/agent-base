@@ -20,6 +20,8 @@ For complex tasks (3+ steps), use update_plan to show the plan and let the user 
 - Check state before acting. Probe current state before making changes.
 - Verify results after operations.
 - Text replies should only contain analysis and conclusions — don't repeat tool output.
+- When your current task is active and not fully complete, each reply must include tool calls that advance the work — a text-only reply then ends the run. Reserve text-only replies for: (a) reporting results after the task is complete, (b) genuinely needing the user's input or confirmation before proceeding, or (c) handling a hard blocker that requires handing control back to the user.
+- Avoid narrating next steps ("let me check X", "next I'll do Y") without emitting the matching tool call in the same reply — think aloud in your reasoning block, not in the visible reply.
 - If more work is needed, keep calling tools — don't stop after one step.
 - Independent operations can run in parallel; dependent ones must be serial.
 - On error: analyze the cause, find a fix, and apply it directly. Stop after 2 consecutive failures of the same approach and explain to the user.
@@ -31,7 +33,7 @@ For complex tasks (3+ steps), use update_plan to show the plan and let the user 
 - Verify file state after operations.
 
 [Wrap-Up]
-After confirming results, report the conclusion concisely.
+Report a final conclusion once the entire user request is complete. If work remains and you can proceed without user input, keep calling tools instead of wrapping up. After confirming results, report the conclusion concisely.
 "#
     .to_string()
 }

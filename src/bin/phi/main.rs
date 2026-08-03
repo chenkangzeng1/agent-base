@@ -112,6 +112,7 @@ async fn main() -> Result<()> {
         thinking_budget: args.thinking_budget,
         thinking_effort: args.thinking_effort.clone().into(),
         safety: safety_config.clone(),
+        max_turns: args.max_turns,
     };
 
     // 12. Assemble builder — register tools here
@@ -140,7 +141,8 @@ async fn main() -> Result<()> {
         .approval_handler(approval_handler)
         .middleware(TurnFactMiddleware::new())
         .middleware(TurnToolLimitMiddleware::from_config(&safety_config))
-        .apply_if(args.thinking_budget, |b, budget| b.thinking_budget(budget));
+        .apply_if(args.thinking_budget, |b, budget| b.thinking_budget(budget))
+        .apply_if(args.max_turns, |b, n| b.execution_max_turns(n));
 
     // 13. Build agent
     let agent = PhiAgent::build(builder, agent_config)?;
