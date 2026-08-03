@@ -170,6 +170,14 @@ impl AgentBuilder {
         self
     }
 
+    /// Cap the number of react-loop iterations allowed for a *single* run (one user
+    /// input). Distinct from [`Self::max_turns_per_session`], which caps turns across
+    /// the whole session. When unset, falls back to `DEFAULT_MAX_TURNS` (50).
+    pub fn execution_max_turns(mut self, max: u32) -> Self {
+        self.config.execution.max_turns = Some(max);
+        self
+    }
+
     pub fn max_message_tokens(mut self, max: usize) -> Self {
         self.config.session.max_message_tokens = Some(max);
         self
@@ -252,5 +260,60 @@ impl AgentBuilder {
         ));
 
         Ok(AgentRuntime { runner })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::llm::StreamChunk;
+    use crate::types::{AgentResult, ChatMessage, ResponseFormat};
+    use async_trait::async_trait;
+    use futures_core::Stream;
+    use serde_json::Value;
+    use std::pin::Pin;
+
+    struct DummyClient;
+
+    #[async_trait]
+    impl LlmClient for DummyClient {
+        async fn chat(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[Value],
+            _reasoning: Option<&ReasoningConfig>,
+            _response_format: Option<&ResponseFormat>,
+        ) -> AgentResult<Value> {
+            Ok(Value::Null)
+        }
+
+        async fn chat_stream(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[Value],
+            _reasoning: Option<&ReasoningConfig>,
+            _response_format: Option<&ResponseFormat>,
+        ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
+            unimplemented!("not used in builder tests")
+        }
+
+        fn capabilities(&self) -> crate::llm::LlmCapabilities {
+            crate::llm::LlmCapabilities::default()
+        }
+    }
+
+    #[test]
+    fn execution_max_turns_writes_per_run_config() {
+        let client: Arc<dyn LlmClient> = Arc::new(DummyClient);
+        let builder = AgentBuilder::new(client).execution_max_turns(200);
+        // The `config` field is private to this module, so the test can assert directly.
+        assert_eq!(builder.config.execution.max_turns, Some(200));
+    }
+
+    #[test]
+    fn execution_max_turns_defaults_to_none() {
+        let client: Arc<dyn LlmClient> = Arc::new(DummyClient);
+        let builder = AgentBuilder::new(client);
+        assert_eq!(builder.config.execution.max_turns, None);
     }
 }
