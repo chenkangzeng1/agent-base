@@ -96,20 +96,10 @@ impl PhiAgent {
         &self.runtime
     }
 
-    /// List all registered tools with their names and descriptions, sorted by name.
-    pub async fn list_tools(&self) -> Vec<(String, String)> {
+    /// List all registered tools with their metadata, sorted by name.
+    pub async fn list_tools(&self) -> Vec<agent_base::ToolMetadata> {
         let tools = self.runtime.tools_mut();
         let registry = tools.read().await;
-        let mut list: Vec<_> = registry
-            .definitions()
-            .into_iter()
-            .map(|def| {
-                let name = def["function"]["name"].as_str().unwrap_or("unknown").to_string();
-                let desc = def["function"]["description"].as_str().unwrap_or("").to_string();
-                (name, desc)
-            })
-            .collect();
-        list.sort_by(|a, b| a.0.cmp(&b.0));
-        list
+        registry.metadatas()
     }
 }

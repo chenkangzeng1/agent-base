@@ -339,8 +339,12 @@ async fn run_repl(
                     println!("  (no tools registered)");
                 } else {
                     println!("  Registered tools ({}):\n", tools.len());
-                    for (name, desc) in &tools {
-                        println!("  \x1b[1m{}\x1b[0m — {}", name, desc);
+                    for m in &tools {
+                        println!("  \x1b[1m{}\x1b[0m  {}  v{}", m.name, m.origin, m.version);
+                        println!("    {}", m.description);
+                        if !m.requirements.is_empty() {
+                            println!("    requirements: {}", m.requirements.join(", "));
+                        }
                     }
                 }
                 println!();

@@ -102,15 +102,15 @@ async fn main() -> anyhow::Result<()> {
         if input == "tools" {
             let tools = agent.list_tools().await;
             if tools.is_empty() {
-                println!("
-  (no tools registered)
-");
+                println!("\n  (no tools registered)\n");
             } else {
-                println!("
-  Registered tools ({}):
-", tools.len());
-                for (name, desc) in &tools {
-                    println!("  [1m{}[0m — {}", name, desc);
+                println!("\n  Registered tools ({}):\n", tools.len());
+                for m in &tools {
+                    println!("  \x1b[1m{}\x1b[0m  {}  v{}", m.name, m.origin, m.version);
+                    println!("    {}", m.description);
+                    if !m.requirements.is_empty() {
+                        println!("    requirements: {}", m.requirements.join(", "));
+                    }
                 }
                 println!();
             }

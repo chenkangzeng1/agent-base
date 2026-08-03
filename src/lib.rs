@@ -18,7 +18,7 @@ pub mod session;
 pub use agent_base::{
     AgentBuilder, AgentError, AgentResult, AgentRuntime, ApprovalHandler, ConsecutiveFailureRecovery, LlmClient,
     OpenAiClient, PlanItem, PlanStepStatus, ReasoningConfig, ReasoningEffort, RunOutcome, RuntimeEvent, SafetyConfig,
-    SessionId, Tool, ToolContext, ToolControlFlow, ToolOutput, TurnFactMiddleware, TurnToolLimitMiddleware,
+    SessionId, Tool, ToolContext, ToolControlFlow, ToolMetadata, ToolOutput, TurnFactMiddleware, TurnToolLimitMiddleware,
     UpdatePlanTool,
 };
 
