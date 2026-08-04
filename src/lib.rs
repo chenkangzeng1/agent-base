@@ -5,6 +5,7 @@
 //! **Does not bundle any tools** — tools are injected by consumers.
 
 pub mod agent;
+pub mod bridge;
 pub mod cli;
 pub mod config;
 pub mod event_log;
@@ -18,8 +19,8 @@ pub mod session;
 pub use agent_base::{
     AgentBuilder, AgentError, AgentResult, AgentRuntime, ApprovalHandler, ConsecutiveFailureRecovery, LlmClient,
     OpenAiClient, PlanItem, PlanStepStatus, ReasoningConfig, ReasoningEffort, RunOutcome, RuntimeEvent, SafetyConfig,
-    SessionId, Tool, ToolContext, ToolControlFlow, ToolMetadata, ToolOutput, TurnFactMiddleware, TurnToolLimitMiddleware,
-    UpdatePlanTool,
+    SessionId, Tool, ToolContext, ToolControlFlow, ToolMetadata, ToolOutput, TurnFactMiddleware,
+    TurnToolLimitMiddleware, UpdatePlanTool,
 };
 
 // ── phi-telemetry (metrics types and storage) ──
