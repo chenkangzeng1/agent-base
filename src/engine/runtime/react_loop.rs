@@ -131,6 +131,16 @@ impl RuntimeCore {
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
+        // Helper: emit RunFinished and return the error, so event
+        // listeners (e.g. serve.rs) don't hang on session/middleware
+        // failures that happen before the react loop starts.
+        let fail = |e: AgentError, f: &mut F| -> AgentResult<RunOutcome> {
+            let _ = f(RuntimeEvent::RunFinished {
+                session_id: session_id.clone(),
+            });
+            Err(e)
+        };
+
         // Reset cancel token for this turn
         self.reset_cancel();
 
@@ -145,40 +155,34 @@ impl RuntimeCore {
         );
         let mut event_rx = self.event_bus.subscribe();
         let tool_definitions = self.tool_engine.definitions().await;
-        tracing::debug!(
-            session_id = session_id.id,
-            tool_count = tool_definitions.len(),
-            "run_turn: got tool definitions"
-        );
 
-        tracing::debug!(
-            session_id = session_id.id,
-            "run_turn: applying user message middleware"
-        );
-        let user_input_owned = self
+        let user_input_owned = match self
             .apply_user_message_mw(&session_id, user_input.to_string())
-            .await?;
-        tracing::debug!(
-            session_id = session_id.id,
-            "run_turn: user message middleware applied"
-        );
+            .await
+        {
+            Ok(u) => u,
+            Err(e) => return fail(e, &mut on_event),
+        };
 
         // Reset nudge_count and turn_tool_calls for the new turn
-        self.with_session_mut(&session_id, |session| {
-            session.nudge_count = 0;
-            session.turn_tool_calls = 0;
-        })
-        .await?;
+        if let Err(e) = self
+            .with_session_mut(&session_id, |session| {
+                session.nudge_count = 0;
+                session.turn_tool_calls = 0;
+            })
+            .await
+        {
+            return fail(e, &mut on_event);
+        }
 
-        tracing::debug!(
-            session_id = session_id.id,
-            "run_turn: pushing user message to session"
-        );
-        self.with_session_mut(&session_id, |session| {
-            session.push_message(MessageRole::User, &user_input_owned);
-        })
-        .await?;
-        tracing::debug!(session_id = session_id.id, "run_turn: user message pushed");
+        if let Err(e) = self
+            .with_session_mut(&session_id, |session| {
+                session.push_message(MessageRole::User, &user_input_owned);
+            })
+            .await
+        {
+            return fail(e, &mut on_event);
+        }
 
         self.event_bus.emit(RuntimeEvent::Checkpoint {
             session_id: session_id.clone(),
@@ -205,7 +209,7 @@ impl RuntimeCore {
             )
             .await;
 
-        // Emit RunCancelled event if cancelled (unified emission point)
+        // Emit RunCancelled event if cancelled
         match &result {
             Ok((RunOutcome::Cancelled, _)) => {
                 on_event(RuntimeEvent::RunCancelled {
@@ -220,7 +224,7 @@ impl RuntimeCore {
             _ => {}
         }
 
-        // Turn 结束：清理临时消息（包括错误路径）
+        // Clean up ephemeral messages
         if let Err(e) = self
             .with_session_mut(&session_id, |session| {
                 session.remove_ephemeral_messages();
@@ -230,7 +234,21 @@ impl RuntimeCore {
             tracing::warn!(error = %e, "failed to clean up ephemeral messages");
         }
 
-        let (outcome, turn_count) = result?;
+        // Emit RunFinished on any non-cancelled error so event listeners
+        // know the turn ended.
+        let (outcome, turn_count) = match result {
+            Ok(tuple) => tuple,
+            Err(e) if e.is_cancelled() => {
+                return Err(e);
+            }
+            Err(e) => {
+                let _ = on_event(RuntimeEvent::RunFinished {
+                    session_id: session_id.clone(),
+                });
+                return Err(e);
+            }
+        };
+
         tracing::info!(
             session_id = session_id.id,
             turn_count,
@@ -1255,5 +1273,194 @@ fn truncate_for_context(s: &str) -> String {
         format!("{}...", truncated)
     } else {
         s.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::AgentBuilder;
+    use crate::engine::middleware::{Middleware, UserMessageCtx};
+    use crate::llm::{LlmClient, LlmCapabilities, StreamChunk};
+    use crate::types::{AgentError, AgentResult, ChatMessage, ResponseFormat, SessionId};
+    use async_trait::async_trait;
+    use futures_core::Stream;
+    use serde_json::Value;
+    use std::pin::Pin;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::task::{Context, Poll};
+
+    /// Minimal LLM client for tests that don't need LLM calls.
+    struct DummyClient;
+
+    #[async_trait]
+    impl LlmClient for DummyClient {
+        async fn chat(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[Value],
+            _reasoning: Option<&crate::ReasoningConfig>,
+            _response_format: Option<&ResponseFormat>,
+        ) -> AgentResult<Value> {
+            Ok(Value::Null)
+        }
+
+        async fn chat_stream(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[Value],
+            _reasoning: Option<&crate::ReasoningConfig>,
+            _response_format: Option<&ResponseFormat>,
+        ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
+            unimplemented!("not used")
+        }
+
+        fn capabilities(&self) -> LlmCapabilities {
+            LlmCapabilities::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn run_turn_emits_run_finished_on_session_not_found() {
+        let client: Arc<dyn LlmClient> = Arc::new(DummyClient);
+        let runtime = AgentBuilder::new(client)
+            .system_prompt("test")
+            .build()
+            .expect("build runtime");
+
+        // Use a SessionId that was never created — session lookup will fail.
+        let nonexistent = SessionId::new(99999);
+
+        let event_fired = Arc::new(AtomicBool::new(false));
+        let event_fired_clone = event_fired.clone();
+
+        let result = runtime
+            .run_turn(nonexistent.clone(), "test input", move |event| {
+                if let RuntimeEvent::RunFinished { session_id: _ } = &event {
+                    event_fired_clone.store(true, Ordering::SeqCst);
+                }
+                Ok(())
+            })
+            .await;
+
+        // Must return an error
+        assert!(result.is_err(), "run_turn should return Err for nonexistent session");
+        // Must have emitted RunFinished before returning
+        assert!(
+            event_fired.load(Ordering::SeqCst),
+            "run_turn must emit RunFinished before returning Err on session not found"
+        );
+    }
+
+    /// Middleware that always fails — used to test the middleware error path.
+    struct FailingMiddleware;
+
+    #[async_trait]
+    impl Middleware for FailingMiddleware {
+        async fn on_user_message(&self, _ctx: &mut UserMessageCtx) -> AgentResult<()> {
+            Err(AgentError::internal("middleware intentionally fails"))
+        }
+    }
+
+    #[tokio::test]
+    async fn run_turn_emits_run_finished_on_middleware_failure() {
+        let client: Arc<dyn LlmClient> = Arc::new(DummyClient);
+        let runtime = AgentBuilder::new(client)
+            .system_prompt("test")
+            .middleware(FailingMiddleware)
+            .build()
+            .expect("build runtime");
+
+        // Create a valid session — middleware failure happens AFTER session lookup.
+        let sid = runtime.create_session().await;
+
+        let event_fired = Arc::new(AtomicBool::new(false));
+        let event_fired_clone = event_fired.clone();
+
+        let result = runtime
+            .run_turn(sid, "test input", move |event| {
+                if let RuntimeEvent::RunFinished { session_id: _ } = &event {
+                    event_fired_clone.store(true, Ordering::SeqCst);
+                }
+                Ok(())
+            })
+            .await;
+
+        assert!(result.is_err(), "run_turn should return Err when middleware fails");
+        assert!(
+            event_fired.load(Ordering::SeqCst),
+            "run_turn must emit RunFinished before returning Err on middleware failure"
+        );
+    }
+
+    /// LLM client whose stream immediately yields an error.
+    struct ErrorStreamClient;
+
+    #[async_trait]
+    impl LlmClient for ErrorStreamClient {
+        async fn chat(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[Value],
+            _reasoning: Option<&crate::ReasoningConfig>,
+            _response_format: Option<&ResponseFormat>,
+        ) -> AgentResult<Value> {
+            Ok(Value::Null)
+        }
+
+        async fn chat_stream(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[Value],
+            _reasoning: Option<&crate::ReasoningConfig>,
+            _response_format: Option<&ResponseFormat>,
+        ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
+            // Return a stream that immediately yields an error then ends.
+            struct ErrorStream;
+            impl Stream for ErrorStream {
+                type Item = AgentResult<StreamChunk>;
+                fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+                    Poll::Ready(Some(Err(AgentError::internal("simulated LLM error"))))
+                }
+            }
+            Ok(Box::pin(ErrorStream))
+        }
+
+        fn capabilities(&self) -> LlmCapabilities {
+            LlmCapabilities::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn run_turn_emits_run_finished_on_llm_error() {
+        let client: Arc<dyn LlmClient> = Arc::new(ErrorStreamClient);
+        let runtime = AgentBuilder::new(client)
+            .system_prompt("test")
+            .build()
+            .expect("build runtime");
+
+        let sid = runtime.create_session().await;
+
+        let event_fired = Arc::new(AtomicBool::new(false));
+        let event_fired_clone = event_fired.clone();
+
+        let result = runtime
+            .run_turn(sid, "test input", move |event| {
+                if let RuntimeEvent::RunFinished { session_id: _ } = &event {
+                    event_fired_clone.store(true, Ordering::SeqCst);
+                }
+                Ok(())
+            })
+            .await;
+
+        // LLM errors should still emit RunFinished so event listeners don't hang.
+        assert!(
+            event_fired.load(Ordering::SeqCst),
+            "run_turn must emit RunFinished when LLM returns an error"
+        );
+        // Note: the react loop may retry LLM errors, so the result might be Ok (retry succeeded
+        // via retry logic) or Err.  Either is fine — the key assertion is that RunFinished fires.
+        let _ = result;
     }
 }
