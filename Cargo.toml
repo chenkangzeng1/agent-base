@@ -1,6 +1,6 @@
 [package]
 name = "agent-base"
-version = "0.1.9"
+version = "0.1.10"
 edition = "2024"
 description = "A lightweight Agent Runtime Kernel for building AI agents in Rust"
 license = "MIT"
