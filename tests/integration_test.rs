@@ -7,7 +7,8 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use agent_base::{
-    AgentResult, ChatMessage, LlmCapabilities, LlmClient, ReasoningConfig, ReasoningEffort, ResponseFormat, StreamChunk,
+    AgentResult, ChatMessage, LlmCapabilities, LlmClient, ReasoningConfig, ReasoningEffort, ResponseFormat,
+    StreamChunk, Tool, ToolContext, ToolControlFlow, ToolOutput,
 };
 use async_trait::async_trait;
 use futures_core::Stream;
@@ -147,4 +148,64 @@ fn test_config_default_values() {
     assert_eq!(config.model, "opus");
     assert!(config.enable_thinking);
     assert_eq!(config.thinking_budget, Some(32000));
+}
+
+// ── Tool metadata ──
+
+struct CustomTool;
+
+#[async_trait]
+impl Tool for CustomTool {
+    fn name(&self) -> &'static str {
+        "custom_tool"
+    }
+
+    fn definition(&self) -> Value {
+        serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": "custom_tool",
+                "description": "A user-defined custom tool",
+                "parameters": { "type": "object", "properties": {} }
+            }
+        })
+    }
+
+    async fn call(&self, _args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
+        Ok(ToolOutput { summary: "ok".into(), raw: None, control_flow: ToolControlFlow::Continue, truncation: None })
+    }
+}
+
+#[test]
+fn test_list_tools_returns_metadata() {
+    let client = Arc::new(MockLlmClient);
+    let builder = base_agent_builder(client)
+        .system_prompt("You are a helpful assistant.")
+        .register_tool(agent_base::UpdatePlanTool::new())
+        .register_tool(CustomTool);
+    let config = PhiAgentConfig {
+        model: "test-model".into(),
+        enable_thinking: false,
+        thinking_budget: None,
+        thinking_effort: ReasoningEffort::Medium,
+        safety: SafetyConfig::default(),
+        max_turns: Some(100),
+    };
+    let agent = phi_agent::PhiAgent::build(builder, config).expect("build agent");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let tools = rt.block_on(agent.list_tools());
+
+    assert!(!tools.is_empty(), "should return at least one tool");
+
+    // Crate-backed tool
+    let update_plan = tools.iter().find(|t| t.name == "update_plan").expect("update_plan should be registered");
+    assert_eq!(update_plan.origin, "agent-base", "framework tool should report its crate origin");
+    assert!(!update_plan.version.is_empty(), "framework tool should report a version");
+    assert!(update_plan.version != "unknown", "framework tool version should not be 'unknown'");
+
+    // Custom tool
+    let custom = tools.iter().find(|t| t.name == "custom_tool").expect("custom_tool should be registered");
+    assert_eq!(custom.origin, "custom", "user-defined tool origin should be 'custom'");
+    assert_eq!(custom.version, "unknown", "user-defined tool version should be 'unknown'");
+    assert!(custom.description.contains("user-defined"), "description should come from definition");
 }

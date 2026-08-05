@@ -137,6 +137,8 @@ pub enum SubCommand {
         #[arg(long)]
         lib: bool,
     },
+    /// Start the bridge server for SDK consumption (stdio NDJSON protocol).
+    Serve,
 }
 
 #[derive(Subcommand, Debug)]

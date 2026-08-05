@@ -1,6 +1,7 @@
 mod approval;
 mod args;
 mod init;
+mod serve;
 mod tools;
 
 use std::sync::Arc;
@@ -30,6 +31,7 @@ async fn main() -> Result<()> {
         match cmd {
             SubCommand::Init { name, lib } => return init::run(name, *lib),
             SubCommand::Metrics { cmd } => return handle_metrics(cmd, &args),
+            SubCommand::Serve => return serve::run().await,
         }
     }
 

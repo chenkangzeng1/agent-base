@@ -497,10 +497,8 @@ mod tests {
     async fn test_default_threshold_fires_on_long_conversation() {
         // Guards against the "wired but never fires" regression: the default
         // trigger_tokens must compress a realistic long tool-heavy conversation.
-        let client = Arc::new(MockClient {
-            summary: "Earlier context summarised.".to_string(),
-            calls: AtomicUsize::new(0),
-        });
+        let client =
+            Arc::new(MockClient { summary: "Earlier context summarised.".to_string(), calls: AtomicUsize::new(0) });
         let mw = SummarizingMiddleware::new(client.clone()); // default config
 
         let mut messages = vec![ChatMessage::system("sys")];
@@ -510,11 +508,8 @@ mod tests {
             messages.push(ChatMessage::user(format!("q{i} {chunk}")));
             messages.push(ChatMessage::assistant(format!("a{i}")));
         }
-        let mut ctx = PreLlmCtx {
-            session_id: agent_base::SessionId { id: 1, external_id: None },
-            messages,
-            tools: vec![],
-        };
+        let mut ctx =
+            PreLlmCtx { session_id: agent_base::SessionId { id: 1, external_id: None }, messages, tools: vec![] };
         let before = ctx.messages.len();
         assert!(before > 42, "test fixture must exceed the message-count gate");
         mw.on_pre_llm(&mut ctx).await.unwrap();
@@ -526,10 +521,7 @@ mod tests {
         );
         // Compression must have actually invoked the summarizer LLM (not just passed
         // the message-count gate while the token estimate stayed at/below the threshold).
-        assert!(
-            client.calls.load(Ordering::SeqCst) >= 1,
-            "summarizer must be invoked for a long conversation"
-        );
+        assert!(client.calls.load(Ordering::SeqCst) >= 1, "summarizer must be invoked for a long conversation");
         // Summary injected as the first message after the system prompt.
         assert!(matches!(ctx.messages[1], ChatMessage::User { .. }));
     }

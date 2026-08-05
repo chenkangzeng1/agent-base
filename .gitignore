@@ -31,3 +31,4 @@ deploy/
 
 # Internal design docs (root-level only; en/ zh/ guides are public)
 docs/*.md
+docs/superpowers/
