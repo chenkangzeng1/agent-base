@@ -48,7 +48,7 @@ General-purpose AI Agent Framework in Rust — simple, pure, predictable.
 
     ---
 
-    Every turn logged, every decision traced, built-in JSONL logging, session metrics, and structured tracing — know exactly what your agent did and why, backed by rigorous test coverage you can trust.
+    Every run logged, every decision traced, built-in JSONL logging, session metrics, and structured tracing — know exactly what your agent did and why, backed by rigorous test coverage you can trust.
 
 </div>
 
