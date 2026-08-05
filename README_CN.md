@@ -25,37 +25,23 @@ phi-agent 是一组独立 crate 的成员：
 
 ## 架构
 
-```
-                      ┌─────────────────────┐
-                      │     agent-base       │
-                      │  Tool trait · 运行时  │
-                      │  LLM 客户端 · 事件     │
-                      └──────────┬──────────┘
-                                 │
-          ┌──────────────────────┼──────────────────────┐
-          │                      │                      │
-┌─────────▼─────────┐  ┌────────▼────────┐  ┌──────────▼──────────┐
-│    agent-works     │  │   phi-tools     │  │     你的工具         │
-│  MCP · Skills      │  │ LocalShellTool  │  │  自定义 Tool 实现    │
-│  Focus             │  │                 │  │                     │
-└─────────┬─────────┘  └────────┬────────┘  └──────────┬──────────┘
-          │                      │                      │
-          └──────────────────────┼──────────────────────┘
-                                 │
-                      ┌──────────▼──────────┐
-                      │     phi-agent        │
-                      │  Builder 工厂        │
-                      │  渲染器 (3 种)       │
-                      │  配置 · 会话管理     │
-                      │  CLI (phi)            │
-                      └──────────┬──────────┘
-                                 │
-                    ┌────────────┼────────────┐
-                    │            │            │
-              ┌─────▼────┐ ┌────▼─────┐ ┌────▼─────┐
-              │ Terminal  │ │  JSON    │ │   Web    │
-              │   REPL    │ │  Stream  │ │  后端     │
-              └───────────┘ └──────────┘ └──────────┘
+```mermaid
+graph TB
+    AB[agent-base<br/>Tool trait · 运行时<br/>LLM 客户端 · 事件]
+
+    AB --> AW[agent-works<br/>MCP · Skills · Focus]
+    AB --> PT[phi-tools<br/>LocalShellTool]
+    AB --> YT[你的工具<br/>自定义 Tool 实现]
+
+    AW --> PA
+    PT --> PA
+    YT --> PA
+
+    PA[phi-agent<br/>Builder 工厂<br/>渲染器 · 配置 · 会话管理<br/>CLI binary]
+
+    PA --> Terminal[Terminal REPL]
+    PA --> JSON[JSON Stream]
+    PA --> Web[Web 后端]
 ```
 
 **核心理念**：phi-agent 本身**不内置**任何工具。它提供 agent builder 工厂、渲染器、配置解析和会话管理——工具由消费方注入。
