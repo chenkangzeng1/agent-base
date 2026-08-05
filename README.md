@@ -25,37 +25,22 @@ phi-agent is part of a family of independent crates:
 
 ## Architecture
 
-```
-                      ┌─────────────────────┐
-                      │     agent-base       │
-                      │  Tool trait · Runtime │
-                      │  LLM clients · Events  │
-                      └──────────┬──────────┘
-                                 │
-          ┌──────────────────────┼──────────────────────┐
-          │                      │                      │
-┌─────────▼─────────┐  ┌────────▼────────┐  ┌──────────▼──────────┐
-│    agent-works     │  │   phi-tools     │  │    your-tools       │
-│  MCP · Skills      │  │ LocalShellTool  │  │ Custom Tool impls   │
-│  Focus             │  │                 │  │                     │
-└─────────┬─────────┘  └────────┬────────┘  └──────────┬──────────┘
-          │                      │                      │
-          └──────────────────────┼──────────────────────┘
-                                 │
-                      ┌──────────▼──────────┐
-                      │     phi-agent        │
-                      │  Builder factory     │
-                      │  Renderers (3)       │
-                      │  Config · Session    │
-                      │  CLI (phi)            │
-                      └──────────┬──────────┘
-                                 │
-                    ┌────────────┼────────────┐
-                    │            │            │
-              ┌─────▼────┐ ┌────▼─────┐ ┌────▼─────┐
-              │ Terminal  │ │  JSON    │ │   Web    │
-              │   REPL    │ │  Stream  │ │ Backend  │
-              └───────────┘ └──────────┘ └──────────┘
+```mermaid
+graph TB
+    AB[agent-base<br/>Tool trait · Runtime<br/>LLM clients · Events]
+
+    AB --> AW[agent-works<br/>MCP · Skills · Focus]
+    AB --> PT[phi-tools<br/>LocalShellTool]
+    AB --> YT[your-tools<br/>Custom Tool impls]
+
+    AW --> PA[phi-agent<br/>Builder factory<br/>Renderers · Config · Session<br/>CLI binary]
+
+    PT --> PA
+    YT --> PA
+
+    PA --> Terminal[Terminal REPL]
+    PA --> JSON[JSON Stream]
+    PA --> Web[Web Backend]
 ```
 
 **Core principle**: phi-agent itself does **not** bundle any tools. It provides the agent builder factory, renderers, config resolution, and session management — tools are injected by consumers.

@@ -22,33 +22,33 @@ General-purpose AI Agent Framework in Rust — simple, pure, predictable.
 
 <div class="grid cards" markdown>
 
--   :simple-rust:{ .lg .middle } **Pure Rust**
+-   :material-rocket-launch-outline:{ .lg .middle } **Native Performance**
 
     ---
 
-    Async, type-safe, zero-cost abstractions. A single binary that runs from cloud to edge.
+    Built on Rust, zero VM overhead. Instant response, ultra-low latency under high concurrency — your agent is always online, blazing fast.
 
--   :material-lightbulb-on-outline:{ .lg .middle } **Simple**
+-   :material-lightbulb-on-outline:{ .lg .middle } **Easy to Use**
 
     ---
 
-    No hidden state, no magic. Explicit control flow — readable, traceable, trustworthy.
+    A tool is just 3 methods: `name()`, `definition()`, `call()` — no hidden agents, no magic, transparent logic, fully under your control.
 
 </div>
 
 <div class="grid cards" markdown>
 
--   :material-toy-brick-outline:{ .lg .middle } **Your Rules**
+-   :material-puzzle-outline:{ .lg .middle } **You're in Control**
 
     ---
 
-    Zero built-in tools. Implement the `Tool` trait, register what you need, own your capabilities.
+    Zero built-in tools, register on demand, freely integrate any LLM with no vendor lock-in — tools and flows are entirely in your hands.
 
--   :material-chart-line:{ .lg .middle } **Observable**
+-   :material-chart-line:{ .lg .middle } **Fully Observable**
 
     ---
 
-    Built-in turn logging, metrics, and tracing. Every decision is recorded, every outcome measurable.
+    Every turn logged, every decision traced, built-in JSONL logging, session metrics, and structured tracing — know exactly what your agent did and why, backed by rigorous test coverage you can trust.
 
 </div>
 
@@ -56,14 +56,19 @@ General-purpose AI Agent Framework in Rust — simple, pure, predictable.
 
 ## Architecture
 
-``` title="Dependency Chain"
-agent-base (runtime kernel + Tool trait)
-    ↑
-agent-works (MCP, Skills, Focus)
-    ↑
-phi-agent (lib) ← framework, no tools
-    ↑
-Your App (CLI, web, etc.) ← you register tools here
+```mermaid
+graph TB
+    AB[agent-base<br/>Runtime kernel<br/>Tool trait · LLM clients]
+
+    AB --> AW[agent-works<br/>MCP · Skills · Focus]
+    AB --> PT[phi-tools<br/>LocalShellTool]
+    AB --> YT[your-tools<br/>Custom Tool impls]
+
+    AW --> PA
+    PT --> PA
+    YT --> PA
+
+    PA[phi-agent<br/>Builder factory · Renderers<br/>Config · Session · CLI]
 ```
 
 Each crate is a separate repository under [hibuka-labs](https://github.com/hibuka-labs). All built on Rust's async runtime with `Arc<dyn LlmClient>` for provider abstraction.

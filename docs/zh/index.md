@@ -22,33 +22,33 @@ Rust 通用 AI Agent 框架 — 简单、纯粹、可预测。
 
 <div class="grid cards" markdown>
 
--   :simple-rust:{ .lg .middle } **纯 Rust**
+-   :material-rocket-launch-outline:{ .lg .middle } **极致性能**
 
     ---
 
-    异步、类型安全、零成本抽象。一个二进制，从云端到边缘随处运行。
+    基于 Rust 构建，零虚拟机开销，即刻响应，高并发下保持极低延迟——Agent 始终在线，极速响应。
 
--   :material-lightbulb-on-outline:{ .lg .middle } **简单**
+-   :material-lightbulb-on-outline:{ .lg .middle } **简单易用**
 
     ---
 
-    无隐藏状态，无黑魔法。显式控制流 — 可读、可追踪、可信赖。
+    一个工具只需 3 个方法：`name()`、`definition()`、`call()`——没有隐藏 Agent，没有黑魔法，逻辑透明，尽在掌握。
 
 </div>
 
 <div class="grid cards" markdown>
 
--   :material-toy-brick-outline:{ .lg .middle } **你说了算**
+-   :material-puzzle-outline:{ .lg .middle } **你说了算**
 
     ---
 
-    零内置工具。实现 `Tool` trait，按需注册，能力由你掌控。
+    零内置工具，按需注册，LLM 自由接入，拒绝厂商锁定——工具与流程，皆由你掌控。
 
--   :material-chart-line:{ .lg .middle } **可观测**
+-   :material-chart-line:{ .lg .middle } **全程可观测**
 
     ---
 
-    内置对话日志、指标采集、链路追踪。每个决策有记录，每次结果可度量。
+    每轮对话有日志，每次决策可追溯，内置 JSONL 日志、会话指标、结构化追踪——行为与动机一目了然，高覆盖测试兜底，每次运行都值得信赖。
 
 </div>
 
@@ -56,14 +56,19 @@ Rust 通用 AI Agent 框架 — 简单、纯粹、可预测。
 
 ## 架构
 
-``` title="依赖链"
-agent-base (运行时内核 + Tool trait)
-    ↑
-agent-works (MCP, Skills, Focus)
-    ↑
-phi-agent (lib) ← 框架层，不含工具
-    ↑
-你的应用 (CLI, Web 等) ← 在这里注册工具
+```mermaid
+graph TB
+    AB[agent-base<br/>运行时内核<br/>Tool trait · LLM 客户端]
+
+    AB --> AW[agent-works<br/>MCP · Skills · Focus]
+    AB --> PT[phi-tools<br/>LocalShellTool]
+    AB --> YT[your-tools<br/>自定义工具实现]
+
+    AW --> PA
+    PT --> PA
+    YT --> PA
+
+    PA[phi-agent<br/>Builder 工厂 · 渲染器<br/>配置 · 会话 · CLI]
 ```
 
 每个 crate 都是 [hibuka-labs](https://github.com/hibuka-labs) 下的独立仓库。基于 Rust 异步运行时，通过 `Arc<dyn LlmClient>` 实现 LLM 提供商抽象。

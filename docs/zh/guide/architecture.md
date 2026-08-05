@@ -20,14 +20,23 @@ phi-agent 与依赖 crate 之间的关系，以及关键设计决策。
 
 ## 依赖链
 
-```
-agent-base (运行时内核 + Tool trait)
-    ↑
-agent-works (MCP, Skills, Focus)
-    ↑
-phi-agent (lib) ← 框架层，不含工具
-    ↑
-phi (bin) ← CLI，在这里注册工具
+```mermaid
+graph TB
+    AB[agent-base<br/>运行时内核<br/>Tool trait · LLM 客户端 · Events]
+
+    AB --> AW[agent-works<br/>MCP · Skills · Focus]
+    AB --> PT[phi-tools<br/>LocalShellTool]
+    AB --> YT[your-tools<br/>自定义工具实现]
+    AB --> PTEL[phi-telemetry<br/>指标采集 · 成本追踪]
+    AB --> LOG[log-core<br/>结构化日志]
+
+    AW --> PA
+    PT --> PA
+    YT --> PA
+    PTEL -.-> PA
+    LOG -.-> PA
+
+    PA[phi-agent<br/>Builder 工厂 · 渲染器<br/>配置 · 会话 · CLI]
 ```
 
 ## 各 Crate 职责
@@ -57,6 +66,45 @@ phi (bin) ← CLI，在这里注册工具
 - `phi` CLI — `cargo install phi-agent`
 - `phi init` / `phi init --lib` — 项目脚手架
 - `phi metrics` — 会话观测数据查看
+
+## 可观测性
+
+phi-agent 自动采集结构化指标。每个 session 写入 `session_metrics.json`：
+
+- **每轮**：token 用量、延迟分解（TTFT、LLM、工具）、工具调用、结果、thinking
+- **每会话**：总计、P50/P95/P99 延迟、工具分布、错误率、费用估算
+- **自定义扩展**：业务逻辑通过 `custom` 字段注入数据
+
+```bash
+# 内置 CLI
+phi metrics list               # 最近会话列表
+phi metrics show <session_id>  # 详细分解
+phi metrics last               # 最新会话
+```
+
+```json
+// session_metrics.json — 示例
+{
+  "session_id": "20260729_abc12345",
+  "model": "claude-sonnet",
+  "total_turns": 5,
+  "total_input_tokens": 15000,
+  "total_output_tokens": 12000,
+  "estimated_cost": 0.18,
+  "p50_turn_ms": 32000,
+  "p95_turn_ms": 52000,
+  "tool_breakdown": { "shell": 5, "check_quality": 3 },
+  "outcome": "completed",
+  "custom": { "product": "phi-bard", "prompt_version": "v3" }
+}
+```
+
+环境变量：
+
+| 变量 | 默认值 | 说明 |
+|------|--------|------|
+| `PHI_METRICS_ENABLED` | `true` | 设为 `false` 关闭指标采集 |
+| `PHI_NODE_ID` | `""` | 多节点部署时的节点标识 |
 
 ## 关键设计决策
 
