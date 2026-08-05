@@ -130,7 +130,9 @@ mod tests {
             self.inner.lock().unwrap().extend_from_slice(data);
             Ok(data.len())
         }
-        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
 
     impl SharedWriter {
@@ -167,9 +169,7 @@ mod tests {
 
     #[test]
     fn test_text_delta_produces_valid_json() {
-        let lines = render_one(RuntimeEvent::TextDelta {
-            session_id: session_id(), text: "hello".into(),
-        });
+        let lines = render_one(RuntimeEvent::TextDelta { session_id: session_id(), text: "hello".into() });
         assert_eq!(lines.len(), 1);
         let v: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
         assert_eq!(v["type"], "text_delta");
@@ -178,9 +178,7 @@ mod tests {
 
     #[test]
     fn test_thought_delta_produces_valid_json() {
-        let lines = render_one(RuntimeEvent::ThoughtDelta {
-            session_id: session_id(), text: "thinking...".into(),
-        });
+        let lines = render_one(RuntimeEvent::ThoughtDelta { session_id: session_id(), text: "thinking...".into() });
         let v: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
         assert_eq!(v["type"], "thought_delta");
     }
@@ -244,10 +242,7 @@ mod tests {
     fn test_user_event_structured() {
         let lines = render_one(RuntimeEvent::UserEvent {
             session_id: session_id(),
-            event: UserEvent::Structured {
-                event_type: "custom".into(),
-                data: serde_json::json!({"key": "value"}),
-            },
+            event: UserEvent::Structured { event_type: "custom".into(), data: serde_json::json!({"key": "value"}) },
         });
         let v: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
         assert_eq!(v["type"], "user_event");
@@ -279,9 +274,7 @@ mod tests {
 
     #[test]
     fn test_finish_turn_emits_summary() {
-        let lines = render_and_finish(&[
-            RuntimeEvent::TextDelta { session_id: session_id(), text: "hello".into() },
-        ]);
+        let lines = render_and_finish(&[RuntimeEvent::TextDelta { session_id: session_id(), text: "hello".into() }]);
         let last: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
         assert_eq!(last["type"], "turn_finished");
         assert!(last["duration_ms"].as_u64().is_some());
@@ -291,12 +284,8 @@ mod tests {
     #[test]
     fn test_tool_call_count_incremented() {
         let lines = render_and_finish(&[
-            RuntimeEvent::ToolCallStarted {
-                session_id: session_id(), tool_name: "a".into(), args_json: "{}".into(),
-            },
-            RuntimeEvent::ToolCallStarted {
-                session_id: session_id(), tool_name: "b".into(), args_json: "{}".into(),
-            },
+            RuntimeEvent::ToolCallStarted { session_id: session_id(), tool_name: "a".into(), args_json: "{}".into() },
+            RuntimeEvent::ToolCallStarted { session_id: session_id(), tool_name: "b".into(), args_json: "{}".into() },
         ]);
         let last: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
         assert_eq!(last["tool_call_count"], 2);

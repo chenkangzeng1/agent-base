@@ -77,7 +77,9 @@ mod tests {
             self.inner.lock().unwrap().extend_from_slice(data);
             Ok(data.len())
         }
-        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
 
     fn session_id() -> SessionId {

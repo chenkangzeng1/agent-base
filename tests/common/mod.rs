@@ -7,9 +7,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
-use agent_base::{
-    AgentResult, ChatMessage, LlmCapabilities, LlmClient, ReasoningConfig, ResponseFormat, StreamChunk,
-};
+use agent_base::{AgentResult, ChatMessage, LlmCapabilities, LlmClient, ReasoningConfig, ResponseFormat, StreamChunk};
 use async_trait::async_trait;
 use futures_core::Stream;
 use phi_agent::bridge::server::ProtocolServer;

@@ -276,7 +276,8 @@ mod tests {
 
     #[test]
     fn test_deserialize_tool_result_with_all_fields() {
-        let json = r#"{"type":"tool_result","call_id":"c1","summary":"done","raw":{"output":"hello"},"control_flow":"break"}"#;
+        let json =
+            r#"{"type":"tool_result","call_id":"c1","summary":"done","raw":{"output":"hello"},"control_flow":"break"}"#;
         let msg: IncomingMessage = serde_json::from_str(json).unwrap();
         if let IncomingMessage::ToolResult { call_id, summary, raw, control_flow } = &msg {
             assert_eq!(call_id, "c1");
@@ -293,11 +294,8 @@ mod tests {
     #[test]
     fn test_serialize_all_outgoing_variants() {
         // Hello
-        let msg = OutgoingMessage::Hello {
-            protocol_version: 1,
-            server_name: "phi".into(),
-            server_version: "0.2.6".into(),
-        };
+        let msg =
+            OutgoingMessage::Hello { protocol_version: 1, server_name: "phi".into(), server_version: "0.2.6".into() };
         let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["type"], "hello");
         assert_eq!(json["protocol_version"], 1);
@@ -309,10 +307,7 @@ mod tests {
         assert_eq!(json["internal_id"], 42);
 
         // Event (flattened — inner "type" overrides the enum tag)
-        let msg = OutgoingMessage::Event {
-            seq: 1,
-            event: serde_json::json!({"type":"text_delta","text":"hi"}),
-        };
+        let msg = OutgoingMessage::Event { seq: 1, event: serde_json::json!({"type":"text_delta","text":"hi"}) };
         let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["seq"], 1);
         assert_eq!(json["text"], "hi"); // flattened field present
@@ -353,11 +348,7 @@ mod tests {
         assert!(json.get("turns").is_none());
 
         // Error
-        let msg = OutgoingMessage::Error {
-            code: "E001".into(),
-            message: "bad request".into(),
-            detail: None,
-        };
+        let msg = OutgoingMessage::Error { code: "E001".into(), message: "bad request".into(), detail: None };
         let json = serde_json::to_value(&msg).unwrap();
         assert_eq!(json["type"], "error");
         assert!(json.get("detail").is_none());

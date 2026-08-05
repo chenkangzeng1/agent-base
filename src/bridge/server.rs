@@ -28,11 +28,7 @@ pub struct ProtocolServer {
 
 impl ProtocolServer {
     pub fn new(runtime: AgentRuntime) -> Self {
-        Self {
-            runtime,
-            slot: Arc::new(Mutex::new(None)),
-            sessions: Arc::new(Mutex::new(HashMap::new())),
-        }
+        Self { runtime, slot: Arc::new(Mutex::new(None)), sessions: Arc::new(Mutex::new(HashMap::new())) }
     }
 
     pub fn from_builder(builder: AgentBuilder) -> Result<Self, agent_base::AgentError> {
@@ -71,10 +67,7 @@ impl ProtocolServer {
     /// If ``external_id`` is ``Some`` and a session with that id already
     /// exists, it is reused (preserving conversation history).  Otherwise
     /// a new session is created and registered.
-    pub async fn get_or_create_session(
-        &self,
-        external_id: Option<String>,
-    ) -> SessionId {
+    pub async fn get_or_create_session(&self, external_id: Option<String>) -> SessionId {
         if let Some(ref ext) = external_id {
             let mut sessions = self.sessions.lock().await;
             if let Some(sid) = sessions.get(ext) {

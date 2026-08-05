@@ -70,10 +70,7 @@ mod tests {
     /// All env-var tests run sequentially in one function to avoid races.
     #[test]
     fn test_env_var_resolution_chain() {
-        let vars = &[
-            "LLM_API_KEY", "OPENAI_API_KEY", "LLM_MODEL", "OPENAI_MODEL",
-            "LLM_BASE_URL", "OPENAI_BASE_URL",
-        ];
+        let vars = &["LLM_API_KEY", "OPENAI_API_KEY", "LLM_MODEL", "OPENAI_MODEL", "LLM_BASE_URL", "OPENAI_BASE_URL"];
         let _guard = EnvGuard::new(vars);
 
         let set = |k: &str, v: &str| unsafe { std::env::set_var(k, v) };

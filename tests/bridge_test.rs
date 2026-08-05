@@ -61,9 +61,7 @@ async fn test_br_04_empty_slot_returns_error() {
     mock.set_tool_call("test_tool", &json!({"arg": "value"})).await;
 
     let server = build_server(mock.clone());
-    server
-        .register_tool("test_tool".to_string(), "A test tool".to_string(), json!({}))
-        .await;
+    server.register_tool("test_tool".to_string(), "A test tool".to_string(), json!({})).await;
 
     let (sid, _) = server.create_session(None).await;
     let mut event_rx = server.subscribe_events();
@@ -79,10 +77,7 @@ async fn test_br_04_empty_slot_returns_error() {
     let events = collect_events(&mut event_rx).await;
     // Should still finish (run_finished) — the tool error is handled,
     // not a panic
-    assert!(
-        events.contains(&"run_finished".to_string()),
-        "should finish even with empty slot: {events:?}"
-    );
+    assert!(events.contains(&"run_finished".to_string()), "should finish even with empty slot: {events:?}");
 }
 
 /// BR-05: Session ID reuse — same external_id returns same session.
@@ -95,21 +90,15 @@ async fn test_br_05_session_id_reuse() {
     let server = build_server(mock);
 
     // First call creates a new session
-    let sid1 = server
-        .get_or_create_session(Some("shared-session".to_string()))
-        .await;
+    let sid1 = server.get_or_create_session(Some("shared-session".to_string())).await;
 
     // Second call with same external_id should return the SAME session
-    let sid2 = server
-        .get_or_create_session(Some("shared-session".to_string()))
-        .await;
+    let sid2 = server.get_or_create_session(Some("shared-session".to_string())).await;
 
     assert_eq!(sid1.id, sid2.id, "same external_id should reuse session");
 
     // Different external_id should create a NEW session
-    let sid3 = server
-        .get_or_create_session(Some("other-session".to_string()))
-        .await;
+    let sid3 = server.get_or_create_session(Some("other-session".to_string())).await;
 
     assert_ne!(sid3.id, sid1.id, "different external_id should create new session");
 
@@ -133,9 +122,7 @@ async fn test_br_06_sequential_tool_calls() {
     mock.set_tool_call("test_tool", &json!({"step": 1})).await;
 
     let server = build_server(mock.clone());
-    server
-        .register_tool("test_tool".to_string(), "Tool 1".to_string(), json!({}))
-        .await;
+    server.register_tool("test_tool".to_string(), "Tool 1".to_string(), json!({})).await;
 
     let sid = server.get_or_create_session(None).await;
     let mut event_rx = server.subscribe_events();
@@ -150,10 +137,7 @@ async fn test_br_06_sequential_tool_calls() {
     });
 
     let events1 = collect_events(&mut event_rx).await;
-    assert!(
-        events1.contains(&"run_finished".to_string()),
-        "first turn should finish: {events1:?}"
-    );
+    assert!(events1.contains(&"run_finished".to_string()), "first turn should finish: {events1:?}");
 
     // Second tool call — should work even after the first consumed the slot
     mock.set_tool_call("test_tool", &json!({"step": 2})).await;
@@ -168,10 +152,7 @@ async fn test_br_06_sequential_tool_calls() {
     });
 
     let events2 = collect_events(&mut event_rx2).await;
-    assert!(
-        events2.contains(&"run_finished".to_string()),
-        "second turn should finish: {events2:?}"
-    );
+    assert!(events2.contains(&"run_finished".to_string()), "second turn should finish: {events2:?}");
 
     // Verify both turns completed — sequential calls don't interfere
     let finished1 = events1.iter().any(|t| t == "run_finished");

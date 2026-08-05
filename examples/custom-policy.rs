@@ -19,9 +19,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::task::{Context, Poll};
 
 use agent_base::{
-    AgentResult, ApprovalRequest, ChatMessage, LlmCapabilities, LlmClient, Middleware,
-    PostLlmCtx, ReasoningConfig, ResponseFormat, RuntimeEvent, StreamChunk, Tool,
-    ToolContext, ToolControlFlow, ToolOutput, ToolPolicy,
+    AgentResult, ApprovalRequest, ChatMessage, LlmCapabilities, LlmClient, Middleware, PostLlmCtx, ReasoningConfig,
+    ResponseFormat, RuntimeEvent, StreamChunk, Tool, ToolContext, ToolControlFlow, ToolOutput, ToolPolicy,
 };
 use async_trait::async_trait;
 use futures_core::Stream;
@@ -115,9 +114,7 @@ impl LlmClient for MockLlmClient {
             }))));
         } else {
             // Second call: emit text
-            items.push_back(Ok(StreamChunk::Text(
-                "All hooks and events demonstrated!".to_string(),
-            )));
+            items.push_back(Ok(StreamChunk::Text("All hooks and events demonstrated!".to_string())));
         }
         items.push_back(Ok(StreamChunk::Stop));
         Ok(Box::pin(QueueStream { items }))
@@ -141,7 +138,9 @@ struct EchoTool;
 
 #[async_trait]
 impl Tool for EchoTool {
-    fn name(&self) -> &'static str { "echo" }
+    fn name(&self) -> &'static str {
+        "echo"
+    }
 
     fn definition(&self) -> Value {
         json!({
@@ -199,9 +198,7 @@ impl ToolPolicy for DemoPolicy {
     }
 
     /// 3. after_call — callback after successful execution
-    fn after_call(
-        &self, tool_name: &str, _args: &Value, result: &ToolOutput, _ctx: &ToolContext,
-    ) -> AgentResult<()> {
+    fn after_call(&self, tool_name: &str, _args: &Value, result: &ToolOutput, _ctx: &ToolContext) -> AgentResult<()> {
         self.after_count.fetch_add(1, Ordering::SeqCst);
         println!("  [ToolPolicy] after_call('{tool_name}') — result: {}", result.summary);
         Ok(())
@@ -221,15 +218,9 @@ impl Middleware for DemoMiddleware {
 
     async fn on_post_llm(&self, ctx: &mut PostLlmCtx) -> AgentResult<()> {
         if ctx.is_tool_call {
-            println!(
-                "  [Middleware] on_post_llm — is_tool_call=true, {} tool(s) requested",
-                ctx.tool_calls.len(),
-            );
+            println!("  [Middleware] on_post_llm — is_tool_call=true, {} tool(s) requested", ctx.tool_calls.len(),);
         } else {
-            println!(
-                "  [Middleware] on_post_llm — is_tool_call=false, text=\"{}\"",
-                ctx.full_text,
-            );
+            println!("  [Middleware] on_post_llm — is_tool_call=false, text=\"{}\"", ctx.full_text,);
         }
         Ok(())
     }
@@ -263,26 +254,26 @@ async fn main() -> anyhow::Result<()> {
             match &event {
                 RuntimeEvent::ToolCallStarted { tool_name, args_json, .. } => {
                     println!("  [Event] ToolCallStarted   — tool=\"{tool_name}\", args={args_json}");
-                }
+                },
                 RuntimeEvent::ToolCallFinished { tool_name, summary, .. } => {
                     println!("  [Event] ToolCallFinished  — tool=\"{tool_name}\", summary=\"{summary}\"");
-                }
+                },
                 RuntimeEvent::TextDelta { text, .. } => {
                     println!("  [Event] TextDelta         — \"{text}\"");
-                }
+                },
                 RuntimeEvent::AwaitingApproval { request, .. } => {
                     println!(
                         "  [Event] AwaitingApproval  — risk={:?}, title=\"{}\"",
                         request.risk_level, request.title,
                     );
-                }
+                },
                 RuntimeEvent::RunFinished { .. } => {
                     println!("  [Event] RunFinished");
-                }
+                },
                 RuntimeEvent::UserEvent { event: agent_base::UserEvent::Progress { text }, .. } => {
                     println!("  [Event] UserEvent(Progress) — \"{text}\"");
-                }
-                _ => {}
+                },
+                _ => {},
             }
             events.push(event);
             Ok(())
@@ -291,14 +282,8 @@ async fn main() -> anyhow::Result<()> {
 
     println!("\n--- Summary ---");
     println!("Total events captured: {}", events.len());
-    println!(
-        "ToolPolicy before_call count: {}",
-        policy.before_count.load(Ordering::SeqCst),
-    );
-    println!(
-        "ToolPolicy after_call count:  {}",
-        policy.after_count.load(Ordering::SeqCst),
-    );
+    println!("ToolPolicy before_call count: {}", policy.before_count.load(Ordering::SeqCst),);
+    println!("ToolPolicy after_call count:  {}", policy.after_count.load(Ordering::SeqCst),);
     println!("\nHook execution order:");
     println!("  on_user_message → on_post_llm → evaluate_approval → before_call →");
     println!("  ToolCallStarted → tool.call() → ToolCallFinished → after_call →");

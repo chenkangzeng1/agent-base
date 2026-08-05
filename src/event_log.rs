@@ -93,20 +93,14 @@ mod tests {
 
     #[test]
     fn test_event_to_value_text_delta() {
-        let v = event_to_value(&RuntimeEvent::TextDelta {
-            session_id: session_id(),
-            text: "hello".into(),
-        });
+        let v = event_to_value(&RuntimeEvent::TextDelta { session_id: session_id(), text: "hello".into() });
         assert_eq!(v["type"], "text_delta");
         assert_eq!(v["text"], "hello");
     }
 
     #[test]
     fn test_event_to_value_thought_delta() {
-        let v = event_to_value(&RuntimeEvent::ThoughtDelta {
-            session_id: session_id(),
-            text: "thinking".into(),
-        });
+        let v = event_to_value(&RuntimeEvent::ThoughtDelta { session_id: session_id(), text: "thinking".into() });
         assert_eq!(v["type"], "thought_delta");
     }
 
@@ -135,17 +129,13 @@ mod tests {
 
     #[test]
     fn test_event_to_value_run_finished() {
-        let v = event_to_value(&RuntimeEvent::RunFinished {
-            session_id: session_id(),
-        });
+        let v = event_to_value(&RuntimeEvent::RunFinished { session_id: session_id() });
         assert_eq!(v["type"], "run_finished");
     }
 
     #[test]
     fn test_event_to_value_run_cancelled() {
-        let v = event_to_value(&RuntimeEvent::RunCancelled {
-            session_id: session_id(),
-        });
+        let v = event_to_value(&RuntimeEvent::RunCancelled { session_id: session_id() });
         assert_eq!(v["type"], "run_cancelled");
     }
 
@@ -162,10 +152,7 @@ mod tests {
     fn test_event_to_value_user_event_structured() {
         let v = event_to_value(&RuntimeEvent::UserEvent {
             session_id: session_id(),
-            event: UserEvent::Structured {
-                event_type: "custom".into(),
-                data: serde_json::json!({"key": "value"}),
-            },
+            event: UserEvent::Structured { event_type: "custom".into(), data: serde_json::json!({"key": "value"}) },
         });
         assert_eq!(v["type"], "user_event");
         assert_eq!(v["event_type"], "custom");
@@ -175,10 +162,7 @@ mod tests {
 
     #[test]
     fn test_event_to_jsonl_returns_valid_json() {
-        let line = event_to_jsonl(&RuntimeEvent::TextDelta {
-            session_id: session_id(),
-            text: "hello".into(),
-        });
+        let line = event_to_jsonl(&RuntimeEvent::TextDelta { session_id: session_id(), text: "hello".into() });
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(v["type"], "text_delta");
     }
@@ -192,15 +176,11 @@ mod tests {
             RuntimeEvent::ToolCallFinished { session_id: session_id(), tool_name: "t".into(), summary: "s".into() },
             RuntimeEvent::RunFinished { session_id: session_id() },
             RuntimeEvent::RunCancelled { session_id: session_id() },
-            RuntimeEvent::UserEvent {
-                session_id: session_id(),
-                event: UserEvent::Progress { text: "t".into() },
-            },
+            RuntimeEvent::UserEvent { session_id: session_id(), event: UserEvent::Progress { text: "t".into() } },
         ];
         for e in &events {
             let line = event_to_jsonl(e);
-            assert!(serde_json::from_str::<serde_json::Value>(&line).is_ok(),
-                "Failed to parse JSONL for event");
+            assert!(serde_json::from_str::<serde_json::Value>(&line).is_ok(), "Failed to parse JSONL for event");
         }
     }
 
@@ -214,9 +194,7 @@ mod tests {
     fn test_save_turn_log_creates_file() {
         let tmp = TempDir::new().unwrap();
         let ctx = make_session_ctx(&tmp);
-        let events = vec![
-            RuntimeEvent::TextDelta { session_id: session_id(), text: "hello".into() },
-        ];
+        let events = vec![RuntimeEvent::TextDelta { session_id: session_id(), text: "hello".into() }];
         save_turn_log(&ctx, 1, &events, "test input").unwrap();
         let path = ctx.turn_path(1);
         assert!(path.exists());
@@ -228,9 +206,7 @@ mod tests {
     fn test_save_turn_log_contains_metadata() {
         let tmp = TempDir::new().unwrap();
         let ctx = make_session_ctx(&tmp);
-        let events = vec![
-            RuntimeEvent::TextDelta { session_id: session_id(), text: "hello".into() },
-        ];
+        let events = vec![RuntimeEvent::TextDelta { session_id: session_id(), text: "hello".into() }];
         save_turn_log(&ctx, 1, &events, "my input").unwrap();
         let content = std::fs::read_to_string(ctx.turn_path(1)).unwrap();
         let lines: Vec<&str> = content.lines().collect();
@@ -263,9 +239,7 @@ mod tests {
     fn test_save_turn_log_contains_turn_end_marker() {
         let tmp = TempDir::new().unwrap();
         let ctx = make_session_ctx(&tmp);
-        let events = vec![
-            RuntimeEvent::TextDelta { session_id: session_id(), text: "hello".into() },
-        ];
+        let events = vec![RuntimeEvent::TextDelta { session_id: session_id(), text: "hello".into() }];
         save_turn_log(&ctx, 1, &events, "input").unwrap();
         let content = std::fs::read_to_string(ctx.turn_path(1)).unwrap();
         let last_line = content.lines().last().unwrap();
@@ -278,12 +252,8 @@ mod tests {
     fn test_save_turn_log_appends() {
         let tmp = TempDir::new().unwrap();
         let ctx = make_session_ctx(&tmp);
-        let events1 = vec![
-            RuntimeEvent::TextDelta { session_id: session_id(), text: "turn1".into() },
-        ];
-        let events2 = vec![
-            RuntimeEvent::TextDelta { session_id: session_id(), text: "turn2".into() },
-        ];
+        let events1 = vec![RuntimeEvent::TextDelta { session_id: session_id(), text: "turn1".into() }];
+        let events2 = vec![RuntimeEvent::TextDelta { session_id: session_id(), text: "turn2".into() }];
         save_turn_log(&ctx, 1, &events1, "input1").unwrap();
         save_turn_log(&ctx, 1, &events2, "input2").unwrap();
         let content = std::fs::read_to_string(ctx.turn_path(1)).unwrap();

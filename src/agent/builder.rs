@@ -77,23 +77,32 @@ mod tests {
     #[async_trait]
     impl agent_base::LlmClient for StubClient {
         async fn chat(
-            &self, _messages: &[agent_base::ChatMessage], _tools: &[serde_json::Value],
+            &self,
+            _messages: &[agent_base::ChatMessage],
+            _tools: &[serde_json::Value],
             _reasoning: Option<&agent_base::ReasoningConfig>,
             _response_format: Option<&agent_base::ResponseFormat>,
         ) -> agent_base::AgentResult<serde_json::Value> {
             Ok(serde_json::json!({"choices":[{"message":{"content":"stub"}}]}))
         }
         async fn chat_stream(
-            &self, _messages: &[agent_base::ChatMessage], _tools: &[serde_json::Value],
+            &self,
+            _messages: &[agent_base::ChatMessage],
+            _tools: &[serde_json::Value],
             _reasoning: Option<&agent_base::ReasoningConfig>,
             _response_format: Option<&agent_base::ResponseFormat>,
-        ) -> agent_base::AgentResult<Pin<Box<dyn Stream<Item = agent_base::AgentResult<agent_base::StreamChunk>> + Send>>> {
+        ) -> agent_base::AgentResult<Pin<Box<dyn Stream<Item = agent_base::AgentResult<agent_base::StreamChunk>> + Send>>>
+        {
             Ok(Box::pin(EmptyStream))
         }
         fn capabilities(&self) -> agent_base::LlmCapabilities {
             agent_base::LlmCapabilities {
-                supports_streaming: true, supports_tools: true, supports_vision: false,
-                supports_thinking: true, max_context_tokens: Some(128_000), max_output_tokens: Some(16_384),
+                supports_streaming: true,
+                supports_tools: true,
+                supports_vision: false,
+                supports_thinking: true,
+                max_context_tokens: Some(128_000),
+                max_output_tokens: Some(16_384),
             }
         }
     }

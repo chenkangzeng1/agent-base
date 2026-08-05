@@ -17,11 +17,10 @@ pub mod session;
 // Only re-export the types consumers use most often.
 // For the full type set, import directly from agent-base.
 pub use agent_base::{
-    AgentBuilder, AgentError, AgentResult, AgentRuntime, ApprovalHandler, ApprovalRequest,
-    ConsecutiveFailureRecovery, LlmClient, Middleware, OpenAiClient, PlanItem, PlanStepStatus,
-    PostLlmCtx, PreLlmCtx, ReasoningConfig, ReasoningEffort, RunOutcome, RuntimeEvent, SafetyConfig,
-    SessionId, Tool, ToolContext, ToolControlFlow, ToolMetadata, ToolOutput, ToolPolicy,
-    TurnFactMiddleware, TurnToolLimitMiddleware, UpdatePlanTool, UserMessageCtx,
+    AgentBuilder, AgentError, AgentResult, AgentRuntime, ApprovalHandler, ApprovalRequest, ConsecutiveFailureRecovery,
+    LlmClient, Middleware, OpenAiClient, PlanItem, PlanStepStatus, PostLlmCtx, PreLlmCtx, ReasoningConfig,
+    ReasoningEffort, RunOutcome, RuntimeEvent, SafetyConfig, SessionId, Tool, ToolContext, ToolControlFlow,
+    ToolMetadata, ToolOutput, ToolPolicy, TurnFactMiddleware, TurnToolLimitMiddleware, UpdatePlanTool, UserMessageCtx,
 };
 
 // ── phi-telemetry (metrics types and storage) ──

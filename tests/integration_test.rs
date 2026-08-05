@@ -206,8 +206,7 @@ fn test_list_tools_returns_metadata() {
 
 fn build_test_agent() -> phi_agent::PhiAgent {
     let client = Arc::new(SimpleMockLlmClient);
-    let builder = base_agent_builder(client)
-        .system_prompt("You are a helpful assistant.");
+    let builder = base_agent_builder(client).system_prompt("You are a helpful assistant.");
     let config = PhiAgentConfig {
         model: "test-model".into(),
         enable_thinking: false,
@@ -261,6 +260,11 @@ fn test_phi_agent_list_tools_sorted() {
     let tools = rt.block_on(agent.list_tools());
     // Should be sorted by name
     for i in 1..tools.len() {
-        assert!(tools[i - 1].name <= tools[i].name, "tools should be sorted: {} > {}", tools[i - 1].name, tools[i].name);
+        assert!(
+            tools[i - 1].name <= tools[i].name,
+            "tools should be sorted: {} > {}",
+            tools[i - 1].name,
+            tools[i].name
+        );
     }
 }
