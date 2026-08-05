@@ -9,7 +9,7 @@ hide:
   phi-agent
 </h1>
 
-Rust 通用 AI Agent 框架 — 简单、纯粹、可预测。
+Rust 通用 AI Agent 框架 — 简单、纯粹、可预测，为你快速构建自己的 AI 应用。
 
 <a href="guide/getting-started/" class="md-button md-button--primary" style="margin-right: 0.5rem">
   :octicons-arrow-right-24: &nbsp; 快速开始

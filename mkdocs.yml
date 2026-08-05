@@ -1,5 +1,5 @@
 site_name: phi-agent
-site_description: General-purpose AI Agent Framework in Rust
+site_description: General-purpose Rust AI Agent Framework — simple, pure, predictable. Ship your AI apps faster.
 site_url: https://docs.phiagent.dev/
 repo_url: https://github.com/hibuka-labs/phi-agent
 repo_name: hibuka-labs/phi-agent

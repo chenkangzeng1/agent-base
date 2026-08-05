@@ -9,7 +9,7 @@ hide:
   phi-agent
 </h1>
 
-General-purpose AI Agent Framework in Rust — simple, pure, predictable.
+General-purpose Rust AI Agent Framework — simple, pure, predictable. Ship your AI apps faster.
 
 <a href="guide/getting-started/" class="md-button md-button--primary" style="margin-right: 0.5rem">
   :octicons-arrow-right-24: &nbsp; Get Started
