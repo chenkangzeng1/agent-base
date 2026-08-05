@@ -3,6 +3,8 @@
 //! Provides a mock LLM client, stream stubs, and helper functions
 //! used across multiple test files.
 
+#![allow(dead_code)]
+
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
