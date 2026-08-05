@@ -26,7 +26,7 @@ jobs:
 
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install cross-compiler (Linux ARM64)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
