@@ -43,7 +43,7 @@ graph TB
     PA --> Web[Web Backend]
 ```
 
-**Core principle**: phi-agent itself does **not** bundle any tools. It provides the agent builder factory, renderers, config resolution, and session management — tools are injected by consumers.
+**Core principle**: phi-agent ships with **zero** built-in tools. You define them, you register them. phi-agent discovers and manages them at runtime — listing, logging, and routing tool calls automatically.
 
 ## Why phi-agent
 
