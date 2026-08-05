@@ -1,6 +1,6 @@
 [package]
 name = "phi-agent"
-version = "0.2.6"
+version = "0.2.7"
 edition = "2024"
 description = "phi-agent — General-purpose AI Agent framework (builder factory, renderer, config, session management)"
 license = "MIT"
@@ -15,7 +15,7 @@ path = "src/bin/phi/main.rs"
 required-features = ["tools", "telemetry", "logging"]
 
 [dependencies]
-agent-base = "0.1.10"
+agent-base = "0.1.11"
 agent-works = "0.1.5"
 phi-tools = { version = "0.1.3", optional = true }
 phi-telemetry = { version = "0.1.4", optional = true }

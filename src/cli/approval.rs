@@ -62,7 +62,7 @@ mod tests {
         };
         let cancel = tokio_util::sync::CancellationToken::new();
         let decision = handler.approve(request, cancel).await.unwrap();
-        assert!(matches!(decision, ApprovalDecision::AllowAlways));
+        assert_eq!(decision, ApprovalDecision::AllowAlways);
     }
 
     #[tokio::test]
@@ -77,7 +77,7 @@ mod tests {
         };
         let cancel = tokio_util::sync::CancellationToken::new();
         let decision = handler.approve(request, cancel).await.unwrap();
-        assert!(matches!(decision, ApprovalDecision::Deny));
+        assert_eq!(decision, ApprovalDecision::Deny);
     }
 
     #[tokio::test]
@@ -92,6 +92,6 @@ mod tests {
         };
         let cancel = tokio_util::sync::CancellationToken::new();
         let decision = handler.approve(request, cancel).await.unwrap();
-        assert!(matches!(decision, ApprovalDecision::Deny));
+        assert_eq!(decision, ApprovalDecision::Deny);
     }
 }

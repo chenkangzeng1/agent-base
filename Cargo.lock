@@ -4,9 +4,9 @@ version = 4
 
 [[package]]
 name = "agent-base"
-version = "0.1.10"
+version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6cc8899683224528b5b1294ed40c009d5ae72b21e34ecebdc6f46c0a589f037"
+checksum = "8c04ec41fd2524130db3568473ba029442e8a2b29ddfc5adeb605c3c0cd81c40"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1142,7 +1142,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "phi-agent"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "agent-base",
  "agent-works",
