@@ -142,14 +142,23 @@ phi-agent/
 - **China-first prompt** — build_system_prompt_cn() for GFW-aware environments
 - **Browser tools separated** — kept on browser-tools branch, not on master
 
-### Pre-Push Checklist
+### Pre-Commit Checklist (MANDATORY)
+
+**Every commit MUST pass this before `git commit`:**
 
 ```bash
-cargo fmt --check && cargo clippy --all-targets -- -D warnings
+cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings 2>&1 | grep -v 'agent-base'
 ```
+
+- `cargo fmt --check` — if it reports diffs, fix them with `cargo fmt` (no `--check`), then re-check.
+- `cargo test` — all tests must pass (currently 108 tests).
+- `cargo clippy --all-targets -- -D warnings` — filter out agent-base warnings (from patched crate); only phi-agent warnings matter.
+- **Never skip these steps.** CI failures on fmt/clippy/test are unacceptable because they're always reproducible locally.
 
 If `cargo fmt` reports diffs, fix them: `cargo fmt` (no `--check`).  
 If clippy warns, fix the warnings — CI treats all warnings as errors.
+
+### Pre-Push
 
 ### Documentation Deployment
 

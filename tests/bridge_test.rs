@@ -8,8 +8,7 @@ use common::*;
 use std::sync::Arc;
 
 use phi_agent::bridge::messages::PROTOCOL_VERSION;
-use phi_agent::bridge::server::ProtocolServer;
-use serde_json::{Value, json};
+use serde_json::json;
 
 // ── Tests ─────────────────────────────────────────────────────────────
 
