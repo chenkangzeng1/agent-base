@@ -44,3 +44,54 @@ impl ApprovalHandler for AutoApprovalHandler {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_base::{ApprovalRequest, RiskLevel};
+
+    #[tokio::test]
+    async fn test_auto_mode_approves_all() {
+        let handler = AutoApprovalHandler::new(ApprovalMode::Auto);
+        let request = ApprovalRequest {
+            title: "Delete file".into(),
+            message: "This will delete /tmp/important.txt".into(),
+            action_key: None,
+            risk_level: RiskLevel::Destructive,
+            raw: None,
+        };
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let decision = handler.approve(request, cancel).await.unwrap();
+        assert!(matches!(decision, ApprovalDecision::AllowAlways));
+    }
+
+    #[tokio::test]
+    async fn test_deny_all_mode_denies() {
+        let handler = AutoApprovalHandler::new(ApprovalMode::DenyAll);
+        let request = ApprovalRequest {
+            title: "Read file".into(),
+            message: "Read /tmp/safe.txt".into(),
+            action_key: None,
+            risk_level: RiskLevel::Safe,
+            raw: None,
+        };
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let decision = handler.approve(request, cancel).await.unwrap();
+        assert!(matches!(decision, ApprovalDecision::Deny));
+    }
+
+    #[tokio::test]
+    async fn test_deny_all_denies_even_safe_operations() {
+        let handler = AutoApprovalHandler::new(ApprovalMode::DenyAll);
+        let request = ApprovalRequest {
+            title: "Safe thing".into(),
+            message: "Perfectly safe".into(),
+            action_key: None,
+            risk_level: RiskLevel::Safe,
+            raw: None,
+        };
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let decision = handler.approve(request, cancel).await.unwrap();
+        assert!(matches!(decision, ApprovalDecision::Deny));
+    }
+}

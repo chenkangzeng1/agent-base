@@ -174,3 +174,290 @@ impl EventRenderer for TerminalRenderer {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_base::{ApprovalRequest, PlanItem, PlanStepStatus, RiskLevel, SessionId, UserEvent};
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+
+    /// A Write impl backed by shared memory, for testing renderers.
+    struct SharedWriter {
+        inner: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl Write for SharedWriter {
+        fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+            self.inner.lock().unwrap().extend_from_slice(data);
+            Ok(data.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+    }
+
+    impl SharedWriter {
+        fn new() -> (Self, Arc<Mutex<Vec<u8>>>) {
+            let inner = Arc::new(Mutex::new(Vec::new()));
+            (Self { inner: inner.clone() }, inner)
+        }
+    }
+
+    fn session_id() -> SessionId {
+        SessionId { id: 1, external_id: None }
+    }
+
+    fn render_one(
+        show_thinking: bool,
+        show_tool_args: bool,
+        color: bool,
+        event: RuntimeEvent,
+    ) -> String {
+        let (writer, buf) = SharedWriter::new();
+        let mut r = TerminalRenderer::new(show_thinking, show_tool_args, color, Box::new(writer));
+        r.render(event).unwrap();
+        drop(r);
+        String::from_utf8(buf.lock().unwrap().clone()).unwrap()
+    }
+
+    fn render_events(
+        show_thinking: bool,
+        show_tool_args: bool,
+        color: bool,
+        events: &[RuntimeEvent],
+    ) -> String {
+        let (writer, buf) = SharedWriter::new();
+        let mut r = TerminalRenderer::new(show_thinking, show_tool_args, color, Box::new(writer));
+        for e in events {
+            r.render(e.clone()).unwrap();
+        }
+        r.finish_turn().unwrap();
+        drop(r);
+        String::from_utf8(buf.lock().unwrap().clone()).unwrap()
+    }
+
+    // ── Color tests ──
+
+    #[test]
+    fn test_color_methods_enabled() {
+        let (writer, _buf) = SharedWriter::new();
+        let r = TerminalRenderer::new(true, true, true, Box::new(writer));
+        assert!(r.green("hello").contains("\x1b[32m"));
+        assert!(r.dim("hello").contains("\x1b[2m"));
+        assert!(r.bold("hello").contains("\x1b[1m"));
+        assert!(r.yellow("hello").contains("\x1b[33m"));
+        assert!(r.subtle("hello").contains("\x1b[90m"));
+        assert!(r.green("hello").ends_with("\x1b[0m"));
+    }
+
+    #[test]
+    fn test_color_methods_disabled() {
+        let (writer, _buf) = SharedWriter::new();
+        let r = TerminalRenderer::new(true, true, false, Box::new(writer));
+        assert!(!r.green("hello").contains('\x1b'));
+        assert_eq!(r.green("hello"), "hello");
+        assert_eq!(r.dim("x"), "x");
+        assert_eq!(r.bold("x"), "x");
+        assert_eq!(r.yellow("x"), "x");
+        assert_eq!(r.subtle("x"), "x");
+    }
+
+    // ── Event rendering tests ──
+
+    #[test]
+    fn test_render_text_delta() {
+        let out = render_one(true, true, true, RuntimeEvent::TextDelta {
+            session_id: session_id(),
+            text: "hello world".into(),
+        });
+        assert!(out.contains("hello world"));
+    }
+
+    #[test]
+    fn test_render_thought_delta_shown() {
+        let out = render_one(true, true, true, RuntimeEvent::ThoughtDelta {
+            session_id: session_id(),
+            text: "thinking...".into(),
+        });
+        assert!(out.contains("thinking..."));
+    }
+
+    #[test]
+    fn test_render_thought_delta_hidden() {
+        let out = render_one(false, true, true, RuntimeEvent::ThoughtDelta {
+            session_id: session_id(),
+            text: "secret thought".into(),
+        });
+        assert!(!out.contains("secret thought"));
+    }
+
+    #[test]
+    fn test_render_tool_call_started_with_args() {
+        let out = render_one(true, true, true, RuntimeEvent::ToolCallStarted {
+            session_id: session_id(),
+            tool_name: "read_file".into(),
+            args_json: r#"{"path":"/tmp/a.txt"}"#.into(),
+        });
+        assert!(out.contains("read_file"));
+        assert!(out.contains("a.txt"));
+    }
+
+    #[test]
+    fn test_render_tool_call_started_without_args() {
+        let out = render_one(true, false, true, RuntimeEvent::ToolCallStarted {
+            session_id: session_id(),
+            tool_name: "read_file".into(),
+            args_json: r#"{"path":"/tmp/a.txt"}"#.into(),
+        });
+        assert!(out.contains("read_file"));
+        assert!(!out.contains("a.txt"));
+    }
+
+    #[test]
+    fn test_render_tool_call_finished_short_summary() {
+        let out = render_one(true, true, true, RuntimeEvent::ToolCallFinished {
+            session_id: session_id(),
+            tool_name: "read_file".into(),
+            summary: "file contents here".into(),
+        });
+        assert!(out.contains("file contents here"));
+    }
+
+    #[test]
+    fn test_render_tool_call_finished_truncated() {
+        let long = "x".repeat(600);
+        let out = render_one(true, true, true, RuntimeEvent::ToolCallFinished {
+            session_id: session_id(),
+            tool_name: "read_file".into(),
+            summary: long.clone(),
+        });
+        assert!(!out.contains(&long));
+        assert!(out.contains("..."));
+        assert!(out.contains(&"x".repeat(400)));
+    }
+
+    #[test]
+    fn test_render_awaiting_approval() {
+        let out = render_one(true, true, true, RuntimeEvent::AwaitingApproval {
+            session_id: session_id(),
+            request: ApprovalRequest {
+                title: "Delete file".into(),
+                message: "This will delete /tmp/important.txt".into(),
+                action_key: None,
+                risk_level: RiskLevel::Destructive,
+                raw: None,
+            },
+        });
+        assert!(out.contains("Delete file"));
+        assert!(out.contains("Destructive"));
+    }
+
+    #[test]
+    fn test_render_plan_updated() {
+        let out = render_one(true, true, true, RuntimeEvent::PlanUpdated {
+            session_id: session_id(),
+            objective: "test plan".into(),
+            explanation: Some("starting work".into()),
+            plan: vec![
+                PlanItem { step: "Step 1".into(), status: PlanStepStatus::Completed },
+                PlanItem { step: "Step 2".into(), status: PlanStepStatus::InProgress },
+                PlanItem { step: "Step 3".into(), status: PlanStepStatus::Pending },
+            ],
+        });
+        assert!(out.contains("Plan Update"));
+        assert!(out.contains("starting work"));
+        assert!(out.contains("✅"));
+        assert!(out.contains("Step 1"));
+        assert!(out.contains("Step 2"));
+        assert!(out.contains("Step 3"));
+    }
+
+    #[test]
+    fn test_render_run_cancelled() {
+        let out = render_one(true, true, true, RuntimeEvent::RunCancelled {
+            session_id: session_id(),
+        });
+        assert!(out.contains("Cancelled"));
+    }
+
+    #[test]
+    fn test_render_run_finished_no_output() {
+        let out = render_one(true, true, true, RuntimeEvent::RunFinished {
+            session_id: session_id(),
+        });
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn test_render_user_event_progress_no_output() {
+        let out = render_one(true, true, true, RuntimeEvent::UserEvent {
+            session_id: session_id(),
+            event: UserEvent::Progress { text: "loading...".into() },
+        });
+        assert!(out.is_empty());
+    }
+
+    // ── finish_turn tests ──
+
+    #[test]
+    fn test_finish_turn_contains_duration_and_tool_count() {
+        let out = render_events(true, true, true, &[
+            RuntimeEvent::TextDelta { session_id: session_id(), text: "hi".into() },
+        ]);
+        assert!(out.contains("elapsed"));
+        assert!(out.contains("tool call"));
+    }
+
+    #[test]
+    fn test_finish_turn_tool_count() {
+        let out = render_events(true, true, true, &[
+            RuntimeEvent::ToolCallStarted {
+                session_id: session_id(), tool_name: "a".into(), args_json: "{}".into(),
+            },
+            RuntimeEvent::ToolCallStarted {
+                session_id: session_id(), tool_name: "b".into(), args_json: "{}".into(),
+            },
+            RuntimeEvent::ToolCallStarted {
+                session_id: session_id(), tool_name: "c".into(), args_json: "{}".into(),
+            },
+        ]);
+        assert!(out.contains("3 tool call"));
+    }
+
+    #[test]
+    fn test_multiple_turns_reset() {
+        let (writer, buf) = SharedWriter::new();
+        {
+            let mut r = TerminalRenderer::new(true, true, true, Box::new(writer));
+            r.render(RuntimeEvent::ToolCallStarted {
+                session_id: session_id(), tool_name: "t1".into(), args_json: "{}".into(),
+            }).unwrap();
+            r.finish_turn().unwrap();
+            r.render(RuntimeEvent::TextDelta {
+                session_id: session_id(), text: "hello".into(),
+            }).unwrap();
+            r.finish_turn().unwrap();
+        }
+        let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        assert!(out.contains("1 tool call"));
+        assert!(out.contains("0 tool call"));
+    }
+
+    #[test]
+    fn test_thought_to_text_transition_adds_newline() {
+        let (writer, buf) = SharedWriter::new();
+        {
+            let mut r = TerminalRenderer::new(true, true, true, Box::new(writer));
+            r.render(RuntimeEvent::ThoughtDelta {
+                session_id: session_id(),
+                text: "hmm".into(),
+            }).unwrap();
+            r.render(RuntimeEvent::TextDelta {
+                session_id: session_id(),
+                text: "hello".into(),
+            }).unwrap();
+        }
+        let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        assert!(out.contains("hmm"));
+        assert!(out.contains("hello"));
+    }
+}

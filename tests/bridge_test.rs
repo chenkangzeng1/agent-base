@@ -313,3 +313,82 @@ async fn test_br_06_sequential_tool_calls() {
     assert!(finished1, "first turn should finish: {events1:?}");
     assert!(finished2, "second turn should finish: {events2:?}");
 }
+
+// ── ProtocolServer unit tests ──
+
+#[tokio::test]
+async fn test_register_tool_appears_in_list() {
+    let mock = Arc::new(MockLlmClient::new());
+    let server = build_server(mock);
+
+    server.register_tool("my_tool".into(), "A test tool".into(), json!({})).await;
+
+    let tools = server.list_tools().await;
+    assert!(tools.iter().any(|t| t.name == "my_tool"));
+}
+
+#[tokio::test]
+async fn test_register_multiple_tools() {
+    let mock = Arc::new(MockLlmClient::new());
+    let server = build_server(mock);
+
+    server.register_tool("zzz_tool".into(), "Z".into(), json!({})).await;
+    server.register_tool("aaa_tool".into(), "A".into(), json!({})).await;
+    server.register_tool("mmm_tool".into(), "M".into(), json!({})).await;
+
+    let tools = server.list_tools().await;
+    let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+
+    // Tools should be sorted by name
+    assert!(tools.len() >= 3);
+    assert_eq!(names[0], "aaa_tool");
+    assert_eq!(names[1], "mmm_tool");
+    assert_eq!(names[2], "zzz_tool");
+}
+
+#[tokio::test]
+async fn test_prepare_tool_call_sender_usable() {
+    let mock = Arc::new(MockLlmClient::new());
+    let server = build_server(mock);
+
+    let tx = server.prepare_tool_call().await;
+    // Sender should be usable
+    let result = tx.send(Ok(agent_base::ToolOutput {
+        summary: "done".into(),
+        raw: None,
+        control_flow: agent_base::ToolControlFlow::Continue,
+        truncation: None,
+    }));
+    assert!(result.is_ok());
+}
+
+#[tokio::test]
+async fn test_subscribe_events_receiver_open() {
+    let mock = Arc::new(MockLlmClient::new());
+    let server = build_server(mock);
+
+    let rx = server.subscribe_events();
+    // Receiver should not be closed initially
+    assert_eq!(rx.len(), 0);
+}
+
+#[tokio::test]
+async fn test_get_or_create_different_external_ids() {
+    let mock = Arc::new(MockLlmClient::new());
+    let server = build_server(mock);
+
+    let sid1 = server.get_or_create_session(Some("ext-1".into())).await;
+    let sid2 = server.get_or_create_session(Some("ext-2".into())).await;
+
+    assert_ne!(sid1.id, sid2.id, "different external_ids should create different sessions");
+}
+
+#[tokio::test]
+async fn test_create_session_without_external_id() {
+    let mock = Arc::new(MockLlmClient::new());
+    let server = build_server(mock);
+
+    let sid = server.get_or_create_session(None).await;
+    assert!(sid.id > 0);
+    assert!(sid.external_id.is_none());
+}

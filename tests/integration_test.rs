@@ -209,3 +209,66 @@ fn test_list_tools_returns_metadata() {
     assert_eq!(custom.version, "unknown", "user-defined tool version should be 'unknown'");
     assert!(custom.description.contains("user-defined"), "description should come from definition");
 }
+
+// ── PhiAgent lifecycle ──
+
+fn build_test_agent() -> phi_agent::PhiAgent {
+    let client = Arc::new(MockLlmClient);
+    let builder = base_agent_builder(client)
+        .system_prompt("You are a helpful assistant.");
+    let config = PhiAgentConfig {
+        model: "test-model".into(),
+        enable_thinking: false,
+        thinking_budget: None,
+        thinking_effort: ReasoningEffort::Medium,
+        safety: SafetyConfig::default(),
+        max_turns: Some(10),
+    };
+    phi_agent::PhiAgent::build(builder, config).expect("build agent")
+}
+
+#[test]
+fn test_phi_agent_create_session() {
+    let agent = build_test_agent();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let sid = rt.block_on(agent.create_session());
+    assert!(sid.id > 0);
+}
+
+#[test]
+fn test_phi_agent_is_cancelled_initially_false() {
+    let agent = build_test_agent();
+    assert!(!agent.is_cancelled());
+}
+
+#[test]
+fn test_phi_agent_set_reasoning_effort() {
+    let agent = build_test_agent();
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    rt.block_on(agent.set_reasoning_effort(ReasoningEffort::Low));
+    // Should not panic
+}
+
+#[test]
+fn test_phi_agent_list_tools_sorted() {
+    let client = Arc::new(MockLlmClient);
+    let builder = base_agent_builder(client)
+        .system_prompt("You are a helpful assistant.")
+        .register_tool(agent_base::UpdatePlanTool::new())
+        .register_tool(CustomTool);
+    let config = PhiAgentConfig {
+        model: "test-model".into(),
+        enable_thinking: false,
+        thinking_budget: None,
+        thinking_effort: ReasoningEffort::Medium,
+        safety: SafetyConfig::default(),
+        max_turns: Some(10),
+    };
+    let agent = phi_agent::PhiAgent::build(builder, config).expect("build agent");
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let tools = rt.block_on(agent.list_tools());
+    // Should be sorted by name
+    for i in 1..tools.len() {
+        assert!(tools[i - 1].name <= tools[i].name, "tools should be sorted: {} > {}", tools[i - 1].name, tools[i].name);
+    }
+}

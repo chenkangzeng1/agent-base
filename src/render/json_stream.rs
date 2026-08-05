@@ -113,3 +113,202 @@ impl EventRenderer for JsonStreamRenderer {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_base::{ApprovalRequest, PlanItem, PlanStepStatus, RiskLevel, SessionId, UserEvent};
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+
+    struct SharedWriter {
+        inner: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl Write for SharedWriter {
+        fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+            self.inner.lock().unwrap().extend_from_slice(data);
+            Ok(data.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+    }
+
+    impl SharedWriter {
+        fn new() -> (Self, Arc<Mutex<Vec<u8>>>) {
+            let inner = Arc::new(Mutex::new(Vec::new()));
+            (Self { inner: inner.clone() }, inner)
+        }
+    }
+
+    fn session_id() -> SessionId {
+        SessionId { id: 1, external_id: None }
+    }
+
+    fn render_one(event: RuntimeEvent) -> Vec<String> {
+        let (writer, buf) = SharedWriter::new();
+        let mut r = JsonStreamRenderer::new(Box::new(writer));
+        r.render(event).unwrap();
+        drop(r);
+        let text = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        if text.is_empty() { vec![] } else { text.lines().map(|l| l.to_string()).collect() }
+    }
+
+    fn render_and_finish(events: &[RuntimeEvent]) -> Vec<String> {
+        let (writer, buf) = SharedWriter::new();
+        let mut r = JsonStreamRenderer::new(Box::new(writer));
+        for e in events {
+            r.render(e.clone()).unwrap();
+        }
+        r.finish_turn().unwrap();
+        drop(r);
+        let text = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        text.lines().map(|l| l.to_string()).collect()
+    }
+
+    #[test]
+    fn test_text_delta_produces_valid_json() {
+        let lines = render_one(RuntimeEvent::TextDelta {
+            session_id: session_id(), text: "hello".into(),
+        });
+        assert_eq!(lines.len(), 1);
+        let v: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
+        assert_eq!(v["type"], "text_delta");
+        assert_eq!(v["text"], "hello");
+    }
+
+    #[test]
+    fn test_thought_delta_produces_valid_json() {
+        let lines = render_one(RuntimeEvent::ThoughtDelta {
+            session_id: session_id(), text: "thinking...".into(),
+        });
+        let v: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
+        assert_eq!(v["type"], "thought_delta");
+    }
+
+    #[test]
+    fn test_tool_call_started_parses_args() {
+        let lines = render_one(RuntimeEvent::ToolCallStarted {
+            session_id: session_id(),
+            tool_name: "shell".into(),
+            args_json: r#"{"cmd":"ls"}"#.into(),
+        });
+        let v: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
+        assert_eq!(v["type"], "tool_call_started");
+        assert_eq!(v["tool"], "shell");
+        assert_eq!(v["args"]["cmd"], "ls");
+    }
+
+    #[test]
+    fn test_tool_call_finished_produces_valid_json() {
+        let lines = render_one(RuntimeEvent::ToolCallFinished {
+            session_id: session_id(),
+            tool_name: "shell".into(),
+            summary: "done".into(),
+        });
+        let v: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
+        assert_eq!(v["type"], "tool_call_finished");
+        assert_eq!(v["tool"], "shell");
+        assert_eq!(v["summary"], "done");
+    }
+
+    #[test]
+    fn test_awaiting_approval_produces_valid_json() {
+        let lines = render_one(RuntimeEvent::AwaitingApproval {
+            session_id: session_id(),
+            request: ApprovalRequest {
+                title: "Delete".into(),
+                message: "Dangerous".into(),
+                action_key: None,
+                risk_level: RiskLevel::Destructive,
+                raw: None,
+            },
+        });
+        let v: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
+        assert_eq!(v["type"], "approval_request");
+        assert_eq!(v["title"], "Delete");
+    }
+
+    #[test]
+    fn test_plan_updated_produces_valid_json() {
+        let lines = render_one(RuntimeEvent::PlanUpdated {
+            session_id: session_id(),
+            objective: "test".into(),
+            explanation: Some("step 1 done".into()),
+            plan: vec![PlanItem { step: "Step 1".into(), status: PlanStepStatus::Completed }],
+        });
+        let v: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
+        assert_eq!(v["type"], "plan_updated");
+    }
+
+    #[test]
+    fn test_user_event_structured() {
+        let lines = render_one(RuntimeEvent::UserEvent {
+            session_id: session_id(),
+            event: UserEvent::Structured {
+                event_type: "custom".into(),
+                data: serde_json::json!({"key": "value"}),
+            },
+        });
+        let v: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
+        assert_eq!(v["type"], "user_event");
+        assert_eq!(v["event_type"], "custom");
+        assert_eq!(v["data"]["key"], "value");
+    }
+
+    #[test]
+    fn test_user_event_progress_ignored() {
+        let lines = render_one(RuntimeEvent::UserEvent {
+            session_id: session_id(),
+            event: UserEvent::Progress { text: "loading...".into() },
+        });
+        assert!(lines.is_empty());
+    }
+
+    #[test]
+    fn test_run_finished_no_output() {
+        let lines = render_one(RuntimeEvent::RunFinished { session_id: session_id() });
+        assert!(lines.is_empty());
+    }
+
+    #[test]
+    fn test_run_cancelled_produces_valid_json() {
+        let lines = render_one(RuntimeEvent::RunCancelled { session_id: session_id() });
+        let v: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
+        assert_eq!(v["type"], "run_cancelled");
+    }
+
+    #[test]
+    fn test_finish_turn_emits_summary() {
+        let lines = render_and_finish(&[
+            RuntimeEvent::TextDelta { session_id: session_id(), text: "hello".into() },
+        ]);
+        let last: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
+        assert_eq!(last["type"], "turn_finished");
+        assert!(last["duration_ms"].as_u64().is_some());
+        assert_eq!(last["tool_call_count"], 0);
+    }
+
+    #[test]
+    fn test_tool_call_count_incremented() {
+        let lines = render_and_finish(&[
+            RuntimeEvent::ToolCallStarted {
+                session_id: session_id(), tool_name: "a".into(), args_json: "{}".into(),
+            },
+            RuntimeEvent::ToolCallStarted {
+                session_id: session_id(), tool_name: "b".into(), args_json: "{}".into(),
+            },
+        ]);
+        let last: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
+        assert_eq!(last["tool_call_count"], 2);
+    }
+
+    #[test]
+    fn test_assistant_text_accumulated() {
+        let lines = render_and_finish(&[
+            RuntimeEvent::TextDelta { session_id: session_id(), text: "Hello ".into() },
+            RuntimeEvent::TextDelta { session_id: session_id(), text: "World".into() },
+        ]);
+        let last: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
+        assert_eq!(last["assistant_text"], "Hello World");
+    }
+}
