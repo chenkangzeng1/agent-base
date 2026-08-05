@@ -17,7 +17,7 @@ pub struct ApprovalRequest {
     pub raw: Option<Value>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub enum ApprovalDecision {
     AllowOnce,
     AllowAlways,
