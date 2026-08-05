@@ -37,7 +37,20 @@ phi (bin) ← CLI，在这里注册工具
 - `AgentRuntime` — 核心事件循环（LLM 对话 → 工具调用 → 循环）
 - `Tool` trait — 所有工具实现的接口
 - `LlmClient` trait — LLM 提供商的抽象层
-- `RuntimeEvent` — 每轮对话中发出的所有事件
+- `RuntimeEvent` — 每轮对话中发出的所有事件：
+
+| Variant | 触发时机 | 关键字段 |
+|---------|---------|-------------|
+| `TextDelta` | LLM 流式输出文本 | `text` |
+| `ThoughtDelta` | LLM 推理 / 思维过程 | `text` |
+| `ToolCallStarted` | 工具开始执行 | `tool_name`, `args_json` |
+| `ToolCallFinished` | 工具执行结束（成功或失败） | `tool_name`, `summary` |
+| `AwaitingApproval` | 工具需要用户审批 | `request` (risk_level, action_key) |
+| `PlanUpdated` | 任务计划创建或更新 | `objective`, `plan[]` |
+| `UserEvent` | 工具在执行过程中发出自定义事件 | `event` (Progress / Structured / SubAgentEvent) |
+| `RunFinished` | 本轮对话完成 | — |
+| `RunCancelled` | 本轮对话被取消 | — |
+| `Checkpoint` | 状态检查点（预留） | `checkpoint` |
 - `AgentBuilder` — 组装 Agent 的构建器模式
 - `TurnContext` + `on_turn_end` hook — 可观测性接口
 

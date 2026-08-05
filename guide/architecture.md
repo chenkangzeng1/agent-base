@@ -37,7 +37,20 @@ The runtime kernel — `cargo add agent-base` if you just want the engine:
 - `AgentRuntime` — core event loop (LLM chat → tool calls → repeat)
 - `Tool` trait — interface all tools implement
 - `LlmClient` trait — abstraction over LLM providers
-- `RuntimeEvent` — all events emitted during a turn
+- `RuntimeEvent` — all events emitted during a turn:
+
+| Variant | Trigger | Key fields |
+|---------|---------|-------------|
+| `TextDelta` | LLM text streaming | `text` |
+| `ThoughtDelta` | LLM thinking / reasoning | `text` |
+| `ToolCallStarted` | Tool execution begins | `tool_name`, `args_json` |
+| `ToolCallFinished` | Tool execution ends (success / error) | `tool_name`, `summary` |
+| `AwaitingApproval` | Tool requires user approval | `request` (risk_level, action_key) |
+| `PlanUpdated` | Task plan created or updated | `objective`, `plan[]` |
+| `UserEvent` | Custom event emitted by tool during execution | `event` (Progress / Structured / SubAgentEvent) |
+| `RunFinished` | Turn completed | — |
+| `RunCancelled` | Turn cancelled | — |
+| `Checkpoint` | State checkpoint (reserved) | `checkpoint` |
 - `AgentBuilder` — builder pattern for assembling an agent
 - `TurnContext` + `on_turn_end` hook — observability interface (exposes raw data, no metrics logic)
 

@@ -2,9 +2,11 @@
 //!
 //! These tests cover the public API without requiring a real LLM connection.
 
+mod common;
+use common::EmptyStream;
+
 use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
 
 use agent_base::{
     AgentResult, ChatMessage, LlmCapabilities, LlmClient, ReasoningConfig, ReasoningEffort, ResponseFormat,
@@ -20,21 +22,11 @@ use serde_json::Value;
 
 // ── Mock LLM client ──
 
-/// An empty stream that immediately returns `Poll::Ready(None)`.
-struct EmptyStream;
-
-impl Stream for EmptyStream {
-    type Item = AgentResult<StreamChunk>;
-
-    fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        Poll::Ready(None)
-    }
-}
-
-struct MockLlmClient;
+/// A simple mock LLM client that always returns "mock response".
+struct SimpleMockLlmClient;
 
 #[async_trait]
-impl LlmClient for MockLlmClient {
+impl LlmClient for SimpleMockLlmClient {
     async fn chat(
         &self,
         _messages: &[ChatMessage],
@@ -74,7 +66,7 @@ impl LlmClient for MockLlmClient {
 
 #[test]
 fn test_base_agent_builder_constructs() {
-    let client = Arc::new(MockLlmClient);
+    let client = Arc::new(SimpleMockLlmClient);
     let builder = base_agent_builder(client)
         .system_prompt("You are a helpful assistant.")
         .register_tool(agent_base::UpdatePlanTool::new());
@@ -178,7 +170,7 @@ impl Tool for CustomTool {
 
 #[test]
 fn test_list_tools_returns_metadata() {
-    let client = Arc::new(MockLlmClient);
+    let client = Arc::new(SimpleMockLlmClient);
     let builder = base_agent_builder(client)
         .system_prompt("You are a helpful assistant.")
         .register_tool(agent_base::UpdatePlanTool::new())
@@ -213,7 +205,7 @@ fn test_list_tools_returns_metadata() {
 // ── PhiAgent lifecycle ──
 
 fn build_test_agent() -> phi_agent::PhiAgent {
-    let client = Arc::new(MockLlmClient);
+    let client = Arc::new(SimpleMockLlmClient);
     let builder = base_agent_builder(client)
         .system_prompt("You are a helpful assistant.");
     let config = PhiAgentConfig {
@@ -251,7 +243,7 @@ fn test_phi_agent_set_reasoning_effort() {
 
 #[test]
 fn test_phi_agent_list_tools_sorted() {
-    let client = Arc::new(MockLlmClient);
+    let client = Arc::new(SimpleMockLlmClient);
     let builder = base_agent_builder(client)
         .system_prompt("You are a helpful assistant.")
         .register_tool(agent_base::UpdatePlanTool::new())

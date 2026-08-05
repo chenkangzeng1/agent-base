@@ -2,23 +2,21 @@
 
 phi-agent 与依赖 crate 之间的关系，以及关键设计决策。
 
-## 仓库结构
+## 仓库
 
-phi-agent 是 **monorepo** — 所有 crate 都在同一个仓库中：
+每个 crate 是独立的 git 仓库，发布到 crates.io：
 
-```
-github.com/hibuka-labs/phi-agent/
-├── Cargo.toml          ← workspace 根
-├── src/                ← phi-agent（库 + CLI 二进制）
-├── agent-base/         ← 运行时内核
-├── agent-works/        ← 工具生态（MCP、Skills）
-├── phi-telemetry/      ← 可观测性（内部）
-├── phi-tools/          ← Shell 工具（内部）
-└── log-core/           ← 日志基础（内部）
-```
+| Crate | 仓库 | crates.io |
+|-------|------|-----------|
+| `agent-base` | [hibuka-labs/agent-base](https://github.com/hibuka-labs/agent-base) | ✅ |
+| `agent-works` | [hibuka-labs/agent-works](https://github.com/hibuka-labs/agent-works) | ✅ |
+| `phi-agent` | [hibuka-labs/phi-agent](https://github.com/hibuka-labs/phi-agent)（本仓库） | ✅ |
+| `phi-tools` | [hibuka-labs/phi-tools](https://github.com/hibuka-labs/phi-tools) | ✅ |
+| `phi-telemetry` | [hibuka-labs/phi-telemetry](https://github.com/hibuka-labs/phi-telemetry) | ✅ |
+| `log-core` | [hibuka-labs/log-core](https://github.com/hibuka-labs/log-core) | ✅ |
 
-三个 crate 发布到 crates.io：`agent-base`、`agent-works`、`phi-agent`。
-其余为内部 crate — phi-agent 使用但不作为独立包对外暴露。
+所有 crate 使用纯版本依赖 `version = "0.1"`，无 path、无 monorepo。
+`cargo add phi-agent` 从 crates.io 拉取所需依赖。
 
 ## 依赖链
 
@@ -35,70 +33,54 @@ phi (bin) ← CLI，在这里注册工具
 ## 各 Crate 职责
 
 ### agent-base
-运行时内核 — 只需要引擎用 `cargo add agent-base`：
+运行时内核 — `cargo add agent-base` 如果只需要引擎：
 - `AgentRuntime` — 核心事件循环（LLM 对话 → 工具调用 → 循环）
 - `Tool` trait — 所有工具实现的接口
 - `LlmClient` trait — LLM 提供商的抽象层
-- `RuntimeEvent` — 每轮对话中发出的所有事件
+- `RuntimeEvent` — 每轮对话中发出的所有事件：
+
+| Variant | 触发时机 | 关键字段 |
+|---------|---------|-------------|
+| `TextDelta` | LLM 流式输出文本 | `text` |
+| `ThoughtDelta` | LLM 推理 / 思维过程 | `text` |
+| `ToolCallStarted` | 工具开始执行 | `tool_name`, `args_json` |
+| `ToolCallFinished` | 工具执行结束（成功或失败） | `tool_name`, `summary` |
+| `AwaitingApproval` | 工具需要用户审批 | `request` (risk_level, action_key) |
+| `PlanUpdated` | 任务计划创建或更新 | `objective`, `plan[]` |
+| `UserEvent` | 工具在执行过程中发出自定义事件 | `event` (Progress / Structured / SubAgentEvent) |
+| `RunFinished` | 本轮对话完成 | — |
+| `RunCancelled` | 本轮对话被取消 | — |
+| `Checkpoint` | 状态检查点（预留） | `checkpoint` |
 - `AgentBuilder` — 组装 Agent 的构建器模式
-- `TurnContext` + `on_turn_end` hook — 可观测性接口（只暴露数据，不包含 metrics 逻辑）
+- `TurnContext` + `on_turn_end` hook — 可观测性接口
 
 ### agent-works
-基于 agent-base — 需要工具箱用 `cargo add agent-works`：
+基于 agent-base — `cargo add agent-works` 获取工具箱：
 - **MCP** — Model Context Protocol 支持
 - **Skills** — 插件/技能系统
 - **Focus** — 带类型的结构化 LLM 调用
 - **内置工具** — 文件操作（读取、写入、列表等）
 
-### phi-agent（本 crate）
-框架层 — 完整功能用 `cargo add phi-agent`：
+### phi-agent
+框架层 — `cargo add phi-agent` 获取完整功能：
 - `base_agent_builder()` — 预配置的构建器工厂
 - `PhiAgent` — `AgentRuntime` 的高级封装
-- `EventRenderer` — 终端 / JSON / 静默三种输出格式
+- `EventRenderer` — 终端 / JSON / 静默输出
 - 配置解析、会话管理、系统提示词
-- `phi` CLI 二进制 — `cargo install phi-agent`
+- `phi` CLI — `cargo install phi-agent`
+- `phi init` / `phi init --lib` — 项目脚手架
+- `phi metrics` — 会话观测数据查看
 
-### 可观测性
+## 关键设计决策
 
-phi-agent 自动采集结构化指标。每个 session 都会写入 `session_metrics.json`：
+### 不内置工具
+phi-agent 不了解任何具体工具。工具通过 `AgentBuilder::register_tool()` 外部注册。框架保持精简，消费者完全可控。
 
-- **每轮**：token、延迟拆解（TTFT、LLM、Tool）、工具调用、结果、思考模式
-- **每会话**：汇总、P50/P95/P99 延迟、工具分布、错误率、费用估算
-- **业务扩展**：通过 `custom` 字段注入业务数据（如 phi-bard 跟踪 prompt 版本、修改轮次）
+### 不内置记忆
+没有向量数据库、嵌入存储、隐藏状态。每一个决策都可追溯到 prompt。
 
-```bash
-# 内置 CLI
-phi metrics list               # 列表查看最近会话
-phi metrics show <session_id>  # 详细分解
-phi metrics last               # 最新会话
-```
+### 可观测性默认开启
+每个 session 自动写入 `session_metrics.json`。Token 消耗、延迟分布、工具调用统计全部记录。`phi metrics` 查看。详见 [可观测性](observability.md)。
 
-```json
-// session_metrics.json — 示例
-{
-  "session_id": "20260729_abc12345",
-  "model": "claude-sonnet",
-  "total_turns": 5,
-  "total_input_tokens": 15000,
-  "total_output_tokens": 12000,
-  "estimated_cost": 0.18,
-  "p50_turn_ms": 32000,
-  "p95_turn_ms": 52000,
-  "tool_breakdown": { "shell": 5, "check_quality": 3 },
-  "outcome": "completed",
-  "custom": { "product": "phi-bard", "prompt_version": "v3" }
-}
-```
-
-**架构**：观测代码运行在独立的 tokio task 中，通过 channel 通信。
-观测 panic 不会影响 agent。agent-base 不感知"观测"这个事，只通过 `on_turn_end` hook 暴露 `TurnContext` 数据。
-
-**环境变量**：
-
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `PHI_METRICS_ENABLED` | `true` | 设为 `false` 禁用指标采集 |
-| `PHI_NODE_ID` | `""` | 节点标识，用于多节点部署 |
-| `PHI_COST_PER_1K_TOKENS` | 内置 | 自定义模型定价（格式：`输入费用,输出费用` 每千 token） |
-
-完整设计文档见 [observability-design.md](https://github.com/hibuka-labs/phi-agent/blob/master/docs/observability-design.md)。
+### 会话隔离
+每个会话有独立目录和文件锁，防止多进程并发访问。详见 [高级用法](advanced.md)。
