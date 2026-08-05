@@ -9,7 +9,7 @@ hide:
   phi-agent
 </h1>
 
-Rust 通用 AI Agent 框架 — 简单、纯粹、可预测，为你快速构建自己的 AI 应用。
+不是又一个 AI Agent，而是构建 Agent 应用的开放基座 — 专为嵌入式、边缘及垂直行业打造，同样适合高定制、高性能的云端和桌面 AI 应用，简单、纯粹、可控。
 
 <a href="guide/getting-started/" class="md-button md-button--primary" style="margin-right: 0.5rem">
   :octicons-arrow-right-24: &nbsp; 快速开始
@@ -22,33 +22,33 @@ Rust 通用 AI Agent 框架 — 简单、纯粹、可预测，为你快速构建
 
 <div class="grid cards" markdown>
 
--   :material-rocket-launch-outline:{ .lg .middle } **极致性能**
+-   :material-target:{ .lg .middle } **为垂直场景而生**
 
     ---
 
-    基于 Rust 构建，零虚拟机开销，即刻响应，高并发下保持极低延迟——Agent 始终在线，极速响应。
+    不是通用 chatbot，而是面向嵌入式、工业、IoT 等垂直领域，以及桌面、云端等高定制场景的 Agent 构建框架 — 你的场景，你定义工具，你掌控行为。
 
--   :material-lightbulb-on-outline:{ .lg .middle } **简单易用**
+-   :material-rocket-launch-outline:{ .lg .middle } **极致轻量，哪里都能跑**
 
     ---
 
-    一个工具只需 3 个方法：`name()`、`definition()`、`call()`——没有隐藏 Agent，没有黑魔法，逻辑透明，尽在掌握。
+    Rust 单二进制，无运行时依赖，从嵌入式 Linux、边缘网关到云端容器、桌面应用，`cargo install` 即用，随地部署。
 
 </div>
 
 <div class="grid cards" markdown>
 
--   :material-puzzle-outline:{ .lg .middle } **你说了算**
+-   :material-puzzle-outline:{ .lg .middle } **零内置，全定制**
 
     ---
 
-    零内置工具，按需注册，LLM 自由接入，拒绝厂商锁定——工具与流程，皆由你掌控。
+    不预设任何工具，不绑定任何平台，一个工具只需 3 个方法 — `name()`、`definition()`、`call()`，你注册什么，Agent 就用什么，只带你的场景真正需要的东西，LLM 自由，精准、干净、可控。
 
--   :material-chart-line:{ .lg .middle } **全程可观测**
+-   :material-chart-line:{ .lg .middle } **全程可观测，每一步可解释**
 
     ---
 
-    每次运行有日志，每次决策可追溯，内置 JSONL 日志、会话指标、结构化追踪——行为与动机一目了然，高覆盖测试兜底，每次运行都值得信赖。
+    每次决策有记录，每个步骤可追踪，内置会话日志与结构化追踪，会话指标一目了然，垂直场景合规审计无压力。
 
 </div>
 

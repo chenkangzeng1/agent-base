@@ -7,9 +7,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Documentation](https://img.shields.io/badge/docs-book-green.svg)](https://docs.phi-agent.dev)
 
-通用 AI Agent 框架，基于 Rust 构建，底层依赖 [agent-base](https://crates.io/crates/agent-base) 和 [agent-works](https://crates.io/crates/agent-works)。
+不是又一个 AI Agent，而是构建 Agent 应用的开放基座 — 专为嵌入式、边缘及垂直行业打造，同样适合高定制、高性能的云端和桌面 AI 应用，简单、纯粹、可控。
 
-**phi-agent 提供基础设施。工具由你来定义。**
+基于 [agent-base](https://crates.io/crates/agent-base) 和 [agent-works](https://crates.io/crates/agent-works) 构建。**phi-agent 提供基础设施，工具由你来定义。**
 
 ## 生态
 
@@ -48,13 +48,13 @@ graph TB
 
 ## 为什么选择 phi-agent
 
-**Rust。** 单二进制文件，无运行时依赖。`cargo install` 即可使用。内存安全，不易崩溃，性能出色。随处部署——从云服务器到边缘设备。
+**为垂直场景而生。** 不是通用 chatbot，而是面向嵌入式、工业、IoT 等垂直领域，以及桌面、云端等高定制场景的 Agent 构建框架 — 你的场景，你定义工具，你掌控行为。
 
-**简单。** 无隐藏状态，无黑魔法。显式控制流，可读、可追踪、可信赖。一个工具只需 3 个方法 — `name()`、`definition()`、`call()`。
+**极致轻量，哪里都能跑。** Rust 单二进制，无运行时依赖，从嵌入式 Linux、边缘网关到云端容器、桌面应用，`cargo install` 即用，随地部署。
 
-**你的工具，你的规则。** phi-agent 零内置工具。你提供工具，你拥有完全控制权。没有供应商锁定。
+**零内置，全定制。** 不预设任何工具，不绑定任何平台，一个工具只需 3 个方法 — `name()`、`definition()`、`call()`，你注册什么，Agent 就用什么，只带你的场景真正需要的东西，LLM 自由，精准、干净、可控。
 
-**可观测。** 内置对话日志、会话指标、链路追踪。每个决策有记录，每次结果可度量。Agent 的每一步都有据可查。
+**全程可观测，每一步可解释。** 每次决策有记录，每个步骤可追踪，内置会话日志与结构化追踪，会话指标一目了然，垂直场景合规审计无压力。
 
 ## 特性
 

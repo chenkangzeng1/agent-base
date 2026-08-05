@@ -7,9 +7,9 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Documentation](https://img.shields.io/badge/docs-book-green.svg)](https://docs.phi-agent.dev)
 
-A general-purpose AI Agent framework in Rust, built on [agent-base](https://crates.io/crates/agent-base) and [agent-works](https://crates.io/crates/agent-works).
+Not another AI Agent, but an open application framework for building Agents — purpose-built for embedded, edge, and vertical industries, equally suited for highly customizable, high-performance cloud and desktop AI applications. Simple, pure, predictable.
 
-**phi-agent provides the infrastructure. You bring the tools.**
+Built on [agent-base](https://crates.io/crates/agent-base) and [agent-works](https://crates.io/crates/agent-works). **phi-agent provides the infrastructure. You bring the tools.**
 
 ## Ecosystem
 
@@ -47,13 +47,13 @@ graph TB
 
 ## Why phi-agent
 
-**Rust.** Single binary, no runtime dependency. `cargo install` and you're done. Memory-safe, crash-resistant, fast. Deploy anywhere — from cloud servers to edge devices.
+**Built for Vertical Scenarios.** Not a generic chatbot, but an Agent framework for embedded systems, industrial, IoT, and other vertical domains, as well as desktop and cloud applications that demand deep customization — your scenario, your tools, your full control.
 
-**Simple.** No hidden state, no magic. Explicit control flow that's easy to read, trace, and trust. A tool is 3 methods — `name()`, `definition()`, `call()`.
+**Lightweight, Runs Anywhere.** A single Rust binary with zero runtime dependencies — from embedded Linux and edge gateways to cloud containers and desktop applications, `cargo install` gets you started in seconds, deploy anywhere.
 
-**Your tools, your rules.** phi-agent has zero built-in tools. You bring them, you own them. No vendor lock-in.
+**Zero Built-in Tools, Fully Customizable.** No pre-packaged tools, no platform lock-in — a tool is just 3 methods: `name()`, `definition()`, `call()`, you register what you need, the Agent uses what you register, only bring what your scenario truly needs, LLM freedom, precise and clean.
 
-**Observable.** Built-in turn logging, session metrics, and tracing. Every decision is recorded, every outcome is measurable. Know exactly what your agent did and why.
+**Fully Observable, Every Step Explainable.** Every decision is logged, every step is traceable, with built-in session logging, structured tracing, and session metrics at a glance — compliance and audit trails without the stress.
 
 ## Features
 

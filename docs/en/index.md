@@ -9,7 +9,7 @@ hide:
   phi-agent
 </h1>
 
-General-purpose Rust AI Agent Framework — simple, pure, predictable. Ship your AI apps faster.
+Not another AI Agent, but an open application framework for building Agents — built for embedded, edge, and vertical industries, equally suited for highly customizable, high-performance cloud and desktop AI applications. Simple, pure, predictable.
 
 <a href="guide/getting-started/" class="md-button md-button--primary" style="margin-right: 0.5rem">
   :octicons-arrow-right-24: &nbsp; Get Started
@@ -22,33 +22,33 @@ General-purpose Rust AI Agent Framework — simple, pure, predictable. Ship your
 
 <div class="grid cards" markdown>
 
--   :material-rocket-launch-outline:{ .lg .middle } **Native Performance**
+-   :material-target:{ .lg .middle } **Built for Vertical Scenarios**
 
     ---
 
-    Built on Rust, zero VM overhead. Instant response, ultra-low latency under high concurrency — your agent is always online, blazing fast.
+    Not a generic chatbot, but an Agent framework for embedded, industrial, IoT, and other vertical domains — plus desktop and cloud applications that demand deep customization. Your scenario, your tools, your full control.
 
--   :material-lightbulb-on-outline:{ .lg .middle } **Easy to Use**
+-   :material-rocket-launch-outline:{ .lg .middle } **Lightweight, Runs Anywhere**
 
     ---
 
-    A tool is just 3 methods: `name()`, `definition()`, `call()` — no hidden agents, no magic, transparent logic, fully under your control.
+    A single Rust binary with zero runtime dependencies — from embedded Linux and edge gateways to cloud containers and desktop applications, `cargo install` gets you started in seconds, deploy anywhere.
 
 </div>
 
 <div class="grid cards" markdown>
 
--   :material-puzzle-outline:{ .lg .middle } **You're in Control**
+-   :material-puzzle-outline:{ .lg .middle } **Zero Built-in, Fully Customizable**
 
     ---
 
-    Zero built-in tools, register on demand, freely integrate any LLM with no vendor lock-in — tools and flows are entirely in your hands.
+    No pre-packaged tools, no platform lock-in — a tool is just 3 methods: `name()`, `definition()`, `call()`, you register what you need, the Agent uses what you register, LLM freedom, precise and clean.
 
--   :material-chart-line:{ .lg .middle } **Fully Observable**
+-   :material-chart-line:{ .lg .middle } **Fully Observable, Every Step Explainable**
 
     ---
 
-    Every run logged, every decision traced, built-in JSONL logging, session metrics, and structured tracing — know exactly what your agent did and why, backed by rigorous test coverage you can trust.
+    Every decision is logged, every step is traceable, with built-in session logging, structured tracing, and session metrics at a glance — compliance and audit trails without the stress.
 
 </div>
 
