@@ -6,6 +6,7 @@
 [![codecov](https://codecov.io/gh/hibuka-labs/phi-agent/branch/master/graph/badge.svg)](https://codecov.io/gh/hibuka-labs/phi-agent)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Documentation](https://img.shields.io/badge/docs-book-green.svg)](https://docs.phi-agent.dev)
+[![PyPI](https://img.shields.io/pypi/v/phi-agent.svg)](https://pypi.org/project/phi-agent/)
 
 不是又一个 AI Agent，而是构建 Agent 应用的开放基座 — 专为嵌入式、边缘及垂直行业打造，同样适合高定制、高性能的云端和桌面 AI 应用，简单、纯粹、可控。
 
@@ -24,6 +25,39 @@ phi-agent 是一组独立 crate 的成员：
 | `phi-agent` | [![Crates.io](https://img.shields.io/crates/v/phi-agent.svg)](https://crates.io/crates/phi-agent) | 完整框架 — builder 工厂、渲染器、配置、CLI 二进制 |
 
 **只需要运行时？** `cargo add agent-base`。**需要完整框架？** `cargo add phi-agent`。
+
+## SDK
+
+更喜欢 Python？phi-agent 支持多语言 — 用你喜欢的语言编写工具，同一套 Rust 运行时驱动。
+
+| 语言 | 安装 | 版本 |
+|------|------|------|
+| Python | `pip install phi-agent` | [![PyPI](https://img.shields.io/pypi/v/phi-agent.svg)](https://pypi.org/project/phi-agent/) |
+
+### Python
+
+```bash
+pip install phi-agent
+```
+
+```python
+from phi_agent import Agent, tool
+
+@tool
+async def search(query: str) -> str:
+    """搜索网页。"""
+    return f"搜索结果: {query}"
+
+agent = Agent(model="gpt-4o")
+agent.register(search)
+
+async for event in agent.run("今天有什么新闻?"):
+    print(event)
+```
+
+Python SDK 通过 stdio 与 `phi` Rust 二进制通信 — 你用 Python 写工具，Rust 运行时负责 Agent 循环、LLM 调用和事件流。
+
+📖 [Python SDK 文档 →](https://pypi.org/project/phi-agent/)
 
 ## 架构
 

@@ -6,6 +6,7 @@
 [![codecov](https://codecov.io/gh/hibuka-labs/phi-agent/branch/master/graph/badge.svg)](https://codecov.io/gh/hibuka-labs/phi-agent)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Documentation](https://img.shields.io/badge/docs-book-green.svg)](https://docs.phi-agent.dev)
+[![PyPI](https://img.shields.io/pypi/v/phi-agent.svg)](https://pypi.org/project/phi-agent/)
 
 Not another AI Agent, but an open application framework for building Agents — purpose-built for embedded, edge, and vertical industries, equally suited for highly customizable, high-performance cloud and desktop AI applications. Simple, pure, predictable.
 
@@ -24,6 +25,39 @@ phi-agent is part of a family of independent crates:
 | `phi-agent` | [![Crates.io](https://img.shields.io/crates/v/phi-agent.svg)](https://crates.io/crates/phi-agent) | Full framework — builder factory, renderers, config, CLI binary |
 
 **Just need the runtime?** `cargo add agent-base`. **Need the full framework?** `cargo add phi-agent`.
+
+## SDKs
+
+Prefer Python? phi-agent supports multiple languages — write tools in your favorite language, powered by the same Rust runtime.
+
+| Language | Package | Version |
+|----------|---------|---------|
+| Python | `pip install phi-agent` | [![PyPI](https://img.shields.io/pypi/v/phi-agent.svg)](https://pypi.org/project/phi-agent/) |
+
+### Python
+
+```bash
+pip install phi-agent
+```
+
+```python
+from phi_agent import Agent, tool
+
+@tool
+async def search(query: str) -> str:
+    """Search the web."""
+    return f"Results for: {query}"
+
+agent = Agent(model="gpt-4o")
+agent.register(search)
+
+async for event in agent.run("What's new today?"):
+    print(event)
+```
+
+The Python SDK communicates with the `phi` Rust binary over stdio — you write tools in Python, and the Rust runtime handles the agent loop, LLM calls, and event streaming.
+
+📖 [Python SDK docs →](https://pypi.org/project/phi-agent/)
 
 ## Architecture
 
