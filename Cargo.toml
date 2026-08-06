@@ -42,6 +42,7 @@ default = ["tools", "telemetry", "logging"]
 tools = ["phi-tools"]
 telemetry = ["phi-telemetry"]
 logging = ["log-core"]
+browser = ["tools", "phi-tools/browser"]
 
 [dev-dependencies]
 tempfile = "3"
