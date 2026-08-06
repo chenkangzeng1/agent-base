@@ -37,8 +37,8 @@ impl ProtocolServer {
     }
 
     /// Register a Python-side tool.
-    pub async fn register_tool(&self, name: String, _description: String, _parameters: Value) {
-        let proxy = ProxyTool { name, slot: self.slot.clone() };
+    pub async fn register_tool(&self, name: String, description: String, parameters: Value) {
+        let proxy = ProxyTool { name, description, parameters, slot: self.slot.clone() };
         let tools_arc = self.runtime.tools_mut();
         let mut tools = tools_arc.write().await;
         tools.register(proxy);
@@ -109,6 +109,8 @@ impl ProtocolServer {
 
 struct ProxyTool {
     name: String,
+    description: String,
+    parameters: Value,
     slot: Arc<Mutex<Option<mpsc::UnboundedReceiver<AgentResult<ToolOutput>>>>>,
 }
 
@@ -123,8 +125,8 @@ impl Tool for ProxyTool {
             "type": "function",
             "function": {
                 "name": self.name,
-                "description": "Proxy tool",
-                "parameters": { "type": "object", "properties": {} }
+                "description": self.description,
+                "parameters": self.parameters,
             }
         })
     }

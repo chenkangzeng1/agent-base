@@ -123,7 +123,7 @@ pub async fn run() -> anyhow::Result<()> {
 
                                     // Intercept ToolCallStarted: send ToolCall to SDK
                                     if let phi_agent::RuntimeEvent::ToolCallStarted { tool_name, args_json, .. } = e {
-                                        dbg_log!("ToolCallStarted tool={tool_name}");
+                                        dbg_log!("ToolCallStarted tool={tool_name} args_json={args_json}");
                                         let cid = format!("call-{}", n);
                                         write_msg(&mut writer, &OutgoingMessage::ToolCall {
                                             seq, call_id: cid, name: tool_name.clone(),
