@@ -158,6 +158,29 @@ cargo fmt --check && cargo test && cargo clippy --all-targets -- -D warnings 2>&
 If `cargo fmt` reports diffs, fix them: `cargo fmt` (no `--check`).  
 If clippy warns, fix the warnings — CI treats all warnings as errors.
 
+### Community
+
+**PR Review SLA: 48 hours.** Respond to every PR within 48h — even if just "looking at this, will review soon." Small, focused PRs get merged faster. If a PR is too large, ask the contributor to break it up rather than doing a marathon review.
+
+**First-time contributors:** Be welcoming. Merge small fixes (typos, doc improvements) quickly — don't nitpick style on a first PR. Format issues can be fixed by the maintainer or a follow-up PR. The goal is to make their first contribution feel good, not perfect.
+
+**Good First Issues:**
+- Scope: 1–2 files, clear acceptance criteria
+- Each issue must answer: (1) what to change, (2) which file(s), (3) how to verify
+- Keep `.github/GOOD_FIRST_ISSUES.md` as a template source — when it runs low, add 3–5 more
+- Label: `good first issue` + `help wanted`
+
+**Labels:**
+| Label | Purpose |
+|-------|---------|
+| `good first issue` | Small, newcomer-friendly tasks |
+| `help wanted` | Needs community contribution |
+| `bug` | Confirmed bug |
+| `enhancement` | Feature request or improvement |
+| `documentation` | Docs-only change |
+
+**After merging a PR:** Add the contributor to the all-contributors table. (Setup: install [all-contributors bot](https://github.com/all-contributors/all-contributors) on the repo, then comment `@all-contributors add @username for code` on the merged PR.)
+
 ### Pre-Push
 
 ### Documentation Deployment
