@@ -19,6 +19,109 @@ Built-in middleware:
 - `TurnFactMiddleware` — injects facts/context at the start of each turn
 - `TurnToolLimitMiddleware` — enforces `max_tool_calls_per_turn`
 
+### Custom Middleware
+
+Implement the `Middleware` trait to hook into the agent loop at three points:
+
+```rust
+use phi_agent::{AgentResult, Middleware, PreLlmCtx, PostLlmCtx, UserMessageCtx};
+use async_trait::async_trait;
+
+struct LoggingMiddleware;
+
+#[async_trait]
+impl Middleware for LoggingMiddleware {
+    // 1. Called when user sends a message (before anything else)
+    async fn on_user_message(&self, ctx: &mut UserMessageCtx) -> AgentResult<()> {
+        tracing::info!(session = ?ctx.session_id, input = %ctx.user_input, "user message");
+        Ok(())
+    }
+
+    // 2. Called just before the LLM call (can modify messages or tools)
+    async fn on_pre_llm(&self, ctx: &mut PreLlmCtx) -> AgentResult<()> {
+        tracing::info!(session = ?ctx.session_id, msg_count = ctx.messages.len(), "pre-llm");
+        Ok(())
+    }
+
+    // 3. Called after the LLM responds (can suppress output, inject follow-up)
+    async fn on_post_llm(&self, ctx: &mut PostLlmCtx) -> AgentResult<()> {
+        tracing::info!(
+            session = ?ctx.session_id,
+            is_tool_call = ctx.is_tool_call,
+            tool_count = ctx.tool_calls.len(),
+            "post-llm"
+        );
+        Ok(())
+    }
+}
+
+builder = builder.middleware(LoggingMiddleware);
+```
+
+Key `PostLlmCtx` fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `full_text` | `String` | LLM's text response (empty if pure tool call) |
+| `is_tool_call` | `bool` | Whether the LLM requested tool calls |
+| `tool_calls` | `Vec<(id, name, args)>` | Parsed tool call list |
+| `available_tools` | `Vec<String>` | Tools currently registered |
+| `total_tool_calls` | `usize` | Total tool calls executed this turn so far |
+| `skip_push` | `bool` | Set to `true` to suppress the LLM response from the session |
+| `follow_up_message` | `Option<String>` | Inject a follow-up User message into the loop |
+
+### Custom ToolPolicy
+
+Implement the `ToolPolicy` trait to control tool execution behavior — approval, pre-execution checks, and post-execution auditing:
+
+```rust
+use phi_agent::{AgentResult, ApprovalRequest, RiskLevel, ToolContext, ToolOutput, ToolPolicy};
+use async_trait::async_trait;
+use serde_json::Value;
+
+struct RiskAwarePolicy;
+
+#[async_trait]
+impl ToolPolicy for RiskAwarePolicy {
+    // 1. Decide whether a tool call needs user approval (async)
+    async fn evaluate_approval(&self, tool_name: &str, args: &Value) -> Option<ApprovalRequest> {
+        let command = args.get("command").and_then(Value::as_str).unwrap_or("");
+        if command.contains("rm ") || command.contains("sudo") {
+            return Some(ApprovalRequest {
+                title: "Destructive command".into(),
+                message: format!("AI wants to run: {command}"),
+                action_key: Some(format!("cmd:{command}")),
+                risk_level: RiskLevel::Destructive,
+                raw: Some(args.clone()),
+            });
+        }
+        None // safe commands run without approval
+    }
+
+    // 2. Sync check just before tool execution — return Err to abort
+    fn before_call(&self, tool_name: &str, _args: &Value, _ctx: &ToolContext) -> AgentResult<()> {
+        tracing::info!("about to execute tool: {tool_name}");
+        Ok(())
+    }
+
+    // 3. Sync hook after successful execution — for auditing or metrics
+    fn after_call(
+        &self, tool_name: &str, _args: &Value, result: &ToolOutput, _ctx: &ToolContext,
+    ) -> AgentResult<()> {
+        tracing::info!(tool = tool_name, summary = %result.summary, "tool executed");
+        Ok(())
+    }
+}
+
+builder = builder.tool_policy(Arc::new(RiskAwarePolicy));
+```
+
+The execution pipeline runs: `evaluate_approval` → (wait for user if needed) → `before_call` → `tool.call()` → `after_call`. If `before_call` returns `Err`, the tool is aborted and `after_call` is skipped.
+
+> 💡 See [`examples/custom-policy.rs`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/custom-policy.rs)
+> for a complete runnable demo covering both custom Middleware and ToolPolicy.
+> Run with `cargo run --example custom-policy` — no API key required.
+
 ## Approval Handlers
 
 Control which tool calls require human confirmation:
@@ -155,4 +258,21 @@ use agent_base::ConsecutiveFailureRecovery;
 builder = builder.error_recovery(Arc::new(
     ConsecutiveFailureRecovery::new(3)
 ));
+```
+
+## Further Reading
+
+Runnable examples in the repository:
+
+| Example | Description | API Key |
+|---------|-------------|:-------:|
+| [`custom-policy`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/custom-policy.rs) | Custom Middleware + ToolPolicy, event hooks | ❌ |
+| [`hello-agent`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/hello-agent.rs) | Minimal agent setup | ✅ |
+| [`custom-tool`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/custom-tool.rs) | Implement a custom Tool | ✅ |
+| [`multi-tool`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/multi-tool.rs) | Register multiple tools | ✅ |
+| [`focus-demo`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/focus-demo.rs) | Focus feature | ✅ |
+
+Run any example with `cargo run --example <name>`, e.g.:
+```bash
+cargo run --example custom-policy
 ```

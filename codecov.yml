@@ -1,0 +1,14 @@
+coverage:
+  status:
+    project:
+      default:
+        target: 80%
+        threshold: 2%
+    patch:
+      default:
+        target: 80%
+
+ignore:
+  - "src/bin/**"
+  - "tests/**"
+  - "examples/**"

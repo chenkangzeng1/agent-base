@@ -9,7 +9,7 @@ hide:
   phi-agent
 </h1>
 
-General-purpose AI Agent Framework in Rust — simple, pure, predictable.
+Not another AI Agent, but an open application framework for building Agents — built for embedded, edge, and vertical industries, equally suited for highly customizable, high-performance cloud and desktop AI applications. Simple, pure, predictable.
 
 <a href="guide/getting-started/" class="md-button md-button--primary" style="margin-right: 0.5rem">
   :octicons-arrow-right-24: &nbsp; Get Started
@@ -22,33 +22,33 @@ General-purpose AI Agent Framework in Rust — simple, pure, predictable.
 
 <div class="grid cards" markdown>
 
--   :simple-rust:{ .lg .middle } **Pure Rust**
+-   :material-target:{ .lg .middle } **Built for Vertical Scenarios**
 
     ---
 
-    Async, type-safe, zero-cost abstractions. A single binary that runs from cloud to edge.
+    Not a generic chatbot, but an Agent framework for embedded, industrial, IoT, and other vertical domains — plus desktop and cloud applications that demand deep customization. Your scenario, your tools, your full control.
 
--   :material-lightbulb-on-outline:{ .lg .middle } **Simple**
+-   :material-rocket-launch-outline:{ .lg .middle } **Lightweight, Runs Anywhere**
 
     ---
 
-    No hidden state, no magic. Explicit control flow — readable, traceable, trustworthy.
+    A single Rust binary with zero runtime dependencies — from embedded Linux and edge gateways to cloud containers and desktop applications, `cargo install` gets you started in seconds, deploy anywhere.
 
 </div>
 
 <div class="grid cards" markdown>
 
--   :material-toy-brick-outline:{ .lg .middle } **Your Rules**
+-   :material-puzzle-outline:{ .lg .middle } **Zero Built-in, Fully Customizable**
 
     ---
 
-    Zero built-in tools. Implement the `Tool` trait, register what you need, own your capabilities.
+    No pre-packaged tools, no platform lock-in — a tool is just 3 methods: `name()`, `definition()`, `call()`, you register what you need, the Agent uses what you register, LLM freedom, precise and clean.
 
--   :material-chart-line:{ .lg .middle } **Observable**
+-   :material-chart-line:{ .lg .middle } **Fully Observable, Every Step Explainable**
 
     ---
 
-    Built-in turn logging, metrics, and tracing. Every decision is recorded, every outcome measurable.
+    Every decision is logged, every step is traceable, with built-in session logging, structured tracing, and session metrics at a glance — compliance and audit trails without the stress.
 
 </div>
 
@@ -56,14 +56,19 @@ General-purpose AI Agent Framework in Rust — simple, pure, predictable.
 
 ## Architecture
 
-``` title="Dependency Chain"
-agent-base (runtime kernel + Tool trait)
-    ↑
-agent-works (MCP, Skills, Focus)
-    ↑
-phi-agent (lib) ← framework, no tools
-    ↑
-Your App (CLI, web, etc.) ← you register tools here
+```mermaid
+graph TB
+    AB[agent-base<br/>Runtime kernel<br/>Tool trait · LLM clients]
+
+    AB --> AW[agent-works<br/>MCP · Skills · Focus]
+    AB --> PT[phi-tools<br/>LocalShellTool]
+    AB --> YT[your-tools<br/>Custom Tool impls]
+
+    AW --> PA
+    PT --> PA
+    YT --> PA
+
+    PA[phi-agent<br/>Builder factory · Renderers<br/>Config · Session · CLI]
 ```
 
 Each crate is a separate repository under [hibuka-labs](https://github.com/hibuka-labs). All built on Rust's async runtime with `Arc<dyn LlmClient>` for provider abstraction.

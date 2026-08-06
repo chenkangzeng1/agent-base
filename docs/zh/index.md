@@ -9,7 +9,7 @@ hide:
   phi-agent
 </h1>
 
-Rust 通用 AI Agent 框架 — 简单、纯粹、可预测。
+不是又一个 AI Agent，而是构建 Agent 应用的开放基座 — 专为嵌入式、边缘及垂直行业打造，同样适合高定制、高性能的云端和桌面 AI 应用，简单、纯粹、可控。
 
 <a href="guide/getting-started/" class="md-button md-button--primary" style="margin-right: 0.5rem">
   :octicons-arrow-right-24: &nbsp; 快速开始
@@ -22,33 +22,33 @@ Rust 通用 AI Agent 框架 — 简单、纯粹、可预测。
 
 <div class="grid cards" markdown>
 
--   :simple-rust:{ .lg .middle } **纯 Rust**
+-   :material-target:{ .lg .middle } **为垂直场景而生**
 
     ---
 
-    异步、类型安全、零成本抽象。一个二进制，从云端到边缘随处运行。
+    不是通用 chatbot，而是面向嵌入式、工业、IoT 等垂直领域，以及桌面、云端等高定制场景的 Agent 构建框架 — 你的场景，你定义工具，你掌控行为。
 
--   :material-lightbulb-on-outline:{ .lg .middle } **简单**
+-   :material-rocket-launch-outline:{ .lg .middle } **极致轻量，哪里都能跑**
 
     ---
 
-    无隐藏状态，无黑魔法。显式控制流 — 可读、可追踪、可信赖。
+    Rust 单二进制，无运行时依赖，从嵌入式 Linux、边缘网关到云端容器、桌面应用，`cargo install` 即用，随地部署。
 
 </div>
 
 <div class="grid cards" markdown>
 
--   :material-toy-brick-outline:{ .lg .middle } **你说了算**
+-   :material-puzzle-outline:{ .lg .middle } **零内置，全定制**
 
     ---
 
-    零内置工具。实现 `Tool` trait，按需注册，能力由你掌控。
+    不预设任何工具，不绑定任何平台，一个工具只需 3 个方法 — `name()`、`definition()`、`call()`，你注册什么，Agent 就用什么，只带你的场景真正需要的东西，LLM 自由，精准、干净、可控。
 
--   :material-chart-line:{ .lg .middle } **可观测**
+-   :material-chart-line:{ .lg .middle } **全程可观测，每一步可解释**
 
     ---
 
-    内置对话日志、指标采集、链路追踪。每个决策有记录，每次结果可度量。
+    每次决策有记录，每个步骤可追踪，内置会话日志与结构化追踪，会话指标一目了然，垂直场景合规审计无压力。
 
 </div>
 
@@ -56,14 +56,19 @@ Rust 通用 AI Agent 框架 — 简单、纯粹、可预测。
 
 ## 架构
 
-``` title="依赖链"
-agent-base (运行时内核 + Tool trait)
-    ↑
-agent-works (MCP, Skills, Focus)
-    ↑
-phi-agent (lib) ← 框架层，不含工具
-    ↑
-你的应用 (CLI, Web 等) ← 在这里注册工具
+```mermaid
+graph TB
+    AB[agent-base<br/>运行时内核<br/>Tool trait · LLM 客户端]
+
+    AB --> AW[agent-works<br/>MCP · Skills · Focus]
+    AB --> PT[phi-tools<br/>LocalShellTool]
+    AB --> YT[your-tools<br/>自定义工具实现]
+
+    AW --> PA
+    PT --> PA
+    YT --> PA
+
+    PA[phi-agent<br/>Builder 工厂 · 渲染器<br/>配置 · 会话 · CLI]
 ```
 
 每个 crate 都是 [hibuka-labs](https://github.com/hibuka-labs) 下的独立仓库。基于 Rust 异步运行时，通过 `Arc<dyn LlmClient>` 实现 LLM 提供商抽象。

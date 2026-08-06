@@ -131,7 +131,7 @@ LLM_MODEL=gpt-4o
 cargo run
 ```
 
-### 源码区别
+### 源码解读
 
 打开 `src/main.rs`，同样的 ClockTool，运行时变成单次调用：
 

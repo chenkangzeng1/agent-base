@@ -26,6 +26,7 @@ Security concerns include but are not limited to:
 
 | Version | Supported |
 |---------|-----------|
-| 0.1.x   | ✅ |
+| 0.2.x   | ✅ |
+| 0.1.x   | ❌ |
 
 Only the latest released version receives security patches.

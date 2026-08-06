@@ -5,6 +5,7 @@
 //! **Does not bundle any tools** — tools are injected by consumers.
 
 pub mod agent;
+pub mod bridge;
 pub mod cli;
 pub mod config;
 pub mod event_log;
@@ -16,10 +17,10 @@ pub mod session;
 // Only re-export the types consumers use most often.
 // For the full type set, import directly from agent-base.
 pub use agent_base::{
-    AgentBuilder, AgentError, AgentResult, AgentRuntime, ApprovalHandler, ConsecutiveFailureRecovery, LlmClient,
-    OpenAiClient, PlanItem, PlanStepStatus, ReasoningConfig, ReasoningEffort, RunOutcome, RuntimeEvent, SafetyConfig,
-    SessionId, Tool, ToolContext, ToolControlFlow, ToolOutput, TurnFactMiddleware, TurnToolLimitMiddleware,
-    UpdatePlanTool,
+    AgentBuilder, AgentError, AgentResult, AgentRuntime, ApprovalHandler, ApprovalRequest, ConsecutiveFailureRecovery,
+    LlmClient, Middleware, OpenAiClient, PlanItem, PlanStepStatus, PostLlmCtx, PreLlmCtx, ReasoningConfig,
+    ReasoningEffort, RunOutcome, RuntimeEvent, SafetyConfig, SessionId, Tool, ToolContext, ToolControlFlow,
+    ToolMetadata, ToolOutput, ToolPolicy, TurnFactMiddleware, TurnToolLimitMiddleware, UpdatePlanTool, UserMessageCtx,
 };
 
 // ── phi-telemetry (metrics types and storage) ──

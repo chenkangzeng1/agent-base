@@ -17,7 +17,7 @@ jobs:
     name: check (stable)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Checkout dependencies
         run: |
@@ -53,7 +53,7 @@ jobs:
       matrix:
         toolchain: [stable, beta]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Checkout dependencies
         run: |
@@ -86,7 +86,7 @@ jobs:
     name: doc
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Checkout dependencies
         run: |
@@ -101,3 +101,40 @@ jobs:
         run: cargo doc --no-deps --document-private-items
         env:
           RUSTDOCFLAGS: -D warnings
+
+  # ── Coverage ──
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Checkout dependencies
+        run: |
+          cd ..
+          for repo in agent-base agent-works phi-tools log-core; do
+            git clone --depth 1 "https://github.com/$DEPS_ORG/$repo.git"
+          done
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            ../agent-base
+            ../agent-works
+            ../phi-tools
+            ../log-core
+
+      - name: Install cargo-tarpaulin
+        run: cargo install cargo-tarpaulin
+
+      - name: Generate coverage
+        run: cargo tarpaulin --exclude-files 'src/bin/*' --out Xml
+
+      - name: Upload to codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: cobertura.xml
+          fail_ci_if_error: false

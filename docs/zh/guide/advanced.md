@@ -19,6 +19,109 @@ let builder = base_agent_builder(llm_client)
 - `TurnFactMiddleware` — 在每轮开始时注入事实/上下文
 - `TurnToolLimitMiddleware` — 强制执行 `max_tool_calls_per_turn` 限制
 
+### 自定义 Middleware
+
+实现 `Middleware` trait 可以在 Agent 循环的三个节点介入：
+
+```rust
+use phi_agent::{AgentResult, Middleware, PreLlmCtx, PostLlmCtx, UserMessageCtx};
+use async_trait::async_trait;
+
+struct LoggingMiddleware;
+
+#[async_trait]
+impl Middleware for LoggingMiddleware {
+    // 1. 用户发送消息时调用（最先触发）
+    async fn on_user_message(&self, ctx: &mut UserMessageCtx) -> AgentResult<()> {
+        tracing::info!(session = ?ctx.session_id, input = %ctx.user_input, "收到用户消息");
+        Ok(())
+    }
+
+    // 2. LLM 调用前调用（可修改消息列表或工具列表）
+    async fn on_pre_llm(&self, ctx: &mut PreLlmCtx) -> AgentResult<()> {
+        tracing::info!(session = ?ctx.session_id, msg_count = ctx.messages.len(), "准备调用 LLM");
+        Ok(())
+    }
+
+    // 3. LLM 响应后调用（可拦截输出、注入追问）
+    async fn on_post_llm(&self, ctx: &mut PostLlmCtx) -> AgentResult<()> {
+        tracing::info!(
+            session = ?ctx.session_id,
+            is_tool_call = ctx.is_tool_call,
+            tool_count = ctx.tool_calls.len(),
+            "LLM 响应完成"
+        );
+        Ok(())
+    }
+}
+
+builder = builder.middleware(LoggingMiddleware);
+```
+
+`PostLlmCtx` 关键字段：
+
+| 字段 | 类型 | 说明 |
+|-------|------|------|
+| `full_text` | `String` | LLM 的文本响应（纯工具调用时为空） |
+| `is_tool_call` | `bool` | LLM 是否请求了工具调用 |
+| `tool_calls` | `Vec<(id, name, args)>` | 解析后的工具调用列表 |
+| `available_tools` | `Vec<String>` | 当前注册的工具名称列表 |
+| `total_tool_calls` | `usize` | 本轮已执行的工具调用总数 |
+| `skip_push` | `bool` | 设为 `true` 可阻止当前响应写入会话历史 |
+| `follow_up_message` | `Option<String>` | 注入一条追问消息到 Agent 循环中 |
+
+### 自定义 ToolPolicy
+
+实现 `ToolPolicy` trait 可以控制工具的执行行为——审批、执行前检查、执行后审计：
+
+```rust
+use phi_agent::{AgentResult, ApprovalRequest, RiskLevel, ToolContext, ToolOutput, ToolPolicy};
+use async_trait::async_trait;
+use serde_json::Value;
+
+struct RiskAwarePolicy;
+
+#[async_trait]
+impl ToolPolicy for RiskAwarePolicy {
+    // 1. 判断工具调用是否需要用户审批（异步）
+    async fn evaluate_approval(&self, tool_name: &str, args: &Value) -> Option<ApprovalRequest> {
+        let command = args.get("command").and_then(Value::as_str).unwrap_or("");
+        if command.contains("rm ") || command.contains("sudo") {
+            return Some(ApprovalRequest {
+                title: "危险命令".into(),
+                message: format!("AI 准备执行：{command}"),
+                action_key: Some(format!("cmd:{command}")),
+                risk_level: RiskLevel::Destructive,
+                raw: Some(args.clone()),
+            });
+        }
+        None // 安全命令免审批
+    }
+
+    // 2. 工具执行前的同步检查——返回 Err 可中断执行
+    fn before_call(&self, tool_name: &str, _args: &Value, _ctx: &ToolContext) -> AgentResult<()> {
+        tracing::info!("即将执行工具：{tool_name}");
+        Ok(())
+    }
+
+    // 3. 工具执行成功后的同步回调——用于审计、埋点
+    fn after_call(
+        &self, tool_name: &str, _args: &Value, result: &ToolOutput, _ctx: &ToolContext,
+    ) -> AgentResult<()> {
+        tracing::info!(tool = tool_name, summary = %result.summary, "工具执行完成");
+        Ok(())
+    }
+}
+
+builder = builder.tool_policy(Arc::new(RiskAwarePolicy));
+```
+
+执行流程：`evaluate_approval` → （如需审批则等待用户）→ `before_call` → `tool.call()` → `after_call`。`before_call` 返回 `Err` 时工具被中断，`after_call` 不会执行。
+
+> 💡 完整可运行示例：[`examples/custom-policy.rs`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/custom-policy.rs)，
+> 同时演示了自定义 Middleware 和 ToolPolicy。
+> 执行 `cargo run --example custom-policy` 即可运行，无需 API key。
+
 ## 审批处理器
 
 控制哪些工具调用需要人工确认：
@@ -155,4 +258,21 @@ use agent_base::ConsecutiveFailureRecovery;
 builder = builder.error_recovery(Arc::new(
     ConsecutiveFailureRecovery::new(3)
 ));
+```
+
+## 延伸阅读
+
+仓库中的可运行示例：
+
+| 示例 | 说明 | API Key |
+|---------|-------------|:-------:|
+| [`custom-policy`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/custom-policy.rs) | 自定义 Middleware + ToolPolicy，事件流演示 | ❌ |
+| [`hello-agent`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/hello-agent.rs) | 最小化 Agent 启动 | ✅ |
+| [`custom-tool`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/custom-tool.rs) | 实现自定义 Tool | ✅ |
+| [`multi-tool`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/multi-tool.rs) | 注册多个工具 | ✅ |
+| [`focus-demo`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/focus-demo.rs) | Focus 功能 | ✅ |
+
+执行 `cargo run --example <名称>` 即可运行，例如：
+```bash
+cargo run --example custom-policy
 ```

@@ -3,12 +3,16 @@
 [![CI](https://github.com/hibuka-labs/phi-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/hibuka-labs/phi-agent/actions)
 [![Crates.io](https://img.shields.io/crates/v/phi-agent.svg)](https://crates.io/crates/phi-agent)
 [![Docs.rs](https://docs.rs/phi-agent/badge.svg)](https://docs.rs/phi-agent)
+[![codecov](https://codecov.io/gh/hibuka-labs/phi-agent/branch/master/graph/badge.svg)](https://codecov.io/gh/hibuka-labs/phi-agent)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Documentation](https://img.shields.io/badge/docs-book-green.svg)](https://docs.phi-agent.dev)
+[![PyPI](https://img.shields.io/pypi/v/phi-agent.svg)](https://pypi.org/project/phi-agent/)
 
-通用 AI Agent 框架，基于 Rust 构建，底层依赖 [agent-base](https://crates.io/crates/agent-base) 和 [agent-works](https://crates.io/crates/agent-works)。
+不是又一个 AI Agent，而是构建 Agent 应用的开放基座 — 专为嵌入式、边缘及垂直行业打造，同样适合高定制、高性能的云端和桌面 AI 应用，简单、纯粹、可控。
 
-**phi-agent 提供基础设施。工具由你来定义。**
+> **与 LangChain、CrewAI、AutoGen 不同，phi-agent 不内置任何工具。** 没有预设的工具集，没有隐藏的 prompt 工程，没有黑盒的 workflow 引擎 — 只是一个干净的 Rust 运行时。每个工具由你定义，所有行为由你掌控。
+
+基于 [agent-base](https://crates.io/crates/agent-base) 和 [agent-works](https://crates.io/crates/agent-works) 构建。**phi-agent 提供基础设施，工具由你来定义。**
 
 ## 生态
 
@@ -22,52 +26,71 @@ phi-agent 是一组独立 crate 的成员：
 
 **只需要运行时？** `cargo add agent-base`。**需要完整框架？** `cargo add phi-agent`。
 
+## SDK
+
+更喜欢 Python？phi-agent 支持多语言 — 用你喜欢的语言编写工具，同一套 Rust 运行时驱动。
+
+| 语言 | 安装 | 版本 |
+|------|------|------|
+| Python | `pip install phi-agent` | [![PyPI](https://img.shields.io/pypi/v/phi-agent.svg)](https://pypi.org/project/phi-agent/) |
+
+### Python
+
+```bash
+pip install phi-agent
+```
+
+```python
+from phi_agent import Agent, tool
+
+@tool
+async def search(query: str) -> str:
+    """搜索网页。"""
+    return f"搜索结果: {query}"
+
+agent = Agent(model="gpt-4o")
+agent.register(search)
+
+async for event in agent.run("今天有什么新闻?"):
+    print(event)
+```
+
+Python SDK 通过 stdio 与 `phi` Rust 二进制通信 — 你用 Python 写工具，Rust 运行时负责 Agent 循环、LLM 调用和事件流。
+
+📖 [Python SDK 文档 →](https://pypi.org/project/phi-agent/)
+
 ## 架构
 
-```
-                      ┌─────────────────────┐
-                      │     agent-base       │
-                      │  Tool trait · 运行时  │
-                      │  LLM 客户端 · 事件     │
-                      └──────────┬──────────┘
-                                 │
-          ┌──────────────────────┼──────────────────────┐
-          │                      │                      │
-┌─────────▼─────────┐  ┌────────▼────────┐  ┌──────────▼──────────┐
-│    agent-works     │  │   phi-tools     │  │     你的工具         │
-│  MCP · Skills      │  │ LocalShellTool  │  │  自定义 Tool 实现    │
-│  Focus             │  │                 │  │                     │
-└─────────┬─────────┘  └────────┬────────┘  └──────────┬──────────┘
-          │                      │                      │
-          └──────────────────────┼──────────────────────┘
-                                 │
-                      ┌──────────▼──────────┐
-                      │     phi-agent        │
-                      │  Builder 工厂        │
-                      │  渲染器 (3 种)       │
-                      │  配置 · 会话管理     │
-                      │  CLI (phi)            │
-                      └──────────┬──────────┘
-                                 │
-                    ┌────────────┼────────────┐
-                    │            │            │
-              ┌─────▼────┐ ┌────▼─────┐ ┌────▼─────┐
-              │ Terminal  │ │  JSON    │ │   Web    │
-              │   REPL    │ │  Stream  │ │  后端     │
-              └───────────┘ └──────────┘ └──────────┘
+```mermaid
+graph TB
+    AB[agent-base<br/>Tool trait · 运行时<br/>LLM 客户端 · 事件]
+
+    AB --> AW[agent-works<br/>MCP · Skills · Focus]
+    AB --> PT[phi-tools<br/>LocalShellTool]
+    AB --> YT[你的工具<br/>自定义 Tool 实现]
+
+    AW --> PA
+    PT --> PA
+    YT --> PA
+
+    PA[phi-agent<br/>Builder 工厂<br/>渲染器 · 配置 · 会话管理<br/>CLI binary]
+
+    PA --> Terminal[Terminal REPL]
+    PA --> JSON[JSON Stream]
+    PA --> Web[Web 后端]
 ```
 
-**核心理念**：phi-agent 本身**不内置**任何工具。它提供 agent builder 工厂、渲染器、配置解析和会话管理——工具由消费方注入。
+**核心理念**：phi-agent **不内置**任何工具。工具由你定义、由你注册，phi-agent 在运行时自动发现、管理和调度——工具列表可查、调用可追踪。
 
 ## 为什么选择 phi-agent
 
-**Rust。** 单二进制文件，无运行时依赖。`cargo install` 即可使用。内存安全，不易崩溃，性能出色。随处部署——从云服务器到边缘设备。
+**为垂直场景而生。** 不是通用 chatbot，而是面向嵌入式、工业、IoT 等垂直领域，以及桌面、云端等高定制场景的 Agent 构建框架 — 你的场景，你定义工具，你掌控行为。
 
-**简单。** 无隐藏状态，无黑魔法。显式控制流，可读、可追踪、可信赖。一个工具只需 3 个方法 — `name()`、`definition()`、`call()`。
+**极致轻量，哪里都能跑。** Rust 单二进制，无运行时依赖，从嵌入式 Linux、边缘网关到云端容器、桌面应用，`cargo install` 即用，随地部署。
 
-**你的工具，你的规则。** phi-agent 零内置工具。你提供工具，你拥有完全控制权。没有供应商锁定。
+**零内置，全定制。** 不预设任何工具，不绑定任何平台，一个工具只需 3 个方法 — `name()`、`definition()`、`call()`，你注册什么，Agent 就用什么，只带你的场景真正需要的东西，LLM 自由，精准、干净、可控。
 
-**可观测。** 内置对话日志、会话指标、链路追踪。每个决策有记录，每次结果可度量。Agent 的每一步都有据可查。
+**全程可观测，每一步可解释。** 每次决策有记录，每个步骤可追踪，内置会话日志与结构化追踪，会话指标一目了然，垂直场景合规审计无压力。
 
 ## 特性
 
@@ -262,6 +285,23 @@ agent-base 是运行时内核（LLM 调用、工具编排、事件流）。phi-a
 ## 参与贡献
 
 参见 [CONTRIBUTING.md](CONTRIBUTING.md) 了解开发环境搭建和 PR 流程。
+
+## 贡献者
+
+感谢所有为这个项目做出贡献的人：
+
+<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
+<!-- prettier-ignore-start -->
+<!-- markdownlint-disable -->
+<table>
+  <tr>
+    <td align="center"><a href="https://github.com/shard872"><img src="https://github.com/shard872.png" width="100px;" alt=""/><br /><sub><b>shard872</b></sub></a><br /><a href="https://github.com/hibuka-labs/phi-agent/pull/7" title="Code">💻</a></td>
+    <td align="center"><a href="https://github.com/Krshs90"><img src="https://github.com/Krshs90.png" width="100px;" alt=""/><br /><sub><b>Krish Shah</b></sub></a><br /><a href="https://github.com/hibuka-labs/phi-agent/pull/8" title="Code">💻</a></td>
+  </tr>
+</table>
+<!-- ALL-CONTRIBUTORS-LIST:END -->
+
+([emoji key](https://allcontributors.org/docs/en/emoji-key)) — 本项目遵循 [all-contributors](https://github.com/all-contributors/all-contributors) 规范。
 
 ## 许可证
 

@@ -3,12 +3,16 @@
 [![CI](https://github.com/hibuka-labs/phi-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/hibuka-labs/phi-agent/actions)
 [![Crates.io](https://img.shields.io/crates/v/phi-agent.svg)](https://crates.io/crates/phi-agent)
 [![Docs.rs](https://docs.rs/phi-agent/badge.svg)](https://docs.rs/phi-agent)
+[![codecov](https://codecov.io/gh/hibuka-labs/phi-agent/branch/master/graph/badge.svg)](https://codecov.io/gh/hibuka-labs/phi-agent)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Documentation](https://img.shields.io/badge/docs-book-green.svg)](https://docs.phi-agent.dev)
+[![PyPI](https://img.shields.io/pypi/v/phi-agent.svg)](https://pypi.org/project/phi-agent/)
 
-A general-purpose AI Agent framework in Rust, built on [agent-base](https://crates.io/crates/agent-base) and [agent-works](https://crates.io/crates/agent-works).
+Not another AI Agent, but an open application framework for building Agents — purpose-built for embedded, edge, and vertical industries, equally suited for highly customizable, high-performance cloud and desktop AI applications. Simple, pure, predictable.
 
-**phi-agent provides the infrastructure. You bring the tools.**
+> **Unlike LangChain, CrewAI, or AutoGen, phi-agent ships with zero built-in tools.** No pre-packaged toolkits, no hidden prompt engineering, no magic workflow engine — just a clean Rust runtime. You define every tool, you control every behavior.
+
+Built on [agent-base](https://crates.io/crates/agent-base) and [agent-works](https://crates.io/crates/agent-works). **phi-agent provides the infrastructure. You bring the tools.**
 
 ## Ecosystem
 
@@ -22,52 +26,70 @@ phi-agent is part of a family of independent crates:
 
 **Just need the runtime?** `cargo add agent-base`. **Need the full framework?** `cargo add phi-agent`.
 
+## SDKs
+
+Prefer Python? phi-agent supports multiple languages — write tools in your favorite language, powered by the same Rust runtime.
+
+| Language | Package | Version |
+|----------|---------|---------|
+| Python | `pip install phi-agent` | [![PyPI](https://img.shields.io/pypi/v/phi-agent.svg)](https://pypi.org/project/phi-agent/) |
+
+### Python
+
+```bash
+pip install phi-agent
+```
+
+```python
+from phi_agent import Agent, tool
+
+@tool
+async def search(query: str) -> str:
+    """Search the web."""
+    return f"Results for: {query}"
+
+agent = Agent(model="gpt-4o")
+agent.register(search)
+
+async for event in agent.run("What's new today?"):
+    print(event)
+```
+
+The Python SDK communicates with the `phi` Rust binary over stdio — you write tools in Python, and the Rust runtime handles the agent loop, LLM calls, and event streaming.
+
+📖 [Python SDK docs →](https://pypi.org/project/phi-agent/)
+
 ## Architecture
 
-```
-                      ┌─────────────────────┐
-                      │     agent-base       │
-                      │  Tool trait · Runtime │
-                      │  LLM clients · Events  │
-                      └──────────┬──────────┘
-                                 │
-          ┌──────────────────────┼──────────────────────┐
-          │                      │                      │
-┌─────────▼─────────┐  ┌────────▼────────┐  ┌──────────▼──────────┐
-│    agent-works     │  │   phi-tools     │  │    your-tools       │
-│  MCP · Skills      │  │ LocalShellTool  │  │ Custom Tool impls   │
-│  Focus             │  │                 │  │                     │
-└─────────┬─────────┘  └────────┬────────┘  └──────────┬──────────┘
-          │                      │                      │
-          └──────────────────────┼──────────────────────┘
-                                 │
-                      ┌──────────▼──────────┐
-                      │     phi-agent        │
-                      │  Builder factory     │
-                      │  Renderers (3)       │
-                      │  Config · Session    │
-                      │  CLI (phi)            │
-                      └──────────┬──────────┘
-                                 │
-                    ┌────────────┼────────────┐
-                    │            │            │
-              ┌─────▼────┐ ┌────▼─────┐ ┌────▼─────┐
-              │ Terminal  │ │  JSON    │ │   Web    │
-              │   REPL    │ │  Stream  │ │ Backend  │
-              └───────────┘ └──────────┘ └──────────┘
+```mermaid
+graph TB
+    AB[agent-base<br/>Tool trait · Runtime<br/>LLM clients · Events]
+
+    AB --> AW[agent-works<br/>MCP · Skills · Focus]
+    AB --> PT[phi-tools<br/>LocalShellTool]
+    AB --> YT[your-tools<br/>Custom Tool impls]
+
+    AW --> PA[phi-agent<br/>Builder factory<br/>Renderers · Config · Session<br/>CLI binary]
+
+    PT --> PA
+    YT --> PA
+
+    PA --> Terminal[Terminal REPL]
+    PA --> JSON[JSON Stream]
+    PA --> Web[Web Backend]
 ```
 
-**Core principle**: phi-agent itself does **not** bundle any tools. It provides the agent builder factory, renderers, config resolution, and session management — tools are injected by consumers.
+**Core principle**: phi-agent ships with **zero** built-in tools. You define them, you register them. phi-agent discovers and manages them at runtime — listing, logging, and routing tool calls automatically.
 
 ## Why phi-agent
 
-**Rust.** Single binary, no runtime dependency. `cargo install` and you're done. Memory-safe, crash-resistant, fast. Deploy anywhere — from cloud servers to edge devices.
+**Built for Vertical Scenarios.** Not a generic chatbot, but an Agent framework for embedded systems, industrial, IoT, and other vertical domains, as well as desktop and cloud applications that demand deep customization — your scenario, your tools, your full control.
 
-**Simple.** No hidden state, no magic. Explicit control flow that's easy to read, trace, and trust. A tool is 3 methods — `name()`, `definition()`, `call()`.
+**Lightweight, Runs Anywhere.** A single Rust binary with zero runtime dependencies — from embedded Linux and edge gateways to cloud containers and desktop applications, `cargo install` gets you started in seconds, deploy anywhere.
 
-**Your tools, your rules.** phi-agent has zero built-in tools. You bring them, you own them. No vendor lock-in.
+**Zero Built-in Tools, Fully Customizable.** No pre-packaged tools, no platform lock-in — a tool is just 3 methods: `name()`, `definition()`, `call()`, you register what you need, the Agent uses what you register, only bring what your scenario truly needs, LLM freedom, precise and clean.
 
-**Observable.** Built-in turn logging, session metrics, and tracing. Every decision is recorded, every outcome is measurable. Know exactly what your agent did and why.
+**Fully Observable, Every Step Explainable.** Every decision is logged, every step is traceable, with built-in session logging, structured tracing, and session metrics at a glance — compliance and audit trails without the stress.
 
 ## Features
 
@@ -263,6 +285,23 @@ cargo check
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed setup instructions and PR guidelines.
+
+## Contributors
+
+Thanks goes to these wonderful people:
+
+<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
+<!-- prettier-ignore-start -->
+<!-- markdownlint-disable -->
+<table>
+  <tr>
+    <td align="center"><a href="https://github.com/shard872"><img src="https://github.com/shard872.png" width="100px;" alt=""/><br /><sub><b>shard872</b></sub></a><br /><a href="https://github.com/hibuka-labs/phi-agent/pull/7" title="Code">💻</a></td>
+    <td align="center"><a href="https://github.com/Krshs90"><img src="https://github.com/Krshs90.png" width="100px;" alt=""/><br /><sub><b>Krish Shah</b></sub></a><br /><a href="https://github.com/hibuka-labs/phi-agent/pull/8" title="Code">💻</a></td>
+  </tr>
+</table>
+<!-- ALL-CONTRIBUTORS-LIST:END -->
+
+([emoji key](https://allcontributors.org/docs/en/emoji-key)) — This project follows the [all-contributors](https://github.com/all-contributors/all-contributors) specification.
 
 ## License
 

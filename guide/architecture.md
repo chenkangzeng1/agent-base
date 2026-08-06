@@ -20,14 +20,23 @@ All crates use pure version dependencies — no monorepo, no path tricks.
 
 ## Dependency Chain
 
-```
-agent-base (runtime kernel + Tool trait)
-    ↑
-agent-works (MCP, Skills, Focus)
-    ↑
-phi-agent (lib) ← framework, no tools
-    ↑
-phi (bin) ← CLI, registers tools here
+```mermaid
+graph TB
+    AB[agent-base<br/>Runtime kernel<br/>Tool trait · LLM clients · Events]
+
+    AB --> AW[agent-works<br/>MCP · Skills · Focus]
+    AB --> PT[phi-tools<br/>LocalShellTool]
+    AB --> YT[your-tools<br/>Custom Tool impls]
+    AB --> PTEL[phi-telemetry<br/>Metrics · Cost tracking]
+    AB --> LOG[log-core<br/>Structured logging]
+
+    AW --> PA
+    PT --> PA
+    YT --> PA
+    PTEL -.-> PA
+    LOG -.-> PA
+
+    PA[phi-agent<br/>Builder factory · Renderers<br/>Config · Session · CLI]
 ```
 
 ## Crate Responsibilities
@@ -37,7 +46,20 @@ The runtime kernel — `cargo add agent-base` if you just want the engine:
 - `AgentRuntime` — core event loop (LLM chat → tool calls → repeat)
 - `Tool` trait — interface all tools implement
 - `LlmClient` trait — abstraction over LLM providers
-- `RuntimeEvent` — all events emitted during a turn
+- `RuntimeEvent` — all events emitted during a turn:
+
+| Variant | Trigger | Key fields |
+|---------|---------|-------------|
+| `TextDelta` | LLM text streaming | `text` |
+| `ThoughtDelta` | LLM thinking / reasoning | `text` |
+| `ToolCallStarted` | Tool execution begins | `tool_name`, `args_json` |
+| `ToolCallFinished` | Tool execution ends (success / error) | `tool_name`, `summary` |
+| `AwaitingApproval` | Tool requires user approval | `request` (risk_level, action_key) |
+| `PlanUpdated` | Task plan created or updated | `objective`, `plan[]` |
+| `UserEvent` | Custom event emitted by tool during execution | `event` (Progress / Structured / SubAgentEvent) |
+| `RunFinished` | Turn completed | — |
+| `RunCancelled` | Turn cancelled | — |
+| `Checkpoint` | State checkpoint (reserved) | `checkpoint` |
 - `AgentBuilder` — builder pattern for assembling an agent
 - `TurnContext` + `on_turn_end` hook — observability interface (exposes raw data, no metrics logic)
 
@@ -102,3 +124,17 @@ it only exposes `TurnContext` data through an `on_turn_end` hook.
 
 See the full [observability design doc](https://github.com/hibuka-labs/phi-agent/blob/master/docs/observability-design.md)
 for the complete specification, phi-dash plans, and analysis workflows.
+
+## Key Design Decisions
+
+### No Built-in Tools
+phi-agent knows nothing about specific tools. Tools are registered externally via `AgentBuilder::register_tool()`. Keeps the framework lean and the consumer in full control.
+
+### No Built-in Memory
+No vector DB, no embeddings storage, no hidden state. Every decision is traceable to the prompt.
+
+### Observability by Default
+Every session writes `session_metrics.json` automatically. Token usage, latency distribution, tool call stats are all recorded. Use `phi metrics` to view. See [Observability](observability.md).
+
+### Session Isolation
+Each session has its own directory and file lock, preventing concurrent access from multiple processes. See [Advanced Usage](advanced.md).

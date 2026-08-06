@@ -60,3 +60,72 @@ pub fn create_renderer(format: &OutputFormat, writer: Option<Box<dyn Write + Sen
 pub fn create_stdout_renderer(format: &OutputFormat) -> Box<dyn EventRenderer> {
     create_renderer(format, None)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agent_base::SessionId;
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+
+    struct SharedWriter {
+        inner: Arc<Mutex<Vec<u8>>>,
+    }
+
+    impl Write for SharedWriter {
+        fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+            self.inner.lock().unwrap().extend_from_slice(data);
+            Ok(data.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn session_id() -> SessionId {
+        SessionId { id: 1, external_id: None }
+    }
+
+    #[test]
+    fn test_create_terminal_renderer() {
+        let (writer, buf) = {
+            let inner = Arc::new(Mutex::new(Vec::new()));
+            (SharedWriter { inner: inner.clone() }, inner)
+        };
+        let format = OutputFormat::Terminal { show_thinking: true, show_tool_args: true, color: false };
+        let mut r = create_renderer(&format, Some(Box::new(writer)));
+        r.render(RuntimeEvent::TextDelta { session_id: session_id(), text: "hello".into() }).unwrap();
+        drop(r);
+        let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        assert!(out.contains("hello"));
+        assert!(!out.contains('\x1b')); // color disabled
+    }
+
+    #[test]
+    fn test_create_json_renderer() {
+        let (writer, buf) = {
+            let inner = Arc::new(Mutex::new(Vec::new()));
+            (SharedWriter { inner: inner.clone() }, inner)
+        };
+        let mut r = create_renderer(&OutputFormat::Json, Some(Box::new(writer)));
+        r.render(RuntimeEvent::TextDelta { session_id: session_id(), text: "world".into() }).unwrap();
+        drop(r);
+        let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+        assert_eq!(v["type"], "text_delta");
+    }
+
+    #[test]
+    fn test_create_quiet_renderer() {
+        let (writer, buf) = {
+            let inner = Arc::new(Mutex::new(Vec::new()));
+            (SharedWriter { inner: inner.clone() }, inner)
+        };
+        let mut r = create_renderer(&OutputFormat::Quiet, Some(Box::new(writer)));
+        r.render(RuntimeEvent::TextDelta { session_id: session_id(), text: "quiet".into() }).unwrap();
+        r.finish_turn().unwrap();
+        drop(r);
+        let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        assert!(out.is_empty());
+    }
+}
