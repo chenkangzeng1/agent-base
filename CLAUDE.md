@@ -8,9 +8,7 @@ A general-purpose AI Agent framework in Rust, built on `agent-base` and `agent-w
 **phi-agent itself does NOT bundle any tools.** It provides infrastructure only (builder factory, renderers, config, session management). Tools are implemented in `phi-tools` and injected by consumers (CLI, web, etc.).
 
 ### Current Branch
-`master` — the public open-source branch. **Does NOT include browser automation tools.**
-
-Browser tools (21 tools via CDP) live on the `browser-tools` branch and in phi-tools' `browser-tools` branch. Not yet open-sourced.
+`master` — the public open-source branch. Browser automation tools (21 tools via CDP) are included behind the `browser` feature gate. Enable with `cargo build --features browser` or `phi --features browser`.
 
 ### Dependency Chain
 
@@ -140,7 +138,7 @@ phi-agent/
 - **No built-in memory** — no vector DB, no hidden state. Predictable and debuggable.
 - **OpenAI-compatible CLI** — CLI uses OpenAiClient; Anthropic requires AnthropicClient (code change)
 - **China-first prompt** — build_system_prompt_cn() for GFW-aware environments
-- **Browser tools separated** — kept on browser-tools branch, not on master
+- **Browser tools behind feature gate** — 21 CDP tools available via `--features browser`
 
 ### Pre-Commit Checklist (MANDATORY)
 
@@ -201,5 +199,5 @@ docs.phi-agent.dev (域名: phiagent.dev, 注册商: 22net)
 ### Gotchas
 
 - **log-core** uses `main` as default branch (not `master`) on GitHub — push to `main` not `master`
-- **Phi-tools** has a separate `browser-tools` branch not yet on master
+- **Phi-tools** browser tools are on master behind `browser` feature flag — no separate branch needed
 - CI clones all 5 repos as siblings with `--depth 1`, so pushed code must be on the default branch
