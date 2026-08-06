@@ -9,6 +9,8 @@
 
 Not another AI Agent, but an open application framework for building Agents — purpose-built for embedded, edge, and vertical industries, equally suited for highly customizable, high-performance cloud and desktop AI applications. Simple, pure, predictable.
 
+> **Unlike LangChain, CrewAI, or AutoGen, phi-agent ships with zero built-in tools.** No pre-packaged toolkits, no hidden prompt engineering, no magic workflow engine — just a clean Rust runtime. You define every tool, you control every behavior.
+
 Built on [agent-base](https://crates.io/crates/agent-base) and [agent-works](https://crates.io/crates/agent-works). **phi-agent provides the infrastructure. You bring the tools.**
 
 ## Ecosystem
@@ -208,6 +210,17 @@ cargo check
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed setup instructions and PR guidelines.
+
+## Contributors
+
+Thanks goes to these wonderful people:
+
+<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
+<!-- prettier-ignore-start -->
+<!-- markdownlint-disable -->
+<!-- ALL-CONTRIBUTORS-LIST:END -->
+
+([emoji key](https://allcontributors.org/docs/en/emoji-key)) — This project follows the [all-contributors](https://github.com/all-contributors/all-contributors) specification.
 
 ## License
 

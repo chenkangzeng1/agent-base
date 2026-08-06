@@ -9,6 +9,8 @@
 
 不是又一个 AI Agent，而是构建 Agent 应用的开放基座 — 专为嵌入式、边缘及垂直行业打造，同样适合高定制、高性能的云端和桌面 AI 应用，简单、纯粹、可控。
 
+> **与 LangChain、CrewAI、AutoGen 不同，phi-agent 不内置任何工具。** 没有预设的工具集，没有隐藏的 prompt 工程，没有黑盒的 workflow 引擎 — 只是一个干净的 Rust 运行时。每个工具由你定义，所有行为由你掌控。
+
 基于 [agent-base](https://crates.io/crates/agent-base) 和 [agent-works](https://crates.io/crates/agent-works) 构建。**phi-agent 提供基础设施，工具由你来定义。**
 
 ## 生态
@@ -208,6 +210,17 @@ agent-base 是运行时内核（LLM 调用、工具编排、事件流）。phi-a
 ## 参与贡献
 
 参见 [CONTRIBUTING.md](CONTRIBUTING.md) 了解开发环境搭建和 PR 流程。
+
+## 贡献者
+
+感谢所有为这个项目做出贡献的人：
+
+<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
+<!-- prettier-ignore-start -->
+<!-- markdownlint-disable -->
+<!-- ALL-CONTRIBUTORS-LIST:END -->
+
+([emoji key](https://allcontributors.org/docs/en/emoji-key)) — 本项目遵循 [all-contributors](https://github.com/all-contributors/all-contributors) 规范。
 
 ## 许可证
 

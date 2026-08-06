@@ -1,70 +1,67 @@
 # Contributing to phi-agent
 
-Thanks for your interest in contributing! This guide will help you get set up.
+Thanks for your interest in contributing! This guide gets you from clone to PR in minutes.
 
-## Development environment
-
-### Prerequisites
-
-- Rust toolchain (stable, edition 2024): [rustup.rs](https://rustup.rs)
-- An LLM API key (OpenAI-compatible) for testing the agent
-
-### Clone and build
-
-Since phi-agent depends on sibling crates that live in separate repos, clone them alongside:
+## Quick Start (5 min)
 
 ```bash
 git clone https://github.com/hibuka-labs/phi-agent.git
 cd phi-agent
-
-# Clone dependencies into sibling directories
-cd ..
-for repo in agent-base agent-works phi-tools log-core; do
-  git clone "https://github.com/hibuka-labs/$repo.git"
-done
-cd phi-agent
-
-# Build
-cargo build
-
-# Run tests
-cargo test
-
-# Run the CLI
-cargo run -- "Hello, world!"
+cargo build        # pulls dependencies from crates.io automatically
+cargo test         # make sure everything passes
 ```
 
-### Before submitting a PR
+**That's it.** phi-agent uses pure crates.io dependencies — `cargo build` downloads everything you need. You don't need to clone any other repository for most contributions.
+
+## Finding Something to Work On
+
+- **[Good First Issues](https://github.com/hibuka-labs/phi-agent/labels/good%20first%20issue)** — small, well-scoped tasks ideal for new contributors. Each one explains what to change and how to verify it.
+- **[Help Wanted](https://github.com/hibuka-labs/phi-agent/labels/help%20wanted)** — larger features or improvements the maintainers would love help with.
+- **Got your own idea?** Open an issue first to discuss it before writing code — saves you time if it doesn't fit the roadmap.
+
+## Before Submitting a PR
 
 ```bash
-cargo fmt --all --check    # Formatting
-cargo clippy --all-targets -- -D warnings  # Linting
-cargo build                # Compilation
-cargo test                 # Tests
-cargo doc --no-deps        # Documentation
+cargo fmt --check    # Formatting
+cargo clippy --all-targets -- -D warnings   # Linting
+cargo test           # Tests
 ```
 
-All checks must pass. CI runs these automatically on every PR.
+All three must pass. CI runs them automatically on every PR, so save yourself a round-trip.
 
-## Project structure
+## Pull Request Checklist
 
-See [design.md](docs/design.md) for the architecture overview.
+1. Create a feature branch from `master`
+2. Make your changes, with tests if applicable
+3. Run the checks above (`fmt`, `clippy`, `test`)
+4. Add an entry to `CHANGELOG.md` under `[Unreleased]`
+5. Open a PR with a clear description of **what** and **why**
 
-Key principle: **phi-agent does not bundle any tools.** Tool implementations live in `phi-tools`. The framework provides infrastructure only.
+## Review Timeline
 
-## Commit conventions
+We review PRs within **48 hours**. Small, focused PRs (one logical change) get merged faster. If your PR is large, consider breaking it up.
 
-- Use present tense, imperative mood: "add feature" not "added feature"
-- Keep commits focused — one logical change per commit
+## Commit Style
+
+- Present tense, imperative mood: "add feature" not "added feature"
+- One logical change per commit
 - Reference issues with `#123` when applicable
 
-## Pull request process
+## Advanced: Working Across Crates
 
-1. Fork the repo and create a feature branch from `master`
-2. Make your changes, with tests if applicable
-3. Ensure CI is green (`cargo fmt`, `cargo clippy`, `cargo test`)
-4. Update `CHANGELOG.md` under `[Unreleased]`
-5. Open a PR with a clear description of what and why
+If your change requires modifying a sibling crate (agent-base, agent-works, etc.) simultaneously:
+
+```bash
+# Clone the dependency alongside phi-agent
+cd ..
+git clone https://github.com/hibuka-labs/agent-base.git
+cd phi-agent
+
+# Temporarily add a path override in Cargo.toml (DO NOT COMMIT):
+# agent-base = { version = "0.1.11", path = "../agent-base" }
+```
+
+Remove the `path` override before committing. See [CLAUDE.md](CLAUDE.md) for details on the multi-repo workflow.
 
 ## Questions?
 
