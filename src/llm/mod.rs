@@ -51,7 +51,7 @@ pub struct ReasoningConfig {
 }
 
 /// Reasoning intensity/depth enumeration.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum ReasoningEffort {
     None,
     Low,
