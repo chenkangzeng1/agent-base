@@ -11,7 +11,7 @@ use crate::agent::builder::base_agent_builder;
 ///
 /// This config covers model and safety settings only. Tools are registered
 /// externally on [`AgentBuilder`] — phi-agent itself never bundles tools.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct PhiAgentConfig {
     /// Model name passed to the LLM provider (e.g. `"opus"`, `"gpt-4o"`).
     pub model: String,
@@ -27,19 +27,6 @@ pub struct PhiAgentConfig {
     /// React-loop iteration cap for a single run (one user input).
     /// `None` means use the builder default (200 in [`base_agent_builder`]).
     pub max_turns: Option<u32>,
-}
-
-impl Default for PhiAgentConfig {
-    fn default() -> Self {
-        Self {
-            model: String::new(),
-            enable_thinking: false,
-            thinking_budget: None,
-            thinking_effort: ReasoningEffort::default(),
-            safety: SafetyConfig::default(),
-            max_turns: None,
-        }
-    }
 }
 
 /// A built Agent instance.
