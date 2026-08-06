@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-08-06
+
+### Added
+- Good first issue suggestions and PR template for community contributions
+- Contributors section in README with all-contributors placeholder
+
+### Changed
+- Refactored CLI — split `main.rs` into `run.rs` and `metrics.rs` submodules
+- Rewritten CONTRIBUTING.md with single-repo quick start and 48h review SLA
+- Added differentiation vs other frameworks (LangChain, CrewAI, AutoGen) to README
+- Added community maintenance guidelines to CLAUDE.md
+
+### Fixed
+- Bridge `ProxyTool` now passes through real description and parameters instead of hardcoded values
+
 ## [0.2.7] - 2026-08-05
 
 ### Added
@@ -83,7 +98,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - LLM config resolution (CLI > env > .env > default)
 - `LocalShellTool` (via phi-tools)
 
-[Unreleased]: https://github.com/hibuka-labs/phi-agent/compare/v0.2.7...HEAD
+[Unreleased]: https://github.com/hibuka-labs/phi-agent/compare/v0.2.8...HEAD
+[0.2.8]: https://github.com/hibuka-labs/phi-agent/compare/v0.2.7...v0.2.8
 [0.2.7]: https://github.com/hibuka-labs/phi-agent/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/hibuka-labs/phi-agent/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/hibuka-labs/phi-agent/compare/v0.2.4...v0.2.5
