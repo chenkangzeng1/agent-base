@@ -34,7 +34,7 @@ pub fn base_agent_builder(llm_client: Arc<dyn agent_base::LlmClient>) -> AgentBu
                     "PHI_MAX_TOOL_OUTPUT_CHARS is not a valid integer; falling back to default 4000"
                 );
                 4000
-            }
+            },
         },
         Err(_) => 4000,
     };
