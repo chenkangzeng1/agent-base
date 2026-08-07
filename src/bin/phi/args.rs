@@ -150,8 +150,14 @@ pub enum SubCommand {
         #[arg(long)]
         lib: bool,
     },
-    /// Start the bridge server for SDK consumption (stdio NDJSON protocol).
-    Serve,
+    /// Start the MCP server (stdio or HTTP JSON-RPC 2.0).
+    /// External orchestrators can call the `run` tool to delegate tasks.
+    Serve {
+        /// Use HTTP transport (SSE streaming) on the given port.
+        /// Without this flag, stdio mode is used by default.
+        #[arg(long, value_name = "PORT")]
+        http: Option<u16>,
+    },
 }
 
 #[derive(Subcommand, Debug)]

@@ -34,7 +34,7 @@ async fn main() -> Result<()> {
         match cmd {
             SubCommand::Init { name, lib } => return init::run(name, *lib),
             SubCommand::Metrics { cmd } => return metrics::handle_metrics(cmd, &args),
-            SubCommand::Serve => return serve::run().await,
+            SubCommand::Serve { http } => return serve::run(*http).await,
         }
     }
 

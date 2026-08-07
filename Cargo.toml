@@ -12,7 +12,7 @@ categories = ["development-tools", "command-line-utilities", "asynchronous"]
 [[bin]]
 name = "phi"
 path = "src/bin/phi/main.rs"
-required-features = ["shell", "telemetry", "logging"]
+required-features = ["shell", "mcp", "telemetry", "logging"]
 
 [dependencies]
 agent-base = "0.1.12"
