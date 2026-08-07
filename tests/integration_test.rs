@@ -268,3 +268,19 @@ fn test_phi_agent_list_tools_sorted() {
         );
     }
 }
+
+// ── Phase 1: AgentError propagation test ──
+
+/// Verify that phi-agent functions can be used with `?` in an
+/// `anyhow::Result` context — AgentError implements std::error::Error
+/// so the conversion is automatic.
+#[test]
+fn test_agent_error_converts_to_anyhow() {
+    let err = validate_session_id("");
+    assert!(err.is_err());
+
+    // AgentError implements std::error::Error, so anyhow::Error::from
+    // works automatically
+    let anyhow_err: anyhow::Error = err.unwrap_err().into();
+    assert!(anyhow_err.to_string().contains("Session ID"));
+}
