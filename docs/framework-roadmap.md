@@ -648,9 +648,9 @@ file = ["phi-kernel-tools/file"]  # 文件工具 + skill/memory prompt 注入
 |------|------|------|------|
 | 0 | phi-agent | **Phase 4 收尾：** CLI `phi serve` MCP Server 入口 (stdio + HTTP) | 待开始 |
 | 1 | phi-kernel-tools | 实现 read_file / write_file / list_files | ✅ 已完成 |
-| 2 | phi-agent | builder.rs 注册 file tools + feature gate | 待开始 |
-| 3 | agent-works | system prompt 加入 skill list（LazySkillPrompter 默认化） | 待开始 |
-| 4 | phi-kernel-tools + phi-agent | 删除旧的 skill 工具和 feature | 待开始 |
+| 2 | phi-agent | builder.rs 注册 file tools + feature gate | ✅ 已完成 |
+| 3 | agent-works | system prompt 加入 skill list（LazySkillPrompter 默认化） | ✅ 已完成 |
+| 4 | phi-kernel-tools + phi-agent | 删除旧的 skill 工具和 feature | ✅ 已完成 |
 | 5 | agent-works + phi-agent | system prompt 加入 memory 指令 | 待开始 |
 | 6 | 测试 + 示例 | 集成测试 + file example + CHANGELOG 更新 | 待开始 |
 

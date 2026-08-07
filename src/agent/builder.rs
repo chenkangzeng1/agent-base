@@ -4,6 +4,7 @@
 //! Returns a pre-configured [`agent_works::AgentBuilder`]; callers then register
 //! tools and approval handlers on top.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use agent_base::{ConsecutiveFailureRecovery, Language, ReasoningConfig, ReasoningEffort};
@@ -18,14 +19,16 @@ use crate::agent::compression::SummarizingMiddleware;
 /// - Session limits (50 sessions / 100 turns per session / 50k per-message cap)
 /// - Per-run react-loop cap (200 iterations for one user input)
 /// - LLM-based context compression for long tool-heavy conversations
+/// - File tools (read_file / write_file / list_files) enabled by default
+/// - Skills injected into system prompt (not as tools — LLM uses read_file)
 /// - Multi-agent support (opt-in via `multi-agent` feature)
-/// - Skill support (opt-in via `skill` feature)
 ///
 /// Callers are responsible for: registering additional tools, setting the approval
 /// handler, setting the system prompt, then calling `.build()`.
 ///
 /// To enable multi-agent: `--features multi-agent` or `.with_multi_agent(...)`.
-/// To enable skills: `--features skill`.
+/// To enable MCP: `--features mcp`.
+/// To enable browser (CDP): `--features browser`.
 /// To enable everything: `--features full`.
 /// To disable telemetry/logging: `--no-default-features`.
 #[allow(unused_mut)]
@@ -47,6 +50,8 @@ pub fn base_agent_builder(llm_client: Arc<dyn agent_base::LlmClient>) -> agent_w
         Err(_) => 4000,
     };
 
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
     let mut builder = agent_works::AgentBuilder::new(llm_client.clone())
         .language(Language::En)
         .reasoning(ReasoningConfig { effort: Some(ReasoningEffort::Medium), ..Default::default() })
@@ -63,7 +68,17 @@ pub fn base_agent_builder(llm_client: Arc<dyn agent_base::LlmClient>) -> agent_w
         // build your own AgentBuilder to opt out.
         .middleware(SummarizingMiddleware::new(llm_client));
 
-    // ── Multi-agent (enabled by default) ──
+    // ── File tools (enabled by default) ──
+    #[cfg(feature = "file")]
+    {
+        use phi_kernel_tools::file::{ListFilesTool, ReadFileTool, WriteFileTool};
+        builder = builder
+            .register_tool_arc(Arc::new(ReadFileTool::new(cwd.clone())))
+            .register_tool_arc(Arc::new(WriteFileTool::new(cwd.clone())))
+            .register_tool_arc(Arc::new(ListFilesTool::new(cwd.clone())));
+    }
+
+    // ── Multi-agent (opt-in) ──
     #[cfg(feature = "multi-agent")]
     {
         use agent_works::multi_agent::MultiAgentConfig;
@@ -73,26 +88,16 @@ pub fn base_agent_builder(llm_client: Arc<dyn agent_base::LlmClient>) -> agent_w
             }));
     }
 
-    // ── Skills (enabled by default) ──
-    #[cfg(feature = "skill")]
+    // ── Skills: prompt-injection mode (uses read_file, no skill-specific tools) ──
+    #[cfg(feature = "file")]
     {
-        // Set skill tool factories
-        builder = builder
-            .with_skill_detail_tool_factory(Arc::new(|skills, tool_name| {
-                Arc::new(phi_kernel_tools::skill::SkillDetailTool::new(skills, tool_name))
-            }))
-            .with_list_skills_tool_factory(Arc::new(|registry| {
-                Arc::new(phi_kernel_tools::skill::ListSkillsTool::new(registry))
-            }));
-
-        // Auto-load skills from default directories
         use agent_works::skill::prompt_skill::PromptSkill;
         use agent_works::skill::Skill;
-        let skill_dirs: Vec<std::path::PathBuf> = vec![
+        let skill_dirs: Vec<PathBuf> = vec![
             // User-level skills (low priority)
             dirs_next().join(".phi").join("skills"),
             // Project-level skills (high priority, loaded last to override)
-            std::path::PathBuf::from(".phi/skills"),
+            PathBuf::from(".phi/skills"),
         ];
 
         for dir in &skill_dirs {
@@ -103,7 +108,7 @@ pub fn base_agent_builder(llm_client: Arc<dyn agent_base::LlmClient>) -> agent_w
                             tracing::debug!(
                                 name = skill.name(),
                                 dir = %dir.display(),
-                                "auto-loaded skill"
+                                "auto-loaded skill (prompt-injection mode)"
                             );
                             builder = builder.register_skill(skill);
                         }
@@ -120,12 +125,12 @@ pub fn base_agent_builder(llm_client: Arc<dyn agent_base::LlmClient>) -> agent_w
 }
 
 /// Resolve the user's home directory for `~/.phi/skills/`.
-#[cfg(feature = "skill")]
+#[cfg(feature = "file")]
 fn dirs_next() -> std::path::PathBuf {
     std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("."))
 }
 
 #[cfg(test)]
