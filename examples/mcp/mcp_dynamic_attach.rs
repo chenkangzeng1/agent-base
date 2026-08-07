@@ -10,7 +10,6 @@
 //! Note: this example requires a real MCP server to demonstrate the full flow.
 //! Without one, it illustrates the API surface and error handling.
 
-use agent_works::mcp::{McpServerConfig, McpTransport};
 use phi_agent::{
     McpServerConfig as PhiMcpConfig, McpTransport as PhiMcpTransport, PhiAgent, PhiAgentConfig, ReasoningEffort,
     SafetyConfig, base_agent_builder, build_system_prompt,

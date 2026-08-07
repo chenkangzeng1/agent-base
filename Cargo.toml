@@ -12,12 +12,12 @@ categories = ["development-tools", "command-line-utilities", "asynchronous"]
 [[bin]]
 name = "phi"
 path = "src/bin/phi/main.rs"
-required-features = ["tools", "telemetry", "logging"]
+required-features = ["shell", "telemetry", "logging"]
 
 [dependencies]
 agent-base = "0.1.12"
 agent-works = "0.1.5"
-phi-kernel-tools = { version = "0.1.0" }
+phi-kernel-tools = { version = "0.1.0", default-features = false }
 phi-tools = { version = "0.1.4", optional = true }
 phi-telemetry = { version = "0.1.4", optional = true }
 log-core = { version = "0.1.3", optional = true }
@@ -39,11 +39,12 @@ uuid = { version = "1", features = ["v4"] }
 rustyline = "15"
 
 [features]
-default = ["tools", "telemetry", "logging", "multi-agent", "skill"]
-tools = ["phi-tools"]
+default = ["telemetry", "logging"]
+full = ["shell", "multi-agent", "skill", "browser", "mcp", "telemetry", "logging"]
+shell = ["phi-kernel-tools/shell"]
 telemetry = ["phi-telemetry"]
 logging = ["log-core"]
-browser = ["tools", "phi-tools/browser"]
+browser = ["phi-tools", "phi-tools/browser"]
 mcp = ["agent-works/mcp"]
 multi-agent = ["phi-kernel-tools/multi-agent"]
 skill = ["phi-kernel-tools/skill", "agent-works/skill", "agent-works/prompt_skill"]

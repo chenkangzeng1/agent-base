@@ -18,14 +18,17 @@ use crate::agent::compression::SummarizingMiddleware;
 /// - Session limits (50 sessions / 100 turns per session / 50k per-message cap)
 /// - Per-run react-loop cap (200 iterations for one user input)
 /// - LLM-based context compression for long tool-heavy conversations
-/// - Multi-agent support enabled by default (6 tools: spawn/send/followup/wait/list/close)
-/// - Skill support enabled by default
+/// - Multi-agent support (opt-in via `multi-agent` feature)
+/// - Skill support (opt-in via `skill` feature)
 ///
 /// Callers are responsible for: registering additional tools, setting the approval
 /// handler, setting the system prompt, then calling `.build()`.
 ///
-/// To disable multi-agent: `.without_multi_agent()`
-/// To disable skills: compile with `--no-default-features` and exclude `skill`.
+/// To enable multi-agent: `--features multi-agent` or `.with_multi_agent(...)`.
+/// To enable skills: `--features skill`.
+/// To enable everything: `--features full`.
+/// To disable telemetry/logging: `--no-default-features`.
+#[allow(unused_mut)]
 pub fn base_agent_builder(llm_client: Arc<dyn agent_base::LlmClient>) -> agent_works::AgentBuilder {
     // Tool-output cap (default 4000 chars). Tune via PHI_MAX_TOOL_OUTPUT_CHARS for large
     // outputs (HTML, base64 images, long lists). Truncated results carry an explicit

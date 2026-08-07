@@ -11,9 +11,7 @@
 //!   - A running MCP server (e.g. a local stdio server or HTTP endpoint)
 //!   - Update the MCP_SERVER_COMMAND / MCP_SERVER_URL below to match your server
 
-use std::sync::Arc;
-
-use agent_works::mcp::{EnhancedMcpHub, McpServerConfig, McpTransport};
+use agent_works::mcp::{McpServerConfig, McpTransport};
 use phi_agent::{PhiAgent, PhiAgentConfig, ReasoningEffort, SafetyConfig, base_agent_builder, build_system_prompt};
 
 #[path = "../common/mod.rs"]
@@ -29,7 +27,7 @@ async fn main() -> anyhow::Result<()> {
     // ── 2. Configure MCP server ──
     //
     // stdio transport (local process):
-    let mcp_config = McpServerConfig {
+    let _mcp_config = McpServerConfig {
         name: "my-server".into(),
         transport: McpTransport::Stdio {
             command: "echo".into(), // replace with your MCP server binary
@@ -47,29 +45,8 @@ async fn main() -> anyhow::Result<()> {
     //     auto_reconnect: false,
     // };
 
-    // ── 3. Build MCP hub and connect ──
-    let hub = EnhancedMcpHub::new();
-    hub.add_server(mcp_config);
-    hub.connect_all().await?;
-
-    // Discover tools from all configured servers
-    let discovered = hub.discover_all().await?;
-    for (server, tools) in &discovered {
-        println!("Server '{}': {} tools", server, tools.len());
-        for tool in tools {
-            println!("  - mcp.{}.{}", server, tool.name);
-        }
-    }
-
-    // ── 4. Build agent ──
-    let mut builder = base_agent_builder(llm_client).system_prompt(build_system_prompt());
-
-    // Register MCP tools into the agent's tool registry
-    {
-        let tools = builder.tools_mut();
-        let mut registry = tools.write().await;
-        hub.register_all(&mut registry).await;
-    }
+    // ── 3. Build agent ──
+    let builder = base_agent_builder(llm_client.clone()).system_prompt(build_system_prompt());
 
     let agent = PhiAgent::build(
         builder,
@@ -83,9 +60,29 @@ async fn main() -> anyhow::Result<()> {
         },
     )?;
 
+    // ── 4. Attach MCP server at runtime ──
+    //    Tools are auto-discovered and registered as `mcp.my-server.<tool>`.
+    match agent.attach_mcp(phi_agent::McpServerConfig {
+        name: "my-server".into(),
+        transport: phi_agent::McpTransport::Stdio {
+            command: "echo".into(), // replace with your MCP server binary
+            args: vec![],
+        },
+        auto_reconnect: false,
+    }).await {
+        Ok(()) => println!("MCP server attached successfully"),
+        Err(e) => eprintln!("Could not attach MCP server (expected without a real server): {e}"),
+    }
+
+    let tools = agent.list_tools().await;
+    println!("Agent has {} tools:", tools.len());
+    for tool in &tools {
+        println!("  - {}", tool.name);
+    }
+
     // ── 5. Run ──
     let session = agent.create_session().await;
-    let renderer = phi_agent::create_stdout_renderer(&phi_agent::OutputFormat::Terminal {
+    let mut renderer = phi_agent::create_stdout_renderer(&phi_agent::OutputFormat::Terminal {
         show_thinking: true,
         show_tool_args: true,
         color: true,

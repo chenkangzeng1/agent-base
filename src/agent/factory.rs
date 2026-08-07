@@ -10,8 +10,7 @@ use crate::agent::builder::base_agent_builder;
 ///
 /// This config covers model and safety settings only. Tools are registered
 /// externally on [`agent_works::AgentBuilder`] — phi-agent itself never bundles tools
-/// beyond kernel tools (multi-agent, skills) which are enabled by default and can be
-/// disabled via `.without_multi_agent()` or feature flags.
+/// beyond kernel tools (multi-agent, skills) which are opt-in via feature flags.
 #[derive(Clone, Default)]
 pub struct PhiAgentConfig {
     /// Model name passed to the LLM provider (e.g. `"opus"`, `"gpt-4o"`).
