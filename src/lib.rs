@@ -41,7 +41,9 @@ pub use agent_works::focus::{Context as FocusContext, Focus, FocusError, FocusIn
 
 // ── MCP (feature-gated) ──
 #[cfg(feature = "mcp")]
-pub use agent_works::mcp::{McpServerConfig, McpTransport};
+pub use agent_works::mcp::{
+    McpServerConfig, McpServeConfig, McpServer, McpServerTransport, McpTransport,
+};
 
 // ── phi-agent types ──
 pub use agent::{CompressionConfig, PhiAgent, PhiAgentConfig, SummarizingMiddleware, base_agent_builder};

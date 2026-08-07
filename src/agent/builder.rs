@@ -70,7 +70,59 @@ pub fn base_agent_builder(llm_client: Arc<dyn agent_base::LlmClient>) -> agent_w
             }));
     }
 
+    // ── Skills (enabled by default) ──
+    #[cfg(feature = "skill")]
+    {
+        // Set skill tool factories
+        builder = builder
+            .with_skill_detail_tool_factory(Arc::new(|skills, tool_name| {
+                Arc::new(phi_kernel_tools::skill::SkillDetailTool::new(skills, tool_name))
+            }))
+            .with_list_skills_tool_factory(Arc::new(|registry| {
+                Arc::new(phi_kernel_tools::skill::ListSkillsTool::new(registry))
+            }));
+
+        // Auto-load skills from default directories
+        use agent_works::skill::prompt_skill::PromptSkill;
+        use agent_works::skill::Skill;
+        let skill_dirs: Vec<std::path::PathBuf> = vec![
+            // User-level skills (low priority)
+            dirs_next().join(".phi").join("skills"),
+            // Project-level skills (high priority, loaded last to override)
+            std::path::PathBuf::from(".phi/skills"),
+        ];
+
+        for dir in &skill_dirs {
+            if dir.is_dir() {
+                match PromptSkill::scan_dir(dir) {
+                    Ok(skills) => {
+                        for skill in skills {
+                            tracing::debug!(
+                                name = skill.name(),
+                                dir = %dir.display(),
+                                "auto-loaded skill"
+                            );
+                            builder = builder.register_skill(skill);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(dir = %dir.display(), error = %e, "failed to scan skills directory");
+                    }
+                }
+            }
+        }
+    }
+
     builder
+}
+
+/// Resolve the user's home directory for `~/.phi/skills/`.
+#[cfg(feature = "skill")]
+fn dirs_next() -> std::path::PathBuf {
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
 }
 
 #[cfg(test)]

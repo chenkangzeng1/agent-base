@@ -46,7 +46,7 @@ logging = ["log-core"]
 browser = ["tools", "phi-tools/browser"]
 mcp = ["agent-works/mcp"]
 multi-agent = ["phi-kernel-tools/multi-agent"]
-skill = ["phi-kernel-tools/skill", "agent-works/skill"]
+skill = ["phi-kernel-tools/skill", "agent-works/skill", "agent-works/prompt_skill"]
 
 [dev-dependencies]
 tempfile = "3"

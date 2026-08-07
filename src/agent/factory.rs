@@ -238,4 +238,15 @@ impl PhiAgent {
             "detached MCP server at runtime"
         );
     }
+
+    // ── MCP Server (Phase 4.1) ──
+
+    /// Convert this agent into an MCP server that external orchestrators can call.
+    #[cfg(feature = "mcp")]
+    pub fn into_mcp_server(
+        &self,
+        config: agent_works::mcp::McpServeConfig,
+    ) -> agent_works::mcp::McpServer {
+        agent_works::mcp::McpServer::new(self.runtime.clone(), config)
+    }
 }
