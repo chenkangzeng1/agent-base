@@ -41,6 +41,8 @@ impl RuntimeCore {
             tracing::warn!(session_id = session_id.id, error = %e, "session validation failed");
             self.event_bus.emit(RuntimeEvent::RunFinished {
                 session_id: session_id.clone(),
+                agent_id: None,
+                trace_id: None,
             });
             EventBus::drain_async_events(&mut event_rx, &mut on_event)?;
             return Err(e);
@@ -93,16 +95,22 @@ impl RuntimeCore {
             Ok((RunOutcome::Cancelled, _)) => {
                 on_event(RuntimeEvent::RunCancelled {
                     session_id: session_id.clone(),
+                    agent_id: None,
+                    trace_id: None,
                 })?;
             }
             Err(e) if e.is_cancelled() => {
                 on_event(RuntimeEvent::RunCancelled {
                     session_id: session_id.clone(),
+                    agent_id: None,
+                    trace_id: None,
                 })?;
             }
             _ => {
                 self.event_bus.emit(RuntimeEvent::RunFinished {
                     session_id: session_id.clone(),
+                    agent_id: None,
+                    trace_id: None,
                 });
                 EventBus::drain_async_events(&mut event_rx, &mut on_event)?;
             }
@@ -137,6 +145,8 @@ impl RuntimeCore {
         let fail = |e: AgentError, f: &mut F| -> AgentResult<RunOutcome> {
             let _ = f(RuntimeEvent::RunFinished {
                 session_id: session_id.clone(),
+                agent_id: None,
+                trace_id: None,
             });
             Err(e)
         };
@@ -192,6 +202,8 @@ impl RuntimeCore {
                 step: CheckpointStep::AfterUserInput,
                 turn_count: 0,
             },
+            agent_id: None,
+            trace_id: None,
         });
 
         tracing::info!(
@@ -214,11 +226,15 @@ impl RuntimeCore {
             Ok((RunOutcome::Cancelled, _)) => {
                 on_event(RuntimeEvent::RunCancelled {
                     session_id: session_id.clone(),
+                    agent_id: None,
+                    trace_id: None,
                 })?;
             }
             Err(e) if e.is_cancelled() => {
                 on_event(RuntimeEvent::RunCancelled {
                     session_id: session_id.clone(),
+                    agent_id: None,
+                    trace_id: None,
                 })?;
             }
             _ => {}
@@ -244,6 +260,8 @@ impl RuntimeCore {
             Err(e) => {
                 let _ = on_event(RuntimeEvent::RunFinished {
                     session_id: session_id.clone(),
+                    agent_id: None,
+                    trace_id: None,
                 });
                 return Err(e);
             }
@@ -272,6 +290,7 @@ impl RuntimeCore {
         Ok((events, outcome))
     }
 
+    #[allow(dead_code)]
     pub async fn resume_from_checkpoint<F>(
         &self,
         checkpoint: CheckpointData,
@@ -307,6 +326,8 @@ impl RuntimeCore {
                 Ok(ToolCallResult::Break) => {
                     self.event_bus.emit(RuntimeEvent::RunFinished {
                         session_id: session_id.clone(),
+                        agent_id: None,
+                        trace_id: None,
                     });
                     EventBus::drain_async_events(&mut event_rx, &mut on_event)?;
                     return Ok(RunOutcome::Completed);
@@ -344,11 +365,15 @@ impl RuntimeCore {
             Ok((RunOutcome::Cancelled, _)) => {
                 on_event(RuntimeEvent::RunCancelled {
                     session_id: session_id.clone(),
+                    agent_id: None,
+                    trace_id: None,
                 })?;
             }
             Err(e) if e.is_cancelled() => {
                 on_event(RuntimeEvent::RunCancelled {
                     session_id: session_id.clone(),
+                    agent_id: None,
+                    trace_id: None,
                 })?;
             }
             _ => {}
@@ -497,6 +522,8 @@ impl RuntimeCore {
             .await?;
             self.event_bus.emit(RuntimeEvent::RunFinished {
                 session_id: session_id.clone(),
+                agent_id: None,
+                trace_id: None,
             });
             EventBus::drain_async_events(event_rx, on_event)?;
             let session = self.session_manager.session_or_err(session_id).await?;
@@ -525,6 +552,8 @@ impl RuntimeCore {
                 .await?;
                 self.event_bus.emit(RuntimeEvent::RunFinished {
                     session_id: session_id.clone(),
+                    agent_id: None,
+                    trace_id: None,
                 });
                 EventBus::drain_async_events(event_rx, on_event)?;
                 let session = self.session_manager.session_or_err(session_id).await?;
@@ -649,6 +678,8 @@ impl RuntimeCore {
                 .await;
                 self.event_bus.emit(RuntimeEvent::RunFinished {
                     session_id: session_id.clone(),
+                    agent_id: None,
+                    trace_id: None,
                 });
                 EventBus::drain_async_events(event_rx, on_event)?;
                 return Ok((
@@ -694,6 +725,8 @@ impl RuntimeCore {
                     },
                     turn_count,
                 },
+                agent_id: None,
+                trace_id: None,
             });
 
             tracing::info!(
@@ -872,6 +905,8 @@ impl RuntimeCore {
                                 },
                                 turn_count,
                             },
+                            agent_id: None,
+                            trace_id: None,
                         });
 
                         let tool_start = std::time::Instant::now();
@@ -937,6 +972,8 @@ impl RuntimeCore {
                                         },
                                         turn_count,
                                     },
+                                    agent_id: None,
+                                    trace_id: None,
                                 });
                                 continue;
                             }
@@ -976,6 +1013,8 @@ impl RuntimeCore {
                                 .await?;
                                 self.event_bus.emit(RuntimeEvent::RunFinished {
                                     session_id: session_id.clone(),
+                                    agent_id: None,
+                                    trace_id: None,
                                 });
                                 EventBus::drain_async_events(event_rx, on_event)?;
                                 return Ok((RunOutcome::Completed, turn_count));
@@ -1075,6 +1114,8 @@ impl RuntimeCore {
                     .await;
                     self.event_bus.emit(RuntimeEvent::RunFinished {
                         session_id: session_id.clone(),
+                        agent_id: None,
+                        trace_id: None,
                     });
                     EventBus::drain_async_events(event_rx, on_event)?;
                     return Ok((RunOutcome::Completed, turn_count));
@@ -1281,7 +1322,7 @@ mod tests {
     use super::*;
     use crate::engine::AgentBuilder;
     use crate::engine::middleware::{Middleware, UserMessageCtx};
-    use crate::llm::{LlmClient, LlmCapabilities, StreamChunk};
+    use crate::llm::{LlmCapabilities, LlmClient, StreamChunk};
     use crate::types::{AgentError, AgentResult, ChatMessage, ResponseFormat, SessionId};
     use async_trait::async_trait;
     use futures_core::Stream;
@@ -1337,7 +1378,7 @@ mod tests {
 
         let result = runtime
             .run_turn(nonexistent.clone(), "test input", move |event| {
-                if let RuntimeEvent::RunFinished { session_id: _ } = &event {
+                if let RuntimeEvent::RunFinished { session_id: _, .. } = &event {
                     event_fired_clone.store(true, Ordering::SeqCst);
                 }
                 Ok(())
@@ -1345,7 +1386,10 @@ mod tests {
             .await;
 
         // Must return an error
-        assert!(result.is_err(), "run_turn should return Err for nonexistent session");
+        assert!(
+            result.is_err(),
+            "run_turn should return Err for nonexistent session"
+        );
         // Must have emitted RunFinished before returning
         assert!(
             event_fired.load(Ordering::SeqCst),
@@ -1380,14 +1424,17 @@ mod tests {
 
         let result = runtime
             .run_turn(sid, "test input", move |event| {
-                if let RuntimeEvent::RunFinished { session_id: _ } = &event {
+                if let RuntimeEvent::RunFinished { session_id: _, .. } = &event {
                     event_fired_clone.store(true, Ordering::SeqCst);
                 }
                 Ok(())
             })
             .await;
 
-        assert!(result.is_err(), "run_turn should return Err when middleware fails");
+        assert!(
+            result.is_err(),
+            "run_turn should return Err when middleware fails"
+        );
         assert!(
             event_fired.load(Ordering::SeqCst),
             "run_turn must emit RunFinished before returning Err on middleware failure"
@@ -1420,7 +1467,10 @@ mod tests {
             struct ErrorStream;
             impl Stream for ErrorStream {
                 type Item = AgentResult<StreamChunk>;
-                fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+                fn poll_next(
+                    self: Pin<&mut Self>,
+                    _cx: &mut Context<'_>,
+                ) -> Poll<Option<Self::Item>> {
                     Poll::Ready(Some(Err(AgentError::internal("simulated LLM error"))))
                 }
             }
@@ -1447,7 +1497,7 @@ mod tests {
 
         let result = runtime
             .run_turn(sid, "test input", move |event| {
-                if let RuntimeEvent::RunFinished { session_id: _ } = &event {
+                if let RuntimeEvent::RunFinished { session_id: _, .. } = &event {
                     event_fired_clone.store(true, Ordering::SeqCst);
                 }
                 Ok(())

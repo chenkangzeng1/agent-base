@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::llm::{LlmClient, ReasoningConfig};
@@ -18,7 +17,6 @@ pub struct AgentBuilder {
     client: Arc<dyn LlmClient>,
     config: AgentConfig,
     tools: ToolRegistry,
-    tool_names: HashSet<String>,
     approval_handler: Option<Arc<dyn ApprovalHandler>>,
     tool_policy: Option<Arc<dyn ToolPolicy>>,
     middlewares: Vec<MiddlewareRef>,
@@ -35,7 +33,6 @@ impl AgentBuilder {
             client,
             config: AgentConfig::default(),
             tools: ToolRegistry::default(),
-            tool_names: HashSet::new(),
             approval_handler: None,
             tool_policy: None,
             middlewares: Vec::new(),

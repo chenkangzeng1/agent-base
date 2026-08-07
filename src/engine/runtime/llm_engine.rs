@@ -140,6 +140,8 @@ impl LlmEngine {
                                 self.event_bus.emit(RuntimeEvent::TextDelta {
                                     session_id: session_id.clone(),
                                     text: text.clone(),
+                                    agent_id: None,
+                                    trace_id: None,
                                 });
                             }
                             aggregator.full_text.push_str(&text);
@@ -151,6 +153,8 @@ impl LlmEngine {
                                 self.event_bus.emit(RuntimeEvent::ThoughtDelta {
                                     session_id: session_id.clone(),
                                     text,
+                                    agent_id: None,
+                                    trace_id: None,
                                 });
                             }
                         }
@@ -270,6 +274,8 @@ impl LlmEngine {
         self.event_bus.emit(RuntimeEvent::TextDelta {
             session_id: session_id.clone(),
             text,
+            agent_id: None,
+            trace_id: None,
         });
     }
 }

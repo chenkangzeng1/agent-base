@@ -202,6 +202,7 @@ impl Tool for UpdatePlanTool {
         }
     }
 
+    #[allow(private_interfaces)]
     fn as_framework_tool(&self) -> Option<&dyn FrameworkTool> {
         Some(self)
     }
@@ -283,6 +284,8 @@ impl Tool for UpdatePlanTool {
                     objective: objective.clone(),
                     explanation: plan_args.explanation.clone(),
                     plan: normalized_plan,
+                    agent_id: None,
+                    trace_id: None,
                 });
             }
         }

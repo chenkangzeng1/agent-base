@@ -48,14 +48,6 @@ impl ToolEngine {
         tools.inject_event_bus(&self.event_bus);
     }
 
-    /// Get the inner pipeline (policy hooks only, no timeout/truncation).
-    ///
-    /// Used by [`AgentRuntime::create_step_executor`] to construct a per-call
-    /// pipeline that inherits the policy but adds timeout/truncation from config.
-    pub fn execution_pipeline(&self) -> DefaultPipeline {
-        self.pipeline.clone()
-    }
-
     pub async fn execute_tool<F>(
         &self,
         session_id: &SessionId,
@@ -82,6 +74,8 @@ impl ToolEngine {
             session_id: session_id.clone(),
             tool_name: name.to_string(),
             args_json: tool_args_json.to_string(),
+            agent_id: None,
+            trace_id: None,
         });
         EventBus::drain_async_events(event_rx, on_event)?;
 
@@ -131,6 +125,8 @@ impl ToolEngine {
                             on_event(RuntimeEvent::UserEvent {
                                 session_id: session_id.clone(),
                                 event: user_event,
+                                agent_id: None,
+                                trace_id: None,
                             })?;
                         }
                         _ = ctx.cancel_token.cancelled() => {
@@ -145,6 +141,8 @@ impl ToolEngine {
                     on_event(RuntimeEvent::UserEvent {
                         session_id: session_id.clone(),
                         event: user_event,
+                        agent_id: None,
+                        trace_id: None,
                     })?;
                 }
 
@@ -162,6 +160,8 @@ impl ToolEngine {
                             session_id: session_id.clone(),
                             tool_name: name.to_string(),
                             summary: error_summary,
+                            agent_id: None,
+                            trace_id: None,
                         });
                         // Use `let _ =` to avoid masking the original tool error
                         // if the event callback fails
@@ -197,6 +197,8 @@ impl ToolEngine {
             session_id: session_id.clone(),
             tool_name: name.to_string(),
             summary: tool_result.summary.clone(),
+            agent_id: None,
+            trace_id: None,
         });
         EventBus::drain_async_events(event_rx, on_event)?;
 
@@ -249,6 +251,8 @@ impl ToolEngine {
         self.event_bus.emit(RuntimeEvent::AwaitingApproval {
             session_id: session_id.clone(),
             request: request.clone(),
+            agent_id: None,
+            trace_id: None,
         });
         EventBus::drain_async_events(event_rx, on_event)?;
 
@@ -318,6 +322,8 @@ impl ToolEngine {
                     session_id: session_id.clone(),
                     tool_name: tool_name.to_string(),
                     summary: denial_summary,
+                    agent_id: None,
+                    trace_id: None,
                 });
                 let _ = EventBus::drain_async_events(event_rx, on_event);
                 return Err(AgentError::ApprovalDenied {
@@ -381,6 +387,7 @@ impl ToolEngine {
 
 pub struct ToolExecutionResult {
     pub id: String,
+    #[allow(dead_code)]
     pub name: String,
     pub output: ToolOutput,
 }

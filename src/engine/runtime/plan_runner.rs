@@ -70,12 +70,6 @@ impl RuntimeCore {
         self.cancel_token.lock().unwrap().is_cancelled()
     }
 
-    /// Get a clone of config (sync version, for backward compatibility)
-    /// Note: only use in sync contexts; for async contexts use config_snapshot_async
-    pub fn config_snapshot(&self) -> AgentConfig {
-        self.config.blocking_read().clone()
-    }
-
     /// Get a clone of config (async version)
     pub async fn config_snapshot_async(&self) -> AgentConfig {
         self.config.read().await.clone()

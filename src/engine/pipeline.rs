@@ -4,9 +4,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde_json::Value;
 
-use crate::engine::EventBus;
 use crate::tool::{Tool, ToolContext, ToolControlFlow, ToolOutput, ToolPolicy, TruncationInfo};
-use crate::types::{AgentResult, RuntimeEvent};
+use crate::types::AgentResult;
 
 /// Pure execution pipeline — cares about *how* to safely execute a tool.
 ///
@@ -127,56 +126,12 @@ impl ToolExecutionPipeline for DefaultPipeline {
     }
 }
 
-/// Event-emitting decorator — wraps any pipeline to emit ToolCallStarted/Finished
-/// events on the internal [`EventBus`] and forward [`UserEvent`]s from tools.
-pub(crate) struct EventEmittingPipeline<P: ToolExecutionPipeline> {
-    inner: P,
-    event_bus: EventBus,
-}
-
-impl<P: ToolExecutionPipeline> EventEmittingPipeline<P> {
-    pub fn new(inner: P, event_bus: EventBus) -> Self {
-        Self { inner, event_bus }
-    }
-}
-
-#[async_trait]
-impl<P: ToolExecutionPipeline + Send + Sync> ToolExecutionPipeline for EventEmittingPipeline<P> {
-    async fn execute(
-        &self,
-        tool: &dyn Tool,
-        args: &Value,
-        ctx: &ToolContext,
-    ) -> AgentResult<ToolOutput> {
-        self.event_bus.emit(RuntimeEvent::ToolCallStarted {
-            session_id: ctx.session_id.clone(),
-            tool_name: tool.name().to_string(),
-            args_json: args.to_string(),
-        });
-
-        let result = self.inner.execute(tool, args, ctx).await;
-
-        let summary = match &result {
-            Ok(output) => output.summary.clone(),
-            Err(e) => e.to_string(),
-        };
-        self.event_bus.emit(RuntimeEvent::ToolCallFinished {
-            session_id: ctx.session_id.clone(),
-            tool_name: tool.name().to_string(),
-            summary,
-        });
-
-        result
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
     use std::sync::atomic::{AtomicU32, Ordering};
 
-    use crate::tool::ToolRegistry;
     use crate::types::{AgentError, Language, SessionId};
 
     // ── Test helpers ──
@@ -421,80 +376,5 @@ mod tests {
             .execute(&FailingTool, &json!({}), &test_ctx())
             .await;
         assert!(result.is_err());
-    }
-
-    // ── EventEmittingPipeline tests ──
-
-    #[tokio::test]
-    async fn emits_start_and_finish_events() {
-        let inner = DefaultPipeline::new(None, None, None);
-        let event_bus = EventBus::new(64);
-        let mut rx = event_bus.subscribe();
-        let pipeline = EventEmittingPipeline::new(inner, event_bus);
-
-        let _ = pipeline
-            .execute(&EchoTool, &json!({"msg": "test"}), &test_ctx())
-            .await;
-
-        let mut events = Vec::new();
-        while let Ok(event) = rx.try_recv() {
-            events.push(event);
-        }
-        assert_eq!(events.len(), 2);
-
-        match &events[0] {
-            RuntimeEvent::ToolCallStarted { tool_name, .. } => assert_eq!(tool_name, "echo"),
-            _ => panic!("expected ToolCallStarted"),
-        }
-        match &events[1] {
-            RuntimeEvent::ToolCallFinished {
-                tool_name, summary, ..
-            } => {
-                assert_eq!(tool_name, "echo");
-                assert_eq!(summary, "test");
-            }
-            _ => panic!("expected ToolCallFinished"),
-        }
-    }
-
-    #[tokio::test]
-    async fn emits_finish_with_error_on_failure() {
-        let inner = DefaultPipeline::new(None, None, None);
-        let event_bus = EventBus::new(64);
-        let mut rx = event_bus.subscribe();
-        let pipeline = EventEmittingPipeline::new(inner, event_bus);
-
-        let _ = pipeline
-            .execute(&FailingTool, &json!({}), &test_ctx())
-            .await;
-
-        let mut events = Vec::new();
-        while let Ok(event) = rx.try_recv() {
-            events.push(event);
-        }
-        assert_eq!(events.len(), 2);
-
-        match &events[1] {
-            RuntimeEvent::ToolCallFinished { summary, .. } => {
-                assert!(summary.contains("intentional"));
-            }
-            _ => panic!("expected ToolCallFinished"),
-        }
-    }
-
-    #[tokio::test]
-    async fn event_emitting_delegates_to_inner() {
-        let policy = Arc::new(TrackingPolicy::new());
-        let inner = DefaultPipeline::new(Some(policy.clone()), None, None);
-        let event_bus = EventBus::new(64);
-        let pipeline = EventEmittingPipeline::new(inner, event_bus);
-
-        let output = pipeline
-            .execute(&EchoTool, &json!({"msg": "delegated"}), &test_ctx())
-            .await
-            .unwrap();
-        assert_eq!(output.summary, "delegated");
-        assert_eq!(policy.before_count.load(Ordering::SeqCst), 1);
-        assert_eq!(policy.after_count.load(Ordering::SeqCst), 1);
     }
 }

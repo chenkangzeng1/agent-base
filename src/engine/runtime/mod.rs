@@ -69,10 +69,6 @@ impl AgentRuntime {
         self.runner.event_bus.emit(event);
     }
 
-    pub(crate) fn subscribe_events(&self) -> tokio::sync::broadcast::Receiver<RuntimeEvent> {
-        self.runner.event_bus.subscribe()
-    }
-
     /// Subscribe to runtime events from the internal broadcast channel.
     ///
     /// Events are delivered directly from the runtime's event bus (capacity 2048).
@@ -157,6 +153,8 @@ impl AgentRuntime {
         self.emit_event(RuntimeEvent::Checkpoint {
             session_id: session_id.clone(),
             checkpoint,
+            agent_id: None,
+            trace_id: None,
         });
         Ok(())
     }

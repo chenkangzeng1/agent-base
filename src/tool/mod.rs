@@ -69,7 +69,6 @@ impl ToolContext {
     }
 }
 
-
 /// Machine-readable metadata for a registered tool — origin, version, and
 /// runtime requirements in a stable shape consumers can inspect without
 /// parsing the LLM-facing definition JSON.
@@ -252,7 +251,7 @@ impl ToolRegistry {
     }
 
     /// Inject the internal `EventBus` into framework-provided tools.
-    pub fn inject_event_bus(&self, event_bus: &crate::engine::EventBus) {
+    pub(crate) fn inject_event_bus(&self, event_bus: &crate::engine::EventBus) {
         for tool in self.tools.values() {
             if let Some(fw) = tool.as_framework_tool() {
                 fw.set_event_bus(event_bus.clone());
