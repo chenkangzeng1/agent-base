@@ -41,9 +41,7 @@ pub use agent_works::focus::{Context as FocusContext, Focus, FocusError, FocusIn
 
 // ── MCP (feature-gated) ──
 #[cfg(feature = "mcp")]
-pub use agent_works::mcp::{
-    McpServerConfig, McpServeConfig, McpServer, McpServerTransport, McpTransport,
-};
+pub use agent_works::mcp::{McpServeConfig, McpServer, McpServerConfig, McpServerTransport, McpTransport};
 
 // ── phi-agent types ──
 pub use agent::{CompressionConfig, PhiAgent, PhiAgentConfig, SummarizingMiddleware, base_agent_builder};
@@ -54,4 +52,7 @@ pub use prompt::{build_system_prompt, build_system_prompt_cn};
 pub use render::{
     EventRenderer, JsonStreamRenderer, NullRenderer, OutputFormat, create_renderer, create_stdout_renderer,
 };
-pub use session::SessionContext;
+pub use session::{
+    SessionContext, SnapshotInfo, cleanup_expired_sessions, create_snapshot, delete_snapshot, list_snapshots,
+    resolve_session, restore_snapshot, validate_session_id, validate_snapshot_name,
+};

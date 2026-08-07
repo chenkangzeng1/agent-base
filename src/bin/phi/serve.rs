@@ -42,13 +42,8 @@ pub async fn run(http: Option<u16>) -> anyhow::Result<()> {
         .middleware(TurnFactMiddleware::new())
         .middleware(TurnToolLimitMiddleware::from_config(&SafetyConfig::default()));
 
-    let agent = PhiAgent::build(
-        builder,
-        phi_agent::PhiAgentConfig {
-            model: llm_config.model.clone(),
-            ..Default::default()
-        },
-    )?;
+    let agent =
+        PhiAgent::build(builder, phi_agent::PhiAgentConfig { model: llm_config.model.clone(), ..Default::default() })?;
 
     // 3. Configure transport
     let transport = match http {
@@ -56,11 +51,8 @@ pub async fn run(http: Option<u16>) -> anyhow::Result<()> {
         None => McpServerTransport::Stdio,
     };
 
-    let config = McpServeConfig {
-        name: "phi-agent".to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
-        transport,
-    };
+    let config =
+        McpServeConfig { name: "phi-agent".to_string(), version: env!("CARGO_PKG_VERSION").to_string(), transport };
 
     // 4. Serve
     match &config.transport {

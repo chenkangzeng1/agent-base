@@ -62,14 +62,17 @@ async fn main() -> anyhow::Result<()> {
 
     // ── 4. Attach MCP server at runtime ──
     //    Tools are auto-discovered and registered as `mcp.my-server.<tool>`.
-    match agent.attach_mcp(phi_agent::McpServerConfig {
-        name: "my-server".into(),
-        transport: phi_agent::McpTransport::Stdio {
-            command: "echo".into(), // replace with your MCP server binary
-            args: vec![],
-        },
-        auto_reconnect: false,
-    }).await {
+    match agent
+        .attach_mcp(phi_agent::McpServerConfig {
+            name: "my-server".into(),
+            transport: phi_agent::McpTransport::Stdio {
+                command: "echo".into(), // replace with your MCP server binary
+                args: vec![],
+            },
+            auto_reconnect: false,
+        })
+        .await
+    {
         Ok(()) => println!("MCP server attached successfully"),
         Err(e) => eprintln!("Could not attach MCP server (expected without a real server): {e}"),
     }

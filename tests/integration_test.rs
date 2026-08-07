@@ -280,3 +280,91 @@ fn test_agent_error_converts_to_anyhow() {
     let anyhow_err: anyhow::Error = err.unwrap_err().into();
     assert!(anyhow_err.to_string().contains("Session ID"));
 }
+
+// ── Phase 5: Memory prompt injection ──
+
+#[test]
+fn test_system_prompt_contains_memory_instructions() {
+    let prompt = build_system_prompt();
+    assert!(prompt.contains("## Memory"), "System prompt should contain Memory section");
+    assert!(prompt.contains(".phi/memory/"), "System prompt should mention .phi/memory/ directory");
+    assert!(prompt.contains("MEMORY.md"), "System prompt should mention MEMORY.md index");
+    assert!(prompt.contains("read_file"), "System prompt should instruct LLM to use read_file for memory");
+    assert!(prompt.contains("write_file"), "System prompt should instruct LLM to use write_file for memory");
+}
+
+#[test]
+fn test_system_prompt_cn_also_has_memory_instructions() {
+    let prompt = build_system_prompt_cn();
+    assert!(prompt.contains("## Memory"), "Chinese system prompt should also contain Memory section");
+    assert!(
+        prompt.contains("[Network Environment]"),
+        "Chinese system prompt should retain network environment section"
+    );
+}
+
+// ── Phase 5: File tools registration ──
+
+#[cfg(feature = "file")]
+#[tokio::test(flavor = "multi_thread")]
+async fn test_base_agent_builder_registers_file_tools() {
+    let client = Arc::new(SimpleMockLlmClient);
+    let builder = base_agent_builder(client).system_prompt("test");
+
+    let config = PhiAgentConfig {
+        model: "test-model".into(),
+        enable_thinking: false,
+        thinking_budget: None,
+        thinking_effort: ReasoningEffort::Medium,
+        safety: SafetyConfig::default(),
+        max_turns: Some(10),
+    };
+    let agent = phi_agent::PhiAgent::build(builder, config).expect("build agent");
+    let tools = agent.list_tools().await;
+
+    let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+    assert!(names.contains(&"read_file"), "read_file tool should be registered");
+    assert!(names.contains(&"write_file"), "write_file tool should be registered");
+    assert!(names.contains(&"list_files"), "list_files tool should be registered");
+}
+
+// ── Phase 5: Skills in prompt-injection mode (no skill-specific tools) ──
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_no_skill_specific_tools_registered() {
+    let client = Arc::new(SimpleMockLlmClient);
+    let builder = base_agent_builder(client).system_prompt("test");
+
+    let config = PhiAgentConfig {
+        model: "test-model".into(),
+        enable_thinking: false,
+        thinking_budget: None,
+        thinking_effort: ReasoningEffort::Medium,
+        safety: SafetyConfig::default(),
+        max_turns: Some(10),
+    };
+    let agent = phi_agent::PhiAgent::build(builder, config).expect("build agent");
+    let tools = agent.list_tools().await;
+
+    let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
+    assert!(!names.contains(&"list_skills"), "list_skills should NOT be registered (prompt-injection mode)");
+    assert!(!names.contains(&"get_skill_detail"), "get_skill_detail should NOT be registered (prompt-injection mode)");
+    assert!(!names.contains(&"apply_skill"), "apply_skill should NOT be registered (prompt-injection mode)");
+}
+
+// ── Phase 5: System prompt contains skill list (LazySkillPrompter) ──
+
+#[test]
+fn test_build_system_prompt_structure() {
+    let prompt = build_system_prompt();
+
+    // Should contain core sections
+    assert!(prompt.contains("[Role]"), "should have Role section");
+    assert!(prompt.contains("[Execution Guidelines]"), "should have Execution Guidelines");
+    assert!(prompt.contains("[File Operation Guidelines]"), "should have File Operation Guidelines");
+    assert!(prompt.contains("## Memory"), "should have Memory section");
+
+    // Sections should be separated by ---
+    let sections: Vec<&str> = prompt.split("\n---\n").collect();
+    assert!(sections.len() >= 2, "should have at least 2 sections separated by ---");
+}

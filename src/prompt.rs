@@ -2,7 +2,8 @@
 ///
 /// Does not include host-specific info (consumers append that as needed).
 pub fn build_system_prompt() -> String {
-    r#"You are a versatile AI assistant with strong autonomous problem-solving abilities.
+    let mut prompt = String::from(
+        r#"You are a versatile AI assistant with strong autonomous problem-solving abilities.
 
 [Role]
 You get things done, not chat. Take initiative — don't ask for confirmation repeatedly. Reply with conclusions only.
@@ -34,8 +35,14 @@ For complex tasks (3+ steps), use update_plan to show the plan and let the user 
 
 [Wrap-Up]
 Report a final conclusion once the entire user request is complete. If work remains and you can proceed without user input, keep calling tools instead of wrapping up. After confirming results, report the conclusion concisely.
-"#
-    .to_string()
+"#,
+    );
+
+    // Append memory instructions (Phase 5.3 — prompt-injection mode, no dedicated tools)
+    prompt.push_str("\n---\n\n");
+    prompt.push_str(&agent_works::build_memory_system_prompt());
+
+    prompt
 }
 
 /// Build system prompt for users in China (GFW-aware).

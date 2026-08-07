@@ -7,15 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-- All phi-agent layer functions return `AgentResult` instead of `anyhow::Result` (Phase 1)
-- `PhiAgent` now exposes `attach_mcp()` / `detach_mcp()` for runtime MCP management (behind `mcp` feature)
-- Reorganized `examples/` into categorized directories: minimal, tools, mcp, session, observability, advanced
-
 ### Added
-- New examples: `mcp_client`, `mcp_dynamic_attach`, `session_persist`, `event_log`, `middleware_hooks`, `window_memory`, `summary_memory`
-- README: "What it's good for", "What it doesn't provide", "phi-agent + LangGraph", and "Security" sections
-- CONTRIBUTING: "Features We Won't Accept" list for community expectation management
+- **Phase 5: File system tools** — `read_file`, `write_file`, `list_files` (phi-kernel-tools, feature gate `file`, enabled by default). The LLM can now explore, read, and modify the file system directly.
+- **Phase 5: Skills → prompt-injection mode** — Skills are no longer tools. LLM discovers skills via system prompt and reads `SKILL.md` with `read_file`. This aligns with Claude Code/Codex conventions.
+- **Phase 5: Memory → prompt-injection mode** — Memory is now file-based (`.phi/memory/`). No dedicated `remember`/`recall`/`forget` tools. LLM uses `read_file`/`write_file` to manage memories, same as Claude Code Memory.
+- **Phase 4 收尾: CLI `phi serve` as MCP Server** — stdio + HTTP transport for external orchestrator integration. Exposes agent as a single `run` tool via JSON-RPC 2.0.
+- **MCP Server bridge API** — `PhiAgent::into_mcp_server()` for programmatic use.
+- New examples: `mcp_server` (MCP Server), `file_ops` (file tools)
+- `agent_works::build_memory_system_prompt()` — reusable memory prompt generator
+
+### Changed
+- **Feature gate restructuring:**
+  - `file` — file tools (read_file/write_file/list_files) + skills prompt-injection + memory prompt-injection. **Enabled by default.**
+  - `shell` — shell execution. **Enabled by default.**
+  - `multi-agent` — sub-agent spawning. Opt-in.
+  - `mcp` — MCP client + server. Opt-in.
+  - `browser` — CDP browser automation (21 tools). Opt-in.
+  - `full` — all features. One-click enable.
+  - `skill` feature removed — skills now work through file tools (prompt-injection mode).
+- Skills: `LazySkillPrompter` is now the default (compact listing with file paths). Removed old skill-specific tools (`ListSkillsTool`, `SkillDetailTool`, `ApplySkillTool`).
+- System prompt now includes persistent memory instructions (`.phi/memory/` directory, `MEMORY.md` index, frontmatter convention).
+- All phi-agent layer functions return `AgentResult` instead of `anyhow::Result` (Phase 1)
+
+### Removed
+- phi-kernel-tools `skill` feature and associated 3 tools (`ListSkillsTool`, `SkillDetailTool`, `ApplySkillTool`)
+- agent-works `with_skill_detail_tool_factory()` and `with_list_skills_tool_factory()` builder methods
+- Old `bridge` module (replaced by MCP Server)
 
 ## [0.3.0] - 2026-08-06
 

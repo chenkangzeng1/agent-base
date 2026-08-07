@@ -9,13 +9,16 @@ use regex::Regex;
 use crate::error::{io_err, serde_err};
 
 static SESSION_ID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-zA-Z0-9\-_]+$").unwrap());
+static SNAPSHOT_NAME_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-zA-Z0-9\-_]+$").unwrap());
 
-/// Session context — holds the session ID, directory, and file lock.
+/// Session context — holds the session ID, directory, base directory, and file lock.
 ///
 /// Created via [`resolve_session`]. The lock is released when the struct is dropped.
+#[derive(Debug)]
 pub struct SessionContext {
     pub session_id: String,
     pub session_dir: PathBuf,
+    pub base_dir: PathBuf,
     pub is_new_session: bool,
     _lock: Option<File>,
 }
@@ -28,7 +31,6 @@ impl SessionContext {
     }
 
     /// Path to the session metadata JSON file.
-    #[allow(dead_code)]
     pub fn metadata_path(&self) -> PathBuf {
         self.session_dir.join("session_meta.json")
     }
@@ -56,6 +58,32 @@ pub fn validate_session_id(session_id: &str) -> AgentResult<()> {
         return Err(AgentError::config_error(format!(
             "Invalid session_id format '{}'. Only alphanumeric, hyphens, and underscores allowed.",
             session_id
+        )));
+    }
+
+    Ok(())
+}
+
+/// Validate snapshot name format.
+///
+/// Allowed: alphanumerics, hyphens, underscores. 1–64 characters.
+/// No path separators or traversal sequences allowed.
+pub fn validate_snapshot_name(name: &str) -> AgentResult<()> {
+    if name.is_empty() || name.len() > 64 {
+        return Err(AgentError::config_error(format!("Snapshot name must be 1-64 characters, got {}", name.len())));
+    }
+
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        return Err(AgentError::config_error(format!(
+            "Invalid snapshot name '{}': path separators and '..' are not allowed",
+            name
+        )));
+    }
+
+    if !SNAPSHOT_NAME_RE.is_match(name) {
+        return Err(AgentError::config_error(format!(
+            "Invalid snapshot name '{}'. Only alphanumeric, hyphens, and underscores allowed.",
+            name
         )));
     }
 
@@ -206,6 +234,153 @@ pub fn cleanup_expired_sessions(base_dir: &Path, max_age_days: i64) -> AgentResu
     Ok(cleaned)
 }
 
+// ── Session snapshots (Phase 6.3) ──
+
+/// Create a named snapshot of a session.
+///
+/// Copies the session directory to `base_dir/snapshots/<name>/`.
+/// Returns the snapshot path.
+pub fn create_snapshot(session_ctx: &SessionContext, name: &str, base_dir: &Path) -> AgentResult<PathBuf> {
+    validate_snapshot_name(name)?;
+    let snapshot_dir = base_dir.join("snapshots").join(name);
+
+    if snapshot_dir.exists() {
+        std::fs::remove_dir_all(&snapshot_dir).map_err(io_err)?;
+    }
+    std::fs::create_dir_all(&snapshot_dir).map_err(io_err)?;
+
+    // Copy session metadata
+    let meta_path = session_ctx.metadata_path();
+    if meta_path.exists() {
+        std::fs::copy(&meta_path, snapshot_dir.join("session_meta.json")).map_err(io_err)?;
+    }
+
+    // Copy all turn logs
+    let mut turn_count = 0u32;
+    for entry in std::fs::read_dir(&session_ctx.session_dir).map_err(io_err)? {
+        let entry = entry.map_err(io_err)?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if name_str.starts_with("turn_") && name_str.ends_with(".jsonl") {
+            std::fs::copy(entry.path(), snapshot_dir.join(&*name_str)).map_err(io_err)?;
+            turn_count += 1;
+        }
+    }
+
+    // Write snapshot info
+    let info = serde_json::json!({
+        "session_id": session_ctx.session_id,
+        "snapshot_name": name,
+        "created_at": chrono::Utc::now().to_rfc3339(),
+        "turn_count": turn_count,
+    });
+    std::fs::write(snapshot_dir.join("snapshot_info.json"), serde_json::to_string_pretty(&info).map_err(serde_err)?)
+        .map_err(io_err)?;
+
+    tracing::info!(
+        session_id = %session_ctx.session_id,
+        name = name,
+        turns = turn_count,
+        "session snapshot created"
+    );
+
+    Ok(snapshot_dir)
+}
+
+/// List all saved snapshots under `base_dir/snapshots/`.
+///
+/// Returns a vector of (name, snapshot_info_json, turn_count).
+pub fn list_snapshots(base_dir: &Path) -> AgentResult<Vec<SnapshotInfo>> {
+    let snapshots_dir = base_dir.join("snapshots");
+    if !snapshots_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut snapshots = Vec::new();
+    for entry in std::fs::read_dir(&snapshots_dir).map_err(io_err)? {
+        let entry = entry.map_err(io_err)?;
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+
+        let info_path = path.join("snapshot_info.json");
+        if !info_path.exists() {
+            continue;
+        }
+
+        let content = std::fs::read_to_string(&info_path).map_err(io_err)?;
+        let info: serde_json::Value = serde_json::from_str(&content).map_err(serde_err)?;
+
+        let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        let session_id = info["session_id"].as_str().unwrap_or("-").to_string();
+        let created_at = info["created_at"].as_str().unwrap_or("-").to_string();
+        let turn_count = info["turn_count"].as_u64().unwrap_or(0) as u32;
+
+        snapshots.push(SnapshotInfo { name, session_id, created_at, turn_count, path });
+    }
+
+    snapshots.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    Ok(snapshots)
+}
+
+/// Info about a saved snapshot.
+pub struct SnapshotInfo {
+    pub name: String,
+    pub session_id: String,
+    pub created_at: String,
+    pub turn_count: u32,
+    pub path: PathBuf,
+}
+
+/// Restore a session from a snapshot.
+///
+/// Creates a new session from the snapshot data. Returns the new session context.
+pub fn restore_snapshot(name: &str, base_dir: &Path) -> AgentResult<SessionContext> {
+    validate_snapshot_name(name)?;
+    let snapshot_dir = base_dir.join("snapshots").join(name);
+    if !snapshot_dir.exists() {
+        return Err(AgentError::config_error(format!("Snapshot '{}' not found at {}", name, snapshot_dir.display())));
+    }
+
+    // Generate new session ID and directory
+    let new_session_id = generate_session_id();
+    let (new_session_dir, _) = get_or_create_session_dir(&new_session_id, base_dir)?;
+
+    // Copy turn logs from snapshot
+    for entry in std::fs::read_dir(&snapshot_dir).map_err(io_err)? {
+        let entry = entry.map_err(io_err)?;
+        let fname = entry.file_name();
+        let name_str = fname.to_string_lossy();
+        if name_str.starts_with("turn_") && name_str.ends_with(".jsonl") {
+            std::fs::copy(entry.path(), new_session_dir.join(&*name_str)).map_err(io_err)?;
+        }
+    }
+
+    let lock = acquire_session_lock(&new_session_dir)?;
+    tracing::info!(from = name, to = %new_session_id, "session restored from snapshot");
+
+    Ok(SessionContext {
+        session_id: new_session_id,
+        session_dir: new_session_dir,
+        base_dir: base_dir.to_path_buf(),
+        is_new_session: false,
+        _lock: Some(lock),
+    })
+}
+
+/// Delete a saved snapshot.
+pub fn delete_snapshot(name: &str, base_dir: &Path) -> AgentResult<()> {
+    validate_snapshot_name(name)?;
+    let snapshot_dir = base_dir.join("snapshots").join(name);
+    if !snapshot_dir.exists() {
+        return Err(AgentError::config_error(format!("Snapshot '{}' not found", name)));
+    }
+    std::fs::remove_dir_all(&snapshot_dir).map_err(io_err)?;
+    tracing::info!(name = name, "snapshot deleted");
+    Ok(())
+}
+
 /// Resolve and create a session context — session ID, directory, and file lock.
 ///
 /// This is the primary entry point for session setup. It combines ID resolution,
@@ -215,7 +390,13 @@ pub fn resolve_session(cli_session_id: Option<&str>, base_dir: &Path) -> AgentRe
     let (session_dir, is_new) = get_or_create_session_dir(&session_id, base_dir)?;
     let lock = acquire_session_lock(&session_dir)?;
 
-    Ok(SessionContext { session_id, session_dir, is_new_session: is_new, _lock: Some(lock) })
+    Ok(SessionContext {
+        session_id,
+        session_dir,
+        base_dir: base_dir.to_path_buf(),
+        is_new_session: is_new,
+        _lock: Some(lock),
+    })
 }
 
 #[cfg(test)]
@@ -323,5 +504,157 @@ mod tests {
             "expected ResourceUnavailable for locked session, got {:?}",
             err
         );
+    }
+
+    // ── Snapshot name validation tests ──
+
+    #[test]
+    fn test_validate_snapshot_name_valid() {
+        assert!(validate_snapshot_name("my-snapshot").is_ok());
+        assert!(validate_snapshot_name("test_123").is_ok());
+        assert!(validate_snapshot_name("a").is_ok());
+        assert!(validate_snapshot_name("snapshot-2024-01-01").is_ok());
+    }
+
+    #[test]
+    fn test_validate_snapshot_name_invalid() {
+        assert!(validate_snapshot_name("").is_err());
+        assert!(validate_snapshot_name("../etc").is_err());
+        assert!(validate_snapshot_name("path/traversal").is_err());
+        assert!(validate_snapshot_name("back\\slash").is_err());
+        assert!(validate_snapshot_name("dot..dot").is_err());
+        assert!(validate_snapshot_name("has space").is_err());
+        assert!(validate_snapshot_name(&"x".repeat(65)).is_err()); // too long
+    }
+
+    #[test]
+    fn test_validate_snapshot_name_returns_config_error() {
+        let err = validate_snapshot_name("").unwrap_err();
+        assert!(matches!(err, AgentError::ConfigError(_)), "expected ConfigError, got {:?}", err);
+
+        let err = validate_snapshot_name("../etc").unwrap_err();
+        assert!(matches!(err, AgentError::ConfigError(_)), "expected ConfigError for path traversal, got {:?}", err);
+    }
+
+    // ── Snapshot create / list tests ──
+
+    #[test]
+    fn test_create_snapshot_and_list() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = resolve_session(Some("snap-session"), tmp.path()).unwrap();
+
+        // Have at least one turn log so we can verify it is copied
+        let turn_path = ctx.turn_path(1);
+        std::fs::write(&turn_path, "{}").unwrap();
+
+        // Create a snapshot
+        let snap_path = create_snapshot(&ctx, "test-snap", tmp.path()).unwrap();
+        assert!(snap_path.exists());
+        assert!(snap_path.join("snapshot_info.json").exists());
+        assert!(snap_path.join("turn_001.jsonl").exists());
+
+        // List — should contain exactly one
+        let snaps = list_snapshots(tmp.path()).unwrap();
+        assert_eq!(snaps.len(), 1);
+        assert_eq!(snaps[0].name, "test-snap");
+        assert_eq!(snaps[0].session_id, "snap-session");
+        assert_eq!(snaps[0].turn_count, 1);
+    }
+
+    #[test]
+    fn test_create_snapshot_overwrites_existing() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = resolve_session(Some("snap-session"), tmp.path()).unwrap();
+
+        create_snapshot(&ctx, "dup-snap", tmp.path()).unwrap();
+        // Second create with same name should succeed (overwrite)
+        let result = create_snapshot(&ctx, "dup-snap", tmp.path());
+        assert!(result.is_ok());
+
+        let snaps = list_snapshots(tmp.path()).unwrap();
+        assert_eq!(snaps.len(), 1);
+    }
+
+    #[test]
+    fn test_list_snapshots_empty_dir() {
+        let tmp = TempDir::new().unwrap();
+        let snaps = list_snapshots(tmp.path()).unwrap();
+        assert!(snaps.is_empty());
+    }
+
+    #[test]
+    fn test_list_snapshots_sorted_by_date_desc() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = resolve_session(Some("snap-session"), tmp.path()).unwrap();
+
+        create_snapshot(&ctx, "first", tmp.path()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        create_snapshot(&ctx, "second", tmp.path()).unwrap();
+
+        let snaps = list_snapshots(tmp.path()).unwrap();
+        assert_eq!(snaps.len(), 2);
+        // Most recent first
+        assert_eq!(snaps[0].name, "second");
+        assert_eq!(snaps[1].name, "first");
+    }
+
+    // ── Snapshot restore tests ──
+
+    #[test]
+    fn test_restore_snapshot_success() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = resolve_session(Some("snap-session"), tmp.path()).unwrap();
+
+        // Write a turn log
+        std::fs::write(ctx.turn_path(1), r#"{"type":"text_delta","text":"hello"}"#).unwrap();
+        create_snapshot(&ctx, "restore-me", tmp.path()).unwrap();
+
+        // Restore into a new session
+        let restored = restore_snapshot("restore-me", tmp.path()).unwrap();
+        assert_ne!(restored.session_id, "snap-session");
+        assert!(!restored.is_new_session);
+        assert!(restored.turn_path(1).exists());
+
+        // Verify turn log content was copied
+        let content = std::fs::read_to_string(restored.turn_path(1)).unwrap();
+        assert!(content.contains("hello"));
+    }
+
+    #[test]
+    fn test_restore_snapshot_not_found() {
+        let tmp = TempDir::new().unwrap();
+        let err = restore_snapshot("no-such-snapshot", tmp.path()).unwrap_err();
+        assert!(matches!(err, AgentError::ConfigError(_)), "expected ConfigError for missing snapshot, got {:?}", err);
+    }
+
+    // ── Snapshot delete tests ──
+
+    #[test]
+    fn test_delete_snapshot_success() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = resolve_session(Some("snap-session"), tmp.path()).unwrap();
+
+        create_snapshot(&ctx, "del-me", tmp.path()).unwrap();
+        assert_eq!(list_snapshots(tmp.path()).unwrap().len(), 1);
+
+        delete_snapshot("del-me", tmp.path()).unwrap();
+        assert_eq!(list_snapshots(tmp.path()).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_delete_snapshot_not_found() {
+        let tmp = TempDir::new().unwrap();
+        let err = delete_snapshot("no-such-snapshot", tmp.path()).unwrap_err();
+        assert!(matches!(err, AgentError::ConfigError(_)), "expected ConfigError for missing snapshot, got {:?}", err);
+    }
+
+    // ── SessionContext base_dir test ──
+
+    #[test]
+    fn test_session_context_stores_base_dir() {
+        let tmp = TempDir::new().unwrap();
+        let ctx = resolve_session(Some("base-test"), tmp.path()).unwrap();
+        assert_eq!(ctx.base_dir, tmp.path());
+        assert!(ctx.session_dir.starts_with(&ctx.base_dir));
     }
 }

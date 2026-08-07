@@ -163,6 +163,76 @@ pub async fn run_repl(
             }
             continue;
         }
+        if input == "session" {
+            if matches!(format, OutputFormat::Terminal { .. }) {
+                println!();
+                println!("  \x1b[1mSession Context\x1b[0m");
+                println!("  ─────────────────");
+                println!("  Session ID:  {}", session_ctx.session_id);
+                println!("  Directory:   {}", session_ctx.session_dir.display());
+                println!("  Status:      {}", if session_ctx.is_new_session { "new" } else { "reused" });
+                println!("  Turn:        {}", turn_number);
+                println!("  Log:         {}", session_ctx.log_path().display());
+                println!();
+            }
+            continue;
+        }
+        if input == "events" {
+            if matches!(format, OutputFormat::Terminal { .. }) {
+                println!();
+                println!("  \x1b[1mEvent Stream\x1b[0m");
+                println!("  ────────────────");
+                println!("  Turns completed: {}", turn_number);
+                if turn_number > 0 {
+                    for t in 1..=turn_number {
+                        let turn_path = session_ctx.turn_path(t as usize);
+                        let size = std::fs::metadata(&turn_path).map(|m| m.len()).unwrap_or(0);
+                        println!("    turn {:03}: {} ({} bytes)", t, turn_path.display(), size);
+                    }
+                } else {
+                    println!("  (no turns yet)");
+                }
+                println!();
+            }
+            continue;
+        }
+        if input == "snapshots" {
+            match phi_agent::session::list_snapshots(&session_ctx.base_dir) {
+                Ok(snapshots) => {
+                    if matches!(format, OutputFormat::Terminal { .. }) {
+                        println!();
+                        if snapshots.is_empty() {
+                            println!("  (no snapshots saved)");
+                        } else {
+                            println!("  \x1b[1mSnapshots\x1b[0m ({}):\n", snapshots.len());
+                            for s in &snapshots {
+                                println!("  \x1b[1m{}\x1b[0m  ({})", s.name, s.session_id);
+                                println!("    {} turns, saved {}", s.turn_count, s.created_at);
+                            }
+                        }
+                        println!();
+                    }
+                },
+                Err(e) => eprintln!("  Failed to list snapshots: {e}"),
+            }
+            continue;
+        }
+        if let Some(name) = input.strip_prefix("snapshot ") {
+            let name = name.trim();
+            if name.is_empty() {
+                println!("  Usage: snapshot <name>");
+            } else {
+                match phi_agent::session::create_snapshot(session_ctx, name, &session_ctx.base_dir) {
+                    Ok(_) => {
+                        if matches!(format, OutputFormat::Terminal { .. }) {
+                            println!("\n✅ Snapshot '{}' saved\n", name);
+                        }
+                    },
+                    Err(e) => eprintln!("\n  Failed to save snapshot: {e}\n"),
+                }
+            }
+            continue;
+        }
 
         let _ = rl.save_history(&history_path);
 
@@ -257,7 +327,8 @@ pub fn print_welcome_banner(agent: &PhiAgent, session_ctx: &SessionContext) {
         println!("║  Status: Reusing session                            ║");
     }
     println!("║                                                   ║");
-    println!("║  Commands: exit/quit | reset | tools              ║");
+    println!("║  Commands: exit/quit | reset | tools | session | events║");
+    println!("║            snapshot <name> | snapshots                ║");
     println!("╚═══════════════════════════════════════════════════╝");
     println!();
 }

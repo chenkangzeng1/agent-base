@@ -467,9 +467,9 @@ Body 中支持标准变量语法：
 - phi-agent: 123 tests
 
 **剩余收尾（并入 Phase 5）：**
-- CLI `phi serve` — MCP Server 入口（stdio + HTTP）
-- `examples/mcp/mcp_server.rs` 示例
-- CHANGELOG 更新
+- CLI `phi serve` — MCP Server 入口（stdio + HTTP） ✅ 已完成
+- `examples/mcp/mcp_server.rs` 示例 ✅ 已完成
+- CHANGELOG 更新 ✅ 已完成
 
 ---
 
@@ -646,13 +646,13 @@ file = ["phi-kernel-tools/file"]  # 文件工具 + skill/memory prompt 注入
 
 | 步骤 | 仓库 | 内容 | 状态 |
 |------|------|------|------|
-| 0 | phi-agent | **Phase 4 收尾：** CLI `phi serve` MCP Server 入口 (stdio + HTTP) | 待开始 |
+| 0 | phi-agent | **Phase 4 收尾：** CLI `phi serve` MCP Server 入口 (stdio + HTTP) | ✅ 已完成 |
 | 1 | phi-kernel-tools | 实现 read_file / write_file / list_files | ✅ 已完成 |
 | 2 | phi-agent | builder.rs 注册 file tools + feature gate | ✅ 已完成 |
 | 3 | agent-works | system prompt 加入 skill list（LazySkillPrompter 默认化） | ✅ 已完成 |
 | 4 | phi-kernel-tools + phi-agent | 删除旧的 skill 工具和 feature | ✅ 已完成 |
-| 5 | agent-works + phi-agent | system prompt 加入 memory 指令 | 待开始 |
-| 6 | 测试 + 示例 | 集成测试 + file example + CHANGELOG 更新 | 待开始 |
+| 5 | agent-works + phi-agent | system prompt 加入 memory 指令 | ✅ 已完成 |
+| 6 | 测试 + 示例 | 集成测试 + `mcp_server`/`file_ops` example + CHANGELOG 更新 | ✅ 已完成 |
 
 **产出:** CLI `phi serve` MCP 入口 + phi-kernel-tools 3 个 file 工具 + Skills 降为 prompt 注入 + Memory 降为 prompt 注入
 
@@ -668,9 +668,15 @@ file = ["phi-kernel-tools/file"]  # 文件工具 + skill/memory prompt 注入
 - `/session` — 当前会话上下文
 - `/tools` — 已注册工具列表
 
-### 6.2 phi-extra crate
+### 6.2 记忆模板（phi-tools）
 
-独立可选 crate：记忆模板 + OpenTelemetry 辅助 + 工具函数。绝不允许进 agent-base。
+记忆文件 `.md` 模板放到 `phi-tools/templates/memory/`，不新建 crate。
+
+- 项目记忆模板、编码规范模板、用户偏好模板等预制 `.md` 文件
+- LLM 创建新记忆时可以直接 `read_file` 模板参考格式
+- 不进 agent-base / agent-works，纯数据文件
+
+> 注：OTel 辅助、工具函数等需求明确后再考虑是否建 phi-extra，Phase 6 不提前建空 crate。
 
 ### 6.3 会话快照
 
@@ -680,7 +686,16 @@ file = ["phi-kernel-tools/file"]  # 文件工具 + skill/memory prompt 注入
 
 `examples/advanced/hybrid_langgraph.rs` — LangGraph 通过 MCP 调用 phi-agent。
 
-**产出:** REPL 命令 + phi-extra + 会话快照 + 混合 Demo
+### 6.5 实现步骤
+
+| 步骤 | 仓库 | 内容 | 状态 |
+|------|------|------|------|
+| 1 | phi-agent | REPL 新增 `session`/`events`/`snapshot`/`snapshots` 命令 | ✅ 已完成 |
+| 2 | phi-tools | 记忆模板 `.md` 文件 + memory prompt 更新 | ✅ 已完成 |
+| 3 | phi-agent | 会话快照（create/list/restore/delete） | ✅ 已完成 |
+| 4 | phi-agent | `hybrid_langgraph` example | ✅ 已完成 |
+
+**产出:** REPL 调试命令 + 记忆模板 + 会话快照 + 混合 Demo
 
 ---
 
@@ -704,12 +719,12 @@ Phase 1: 修倒退              3-5 天 ✅ 已完成    phi-agent 层 anyhow �
 Phase 2: 文档 & 示例          3-5 天 ✅ 已完成    examples 重组 + README + CONTRIBUTING
 Phase 3: Multi-Agent         2-3 周 ✅ 已完成    agent-works 基础设施 + phi-kernel-tools 6 个 Tool + phi-agent Builder 集成
 Phase 4: MCP Server + Skills  3-4 周 ✅ 已完成    agent-works MCP Server + Skills 对齐 agentskills.io + 事件字段 + hot-reload
-Phase 5: 文件系统工具         3-4 周   未开始     phi-kernel-tools 3 file tools + Skills/Memory 降为 prompt 注入，file+shell 默认开
-Phase 6: 工具 + 生态          2-3 周   未开始     REPL + phi-extra + 会话快照 + 混合 Demo
+Phase 5: 文件系统工具         3-4 周 ✅ 已完成    phi-kernel-tools 3 file tools + Skills/Memory 降为 prompt 注入
+Phase 6: 工具 + 生态          2-3 周 ✅ 已完成    REPL 命令 + 记忆模板 + 会话快照 + 混合 Demo
 Phase 7: 性能 & 稳定         条件触发   未开始    压测 + API 冻结 + v1.0
 ```
 
-Phase 1-4 已完成。Phase 5-7 串行推进。
+Phase 1-6 已完成。Phase 7 待推进。
 
 ---
 

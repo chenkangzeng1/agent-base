@@ -91,8 +91,8 @@ pub fn base_agent_builder(llm_client: Arc<dyn agent_base::LlmClient>) -> agent_w
     // ── Skills: prompt-injection mode (uses read_file, no skill-specific tools) ──
     #[cfg(feature = "file")]
     {
-        use agent_works::skill::prompt_skill::PromptSkill;
         use agent_works::skill::Skill;
+        use agent_works::skill::prompt_skill::PromptSkill;
         let skill_dirs: Vec<PathBuf> = vec![
             // User-level skills (low priority)
             dirs_next().join(".phi").join("skills"),
@@ -112,10 +112,10 @@ pub fn base_agent_builder(llm_client: Arc<dyn agent_base::LlmClient>) -> agent_w
                             );
                             builder = builder.register_skill(skill);
                         }
-                    }
+                    },
                     Err(e) => {
                         tracing::warn!(dir = %dir.display(), error = %e, "failed to scan skills directory");
-                    }
+                    },
                 }
             }
         }
@@ -211,8 +211,7 @@ mod tests {
     #[cfg(feature = "multi-agent")]
     #[tokio::test(flavor = "multi_thread")]
     async fn test_base_agent_builder_registers_multi_agent_tools() {
-        let builder = base_agent_builder(Arc::new(StubClient))
-            .system_prompt("test");
+        let builder = base_agent_builder(Arc::new(StubClient)).system_prompt("test");
 
         let runtime = builder.build().unwrap();
 
@@ -234,9 +233,7 @@ mod tests {
     #[cfg(feature = "multi-agent")]
     #[tokio::test(flavor = "multi_thread")]
     async fn test_base_agent_builder_without_multi_agent() {
-        let builder = base_agent_builder(Arc::new(StubClient))
-            .system_prompt("test")
-            .without_multi_agent();
+        let builder = base_agent_builder(Arc::new(StubClient)).system_prompt("test").without_multi_agent();
 
         let runtime = builder.build().unwrap();
 
