@@ -464,7 +464,7 @@ Body 中支持标准变量语法：
 **测试覆盖：**
 - agent-works: 130 tests（含 hot-reload 2x、tool name validation、prefix clobbering）
 - phi-kernel-tools: 38 tests
-- phi-agent: 123 tests
+- phi-agent: 138 tests（108 unit + 12 bridge + 18 integration），含 12 个 snapshot 测试
 
 **剩余收尾（并入 Phase 5）：**
 - CLI `phi serve` — MCP Server 入口（stdio + HTTP） ✅ 已完成
@@ -696,6 +696,20 @@ file = ["phi-kernel-tools/file"]  # 文件工具 + skill/memory prompt 注入
 | 4 | phi-agent | `hybrid_langgraph` example | ✅ 已完成 |
 
 **产出:** REPL 调试命令 + 记忆模板 + 会话快照 + 混合 Demo
+
+---
+
+## 评审 & 修复（Phase 5-6 收尾）
+
+代码评审发现 3 个 bug，已全部修复：
+
+| # | 问题 | 修复 |
+|---|------|------|
+| 1 | `run.rs` 中 `parent().unwrap().parent().unwrap()` 有 panic 风险 | `SessionContext` 新增 `base_dir` 字段，`resolve_session`/`restore_snapshot` 自动填充 |
+| 2 | snapshot 名字无校验，存在路径穿越风险 | 新增 `validate_snapshot_name()` 函数，`create_snapshot`/`restore_snapshot`/`delete_snapshot` 入口统一校验 |
+| 3 | `metadata_path()` 上的 `#[allow(dead_code)]` 已过时 | 删除注解 |
+
+**测试覆盖:** 新增 12 个 snapshot 单元测试（validate_snapshot_name ×3 / create_snapshot ×2 / list_snapshots ×2 / restore_snapshot ×2 / delete_snapshot ×2 / base_dir ×1），全量 138 tests pass，fmt + clippy clean。
 
 ---
 
