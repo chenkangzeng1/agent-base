@@ -8,6 +8,7 @@
 //! LLM_API_KEY=your-key cargo run --example hello-agent
 //! ```
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use common::client;

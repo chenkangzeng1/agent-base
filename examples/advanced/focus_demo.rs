@@ -9,6 +9,7 @@
 //! LLM_API_KEY=your-key cargo run --example focus-demo
 //! ```
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use std::sync::Arc;

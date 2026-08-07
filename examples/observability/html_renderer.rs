@@ -9,6 +9,7 @@
 //! LLM_API_KEY=your-key cargo run --example html-renderer > output.html
 //! ```
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use std::io::{self, Write};

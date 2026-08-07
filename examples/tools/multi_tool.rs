@@ -8,6 +8,7 @@
 //! LLM_API_KEY=your-key cargo run --example multi-tool
 //! ```
 
+#[path = "../common/mod.rs"]
 mod common;
 
 use agent_base::{AgentResult, Tool, ToolContext, ToolControlFlow, ToolOutput};

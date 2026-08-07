@@ -4,6 +4,7 @@ use phi_agent::OpenAiClient;
 use std::sync::Arc;
 
 /// LLM connection settings resolved from the environment.
+#[allow(dead_code)]
 pub struct LlmEnv {
     pub api_key: String,
     pub model: String,
@@ -11,6 +12,7 @@ pub struct LlmEnv {
 }
 
 /// Resolve the LLM API key, model, and base URL used by the examples.
+#[allow(dead_code)]
 pub fn resolve_llm_env() -> LlmEnv {
     dotenvy::dotenv().ok();
 
@@ -24,6 +26,7 @@ pub fn resolve_llm_env() -> LlmEnv {
 }
 
 /// Build the OpenAI-compatible client used by the examples.
+#[allow(dead_code)]
 pub fn client() -> Arc<OpenAiClient> {
     let env = resolve_llm_env();
     Arc::new(OpenAiClient::new(env.api_key, env.model, Some(env.base_url)))

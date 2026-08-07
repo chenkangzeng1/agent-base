@@ -149,9 +149,82 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-See [examples/](examples/) for more complete examples.
+See [examples/](examples/) for more complete examples, organized by category:
+- [minimal/](examples/minimal/) — hello agent
+- [tools/](examples/tools/) — custom tools and policies
+- [mcp/](examples/mcp/) — MCP client and dynamic attach/detach
+- [session/](examples/session/) — session persistence and lifecycle
+- [observability/](examples/observability/) — event log, middleware hooks
+- [advanced/](examples/advanced/) — window memory, summary memory, focus
 
 ## CLI
+
+```bash
+cargo install phi-agent
+phi "What's in this directory?"
+```
+
+```bash
+# REPL mode
+phi
+
+# JSON output for scripting
+phi --format json "list files"
+```
+
+## ✅ What phi-agent is Good For
+
+- **Embedded & edge applications** — single binary, zero system dependencies, runs on ARM Linux and IoT gateways
+- **Industrial & compliance workloads** — fully observable, every step logged to JSONL, audit trails out of the box
+- **Desktop & cloud AI apps** — `cargo install` into CLI/backend, use as a library or standalone binary
+- **Custom vertical agents** — you define every tool, you own every prompt, zero vendor lock-in
+- **High-performance workflows** — Rust runtime, async I/O, sub-millisecond tool dispatch
+- **Python + Rust hybrid** — write tools in Python, execution engine runs in Rust
+
+## ⚠️ What phi-agent Does NOT Provide
+
+phi-agent the **framework** is intentionally lean. The following are **explicitly out of scope** and will not be built into the framework itself (but some may be available as separate opt-in crates in the ecosystem):
+
+- **Built-in tools** — the framework ships with zero tools. You define and register every tool yourself. For convenience, the ecosystem provides optional companion crates (e.g., `phi-tools`, the planned `phi-extra`), and more tool libraries may be contributed over time — all opt-in, none bundled.
+- **Built-in memory / vector DB** — no Pinecone/Chroma/Weaviate integration, no automatic embedding. You manage state yourself.
+- **Pre-built agent types** — no "research agent," "coding agent," "support agent" templates. You compose your own.
+- **Workflow engine** — no DAG execution, no conditional branching engine, no LangGraph-style graph compiler. Agent behavior is driven by LLM tool-choice.
+- **Prompt templates** — no langchain-style prompt chains, no automatic context stuffing. You control the system prompt.
+- **Streaming HTTP server** — phi-agent is a library and CLI. You build the server layer (Actix/Axum/Warp) yourself.
+- **Multi-agent orchestration** — currently not in scope (on the roadmap for v0.4.0, but will be a separate opt-in crate).
+
+If you need these, combine phi-agent with:
+- **Memory**: bring your own vector DB (Qdrant, pgvector, LanceDB)
+- **Workflows**: use [LangGraph](https://www.langchain.com/langgraph) or [Temporal](https://temporal.io/) for orchestration
+- **Tools**: use [phi-tools](https://crates.io/crates/phi-tools) for common utilities, or build your own
+- **HTTP**: add [axum](https://crates.io/crates/axum) or [actix-web](https://crates.io/crates/actix-web)
+
+## 🧩 phi-agent + LangGraph
+
+phi-agent and **LangGraph** solve different problems and work well together:
+
+| | phi-agent | LangGraph |
+|---|---|---|
+| **What it does** | Single-agent runtime | Multi-step workflow engine |
+| **Strengths** | Fast tool dispatch, event streaming, embedded deployment | Graph-based control flow, checkpointing, human-in-the-loop |
+| **How they fit** | Agent nodes inside a LangGraph graph | Orchestration layer above phi-agent agents |
+
+**Recommended pattern**: Use LangGraph for workflow-level control flow (routing, branching, retries), and use phi-agent as the execution engine for individual agent nodes. phi-agent agents → LangGraph nodes, phi-agent tools → LangChain tools.
+
+## 🔒 Security
+
+**phi-agent does NOT sandbox the LLM or sanitize tool calls.** The agent executes whatever tools you register, with whatever permissions those tools have. You are responsible for:
+
+- **Tool permissions** — if you register a shell tool, the LLM can run arbitrary commands. Consider allowlists, sandboxing, or OS-level restrictions.
+- **Prompt injection** — user input goes directly into the prompt. There is no input filtering or sanitization built in.
+- **Network access** — the LLM client makes outbound HTTP calls to the configured API endpoint. No traffic inspection is performed.
+- **Session data** — session logs are written to `~/.phi-agent/sessions/` in plain JSONL. They may contain sensitive information from your conversations.
+
+**For production use**, apply the principle of least privilege: only register tools the agent actually needs, and run the agent process with the minimum necessary OS permissions.
+
+Report security vulnerabilities to **[phiagent@hibuka.com](mailto:phiagent@hibuka.com)**. See [SECURITY.md](SECURITY.md) for our full policy.
+
+## FAQ
 
 ```bash
 cargo install phi-agent

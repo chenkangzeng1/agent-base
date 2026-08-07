@@ -19,6 +19,23 @@ cargo test         # make sure everything passes
 - **[Help Wanted](https://github.com/hibuka-labs/phi-agent/labels/help%20wanted)** — larger features or improvements the maintainers would love help with.
 - **Got your own idea?** Open an issue first to discuss it before writing code — saves you time if it doesn't fit the roadmap.
 
+## Features We Won't Accept
+
+To keep phi-agent focused and maintainable, these features are **explicitly out of scope** and PRs for them will not be merged:
+
+| Feature | Reason |
+|---------|--------|
+| **Built-in tools** (web search, file I/O, code exec) | phi-agent is tool-agnostic by design. Tools belong in separate opt-in crates (e.g., `phi-tools`, the planned `phi-extra`). |
+| **Built-in memory / vector DB** | No embedded vector store. State management is the user's responsibility. |
+| **Prompt templates or chains** | No langchain-style abstractions. Users control their system prompts directly. |
+| **Workflow / DAG engine** | Agent behavior is LLM-driven via tool-choice, not graph-compiled. Use LangGraph for orchestration. |
+| **Pre-built agent types** (coder, researcher, etc.) | There is no one-size-fits-all agent. Users compose their own from tools + prompts. |
+| **HTTP server or REST API** | phi-agent is a library + CLI. The server layer (Axum/Actix/Warp) is left to the user. |
+| **Plugin system** | Tools are registered at runtime via the `Tool` trait. No dynamic loading or plugin discovery. |
+| **Non-Rust SDKs in this repo** | Python/Node/Go SDKs live in their own repositories. This repo is Rust only. |
+
+If your idea isn't on this list, open a discussion first — we're happy to talk. But if it's listed above, please don't spend time on a PR; it won't be accepted.
+
 ## Before Submitting a PR
 
 ```bash

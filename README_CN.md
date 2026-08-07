@@ -150,9 +150,82 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-更多示例参见 [examples/](examples/)。
+更多示例参见 [examples/](examples/)，按类别组织：
+- [minimal/](examples/minimal/) — 最简示例
+- [tools/](examples/tools/) — 自定义工具与审批策略
+- [mcp/](examples/mcp/) — MCP 客户端与动态连接管理
+- [session/](examples/session/) — 会话持久化与生命周期
+- [observability/](examples/observability/) — 事件日志、中间件钩子
+- [advanced/](examples/advanced/) — 滑动窗口记忆、摘要记忆、专注判断
 
 ## CLI
+
+```bash
+cargo install phi-agent
+phi "这个目录下有什么文件？"
+```
+
+```bash
+# REPL 模式
+phi
+
+# JSON 输出（方便脚本处理）
+phi --format json "列出文件"
+```
+
+## ✅ 适合做什么
+
+- **嵌入式 & 边缘应用** — 单二进制，零系统依赖，可在 ARM Linux 和 IoT 网关上运行
+- **工业 & 合规场景** — 全程可观测，每步记录到 JSONL，开箱即用的审计追踪
+- **桌面 & 云端 AI 应用** — `cargo install` 即可作为 CLI/后端使用，也可作为库嵌入
+- **垂直领域定制 Agent** — 每个工具由你定义，每句 prompt 由你掌控，零供应商锁定
+- **高性能工作流** — Rust 运行时，异步 I/O，亚毫秒级工具调度
+- **Python + Rust 混合开发** — Python 写工具，Rust 跑引擎
+
+## ⚠️ 不提供什么
+
+phi-agent **框架本身**刻意保持精简。以下功能**明确不内建到框架中**（但部分可能以独立可选 crate 形式在生态中提供）：
+
+- **内建工具** — 框架不内建任何工具，不提供网页搜索、文件系统、代码执行器、数据库连接器。所有工具由你定义和注册。生态提供了可选配套 crate（如 `phi-tools`、规划中的 `phi-extra`），后续也可能随发展贡献更多工具库 — 全部按需引入，不捆绑。
+- **内建记忆 / 向量数据库** — 不集成 Pinecone/Chroma/Weaviate，不自动做 embedding。状态管理由你自己掌控。
+- **预设 Agent 类型** — 不提供"研究 Agent""编程 Agent""客服 Agent"等模板。你自行组合。
+- **工作流引擎** — 不提供 DAG 执行、条件分支引擎、LangGraph 式图编译器。Agent 行为由 LLM tool-choice 驱动。
+- **Prompt 模板** — 不提供 langchain 式的 prompt 链、自动上下文填充。system prompt 由你控制。
+- **HTTP 服务器** — phi-agent 是库 + CLI。服务器层（Actix/Axum/Warp）由你自行搭建。
+- **多 Agent 编排** — 暂不在当前版本范围内（v0.4.0 路线图中，但会作为独立可选 crate）。
+
+如果需要上述功能，可将 phi-agent 与以下组件结合使用：
+- **记忆**：自选向量数据库（Qdrant、pgvector、LanceDB）
+- **工作流**：使用 [LangGraph](https://www.langchain.com/langgraph) 或 [Temporal](https://temporal.io/) 做编排
+- **工具**：使用 [phi-tools](https://crates.io/crates/phi-tools) 获取常用工具，或自行构建
+- **HTTP**：搭配 [axum](https://crates.io/crates/axum) 或 [actix-web](https://crates.io/crates/actix-web)
+
+## 🧩 phi-agent + LangGraph
+
+phi-agent 和 **LangGraph** 解决不同层面的问题，可以很好地协同：
+
+| | phi-agent | LangGraph |
+|---|---|---|
+| **做什么** | 单 Agent 运行时 | 多步骤工作流引擎 |
+| **优势** | 快速工具调度、事件流、嵌入式部署 | 基于图的控制流、检查点、人机协同 |
+| **如何配合** | 作为 LangGraph 图中的 Agent 节点 | 作为 phi-agent 之上的编排层 |
+
+**推荐模式**：用 LangGraph 管理工作流级别的控制流（路由、分支、重试），用 phi-agent 作为单个 Agent 节点的执行引擎。phi-agent Agent → LangGraph 节点，phi-agent 工具 → LangChain 工具。
+
+## 🔒 安全提醒
+
+**phi-agent 不会对 LLM 进行沙箱隔离，也不会对工具调用做安全过滤。** Agent 会执行你注册的任何工具，工具拥有什么权限，LLM 就能使用什么权限。你需要自行负责：
+
+- **工具权限** — 如果你注册了 shell 工具，LLM 就能执行任意命令。请考虑使用允许列表、沙箱或操作系统级限制。
+- **Prompt 注入** — 用户输入直接进入 prompt，框架不做输入过滤或清洗。
+- **网络访问** — LLM 客户端会向你配置的 API 端点发起 HTTP 请求，框架不做流量检查。
+- **会话数据** — 会话日志以明文 JSONL 存储在 `~/.phi-agent/sessions/`，可能包含对话中的敏感信息。
+
+**生产环境建议**：遵循最小权限原则 — 只注册 Agent 真正需要的工具，并以最小必要的操作系统权限运行 Agent 进程。
+
+安全漏洞请报告至 **[phiagent@hibuka.com](mailto:phiagent@hibuka.com)**。详见 [SECURITY.md](SECURITY.md)。
+
+## 常见问题
 
 ```bash
 cargo install phi-agent

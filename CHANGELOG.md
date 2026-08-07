@@ -5,6 +5,18 @@ All notable changes to phi-agent will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- All phi-agent layer functions return `AgentResult` instead of `anyhow::Result` (Phase 1)
+- `PhiAgent` now exposes `attach_mcp()` / `detach_mcp()` for runtime MCP management (behind `mcp` feature)
+- Reorganized `examples/` into categorized directories: minimal, tools, mcp, session, observability, advanced
+
+### Added
+- New examples: `mcp_client`, `mcp_dynamic_attach`, `session_persist`, `event_log`, `middleware_hooks`, `window_memory`, `summary_memory`
+- README: "What it's good for", "What it doesn't provide", "phi-agent + LangGraph", and "Security" sections
+- CONTRIBUTING: "Features We Won't Accept" list for community expectation management
+
 ## [0.3.0] - 2026-08-06
 
 ### Added
