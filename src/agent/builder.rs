@@ -1,16 +1,16 @@
 //! General-purpose AgentBuilder factory — provides default configuration
 //! shared across consumers.
 //!
-//! Returns a pre-configured AgentBuilder; callers then register tools and
-//! approval handlers on top.
+//! Returns a pre-configured [`agent_works::AgentBuilder`]; callers then register
+//! tools and approval handlers on top.
 
 use std::sync::Arc;
 
-use agent_base::{AgentBuilder, ConsecutiveFailureRecovery, Language, ReasoningConfig, ReasoningEffort};
+use agent_base::{ConsecutiveFailureRecovery, Language, ReasoningConfig, ReasoningEffort};
 
 use crate::agent::compression::SummarizingMiddleware;
 
-/// Returns an AgentBuilder with sensible defaults:
+/// Returns an [`agent_works::AgentBuilder`] with sensible defaults:
 /// - English
 /// - Medium reasoning effort
 /// - Thinking enabled
@@ -18,10 +18,15 @@ use crate::agent::compression::SummarizingMiddleware;
 /// - Session limits (50 sessions / 100 turns per session / 50k per-message cap)
 /// - Per-run react-loop cap (200 iterations for one user input)
 /// - LLM-based context compression for long tool-heavy conversations
+/// - Multi-agent support enabled by default (6 tools: spawn/send/followup/wait/list/close)
+/// - Skill support enabled by default
 ///
-/// Callers are responsible for: registering tools, setting the approval
+/// Callers are responsible for: registering additional tools, setting the approval
 /// handler, setting the system prompt, then calling `.build()`.
-pub fn base_agent_builder(llm_client: Arc<dyn agent_base::LlmClient>) -> AgentBuilder {
+///
+/// To disable multi-agent: `.without_multi_agent()`
+/// To disable skills: compile with `--no-default-features` and exclude `skill`.
+pub fn base_agent_builder(llm_client: Arc<dyn agent_base::LlmClient>) -> agent_works::AgentBuilder {
     // Tool-output cap (default 4000 chars). Tune via PHI_MAX_TOOL_OUTPUT_CHARS for large
     // outputs (HTML, base64 images, long lists). Truncated results carry an explicit
     // "...(truncated)" suffix plus structured TruncationInfo from agent-base.
@@ -39,7 +44,7 @@ pub fn base_agent_builder(llm_client: Arc<dyn agent_base::LlmClient>) -> AgentBu
         Err(_) => 4000,
     };
 
-    AgentBuilder::new(llm_client.clone())
+    let mut builder = agent_works::AgentBuilder::new(llm_client.clone())
         .language(Language::En)
         .reasoning(ReasoningConfig { effort: Some(ReasoningEffort::Medium), ..Default::default() })
         .enable_thought(true)
@@ -53,7 +58,19 @@ pub fn base_agent_builder(llm_client: Arc<dyn agent_base::LlmClient>) -> AgentBu
         // Summarise the earlier part of long conversations so per-call LLM context
         // stays bounded (see compression.rs). Override via the returned builder, or
         // build your own AgentBuilder to opt out.
-        .middleware(SummarizingMiddleware::new(llm_client))
+        .middleware(SummarizingMiddleware::new(llm_client));
+
+    // ── Multi-agent (enabled by default) ──
+    #[cfg(feature = "multi-agent")]
+    {
+        use agent_works::multi_agent::MultiAgentConfig;
+        builder =
+            builder.with_multi_agent(MultiAgentConfig::default()).with_multi_agent_tool_factory(Arc::new(|runtime| {
+                phi_kernel_tools::multi_agent::create_all_tools(runtime)
+            }));
+    }
+
+    builder
 }
 
 #[cfg(test)]
@@ -128,5 +145,48 @@ mod tests {
         let builder = base_agent_builder(Arc::new(StubClient));
         let _ = builder;
         unsafe { std::env::remove_var("PHI_MAX_TOOL_OUTPUT_CHARS") };
+    }
+
+    /// Verify that the default `base_agent_builder()` registers the 6 multi-agent tools.
+    #[cfg(feature = "multi-agent")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_base_agent_builder_registers_multi_agent_tools() {
+        let builder = base_agent_builder(Arc::new(StubClient))
+            .system_prompt("test");
+
+        let runtime = builder.build().unwrap();
+
+        let tools = tokio::task::block_in_place(|| {
+            let tools = runtime.tools_mut();
+            let guard = tools.blocking_read();
+            guard.metadatas().into_iter().map(|m| m.name).collect::<Vec<String>>()
+        });
+
+        assert!(tools.contains(&"spawn_agent".to_string()), "expected spawn_agent tool");
+        assert!(tools.contains(&"send_message".to_string()), "expected send_message tool");
+        assert!(tools.contains(&"followup_task".to_string()), "expected followup_task tool");
+        assert!(tools.contains(&"wait_agent".to_string()), "expected wait_agent tool");
+        assert!(tools.contains(&"list_agents".to_string()), "expected list_agents tool");
+        assert!(tools.contains(&"close_agent".to_string()), "expected close_agent tool");
+    }
+
+    /// Verify that `.without_multi_agent()` on the returned builder removes the tools.
+    #[cfg(feature = "multi-agent")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_base_agent_builder_without_multi_agent() {
+        let builder = base_agent_builder(Arc::new(StubClient))
+            .system_prompt("test")
+            .without_multi_agent();
+
+        let runtime = builder.build().unwrap();
+
+        let tools = tokio::task::block_in_place(|| {
+            let tools = runtime.tools_mut();
+            let guard = tools.blocking_read();
+            guard.metadatas().into_iter().map(|m| m.name).collect::<Vec<String>>()
+        });
+
+        assert!(!tools.contains(&"spawn_agent".to_string()), "spawn_agent should not be registered");
+        assert!(!tools.contains(&"list_agents".to_string()), "list_agents should not be registered");
     }
 }

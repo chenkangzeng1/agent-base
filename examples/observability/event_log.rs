@@ -24,22 +24,30 @@ fn main() -> anyhow::Result<()> {
         phi_agent::RuntimeEvent::ThoughtDelta {
             session_id: session_id.clone(),
             text: "Let me think about this...".into(),
+            agent_id: None,
+            trace_id: None,
         },
         phi_agent::RuntimeEvent::ToolCallStarted {
             session_id: session_id.clone(),
             tool_name: "shell".into(),
             args_json: r#"{"cmd":"ls"}"#.into(),
+            agent_id: None,
+            trace_id: None,
         },
         phi_agent::RuntimeEvent::ToolCallFinished {
             session_id: session_id.clone(),
             tool_name: "shell".into(),
             summary: "Listed 3 files".into(),
+            agent_id: None,
+            trace_id: None,
         },
         phi_agent::RuntimeEvent::TextDelta {
             session_id: session_id.clone(),
             text: "Your directory contains 3 files.".into(),
+            agent_id: None,
+            trace_id: None,
         },
-        phi_agent::RuntimeEvent::RunFinished { session_id: session_id.clone() },
+        phi_agent::RuntimeEvent::RunFinished { session_id: session_id.clone(), agent_id: None, trace_id: None },
     ];
 
     // ── 3. Save turn log ──
@@ -68,8 +76,12 @@ fn main() -> anyhow::Result<()> {
     assert_eq!(last["type"], "turn_end");
 
     // ── 6. Multi-turn append ──
-    let events2 =
-        vec![phi_agent::RuntimeEvent::TextDelta { session_id: session_id.clone(), text: "Follow-up response.".into() }];
+    let events2 = vec![phi_agent::RuntimeEvent::TextDelta {
+        session_id: session_id.clone(),
+        text: "Follow-up response.".into(),
+        agent_id: None,
+        trace_id: None,
+    }];
     save_turn_log(&ctx, 1, &events2, "Tell me more")?;
     // The file now has 2 turn_end markers — one per call
 

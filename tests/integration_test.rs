@@ -64,8 +64,8 @@ impl LlmClient for SimpleMockLlmClient {
 
 // ── Agent builder ──
 
-#[test]
-fn test_base_agent_builder_constructs() {
+#[tokio::test(flavor = "multi_thread")]
+async fn test_base_agent_builder_constructs() {
     let client = Arc::new(SimpleMockLlmClient);
     let builder = base_agent_builder(client)
         .system_prompt("You are a helpful assistant.")
@@ -168,8 +168,8 @@ impl Tool for CustomTool {
     }
 }
 
-#[test]
-fn test_list_tools_returns_metadata() {
+#[tokio::test(flavor = "multi_thread")]
+async fn test_list_tools_returns_metadata() {
     let client = Arc::new(SimpleMockLlmClient);
     let builder = base_agent_builder(client)
         .system_prompt("You are a helpful assistant.")
@@ -184,8 +184,7 @@ fn test_list_tools_returns_metadata() {
         max_turns: Some(100),
     };
     let agent = phi_agent::PhiAgent::build(builder, config).expect("build agent");
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let tools = rt.block_on(agent.list_tools());
+    let tools = agent.list_tools().await;
 
     assert!(!tools.is_empty(), "should return at least one tool");
 
@@ -218,30 +217,28 @@ fn build_test_agent() -> phi_agent::PhiAgent {
     phi_agent::PhiAgent::build(builder, config).expect("build agent")
 }
 
-#[test]
-fn test_phi_agent_create_session() {
+#[tokio::test(flavor = "multi_thread")]
+async fn test_phi_agent_create_session() {
     let agent = build_test_agent();
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let sid = rt.block_on(agent.create_session());
+    let sid = agent.create_session().await;
     assert!(sid.id > 0);
 }
 
-#[test]
-fn test_phi_agent_is_cancelled_initially_false() {
+#[tokio::test(flavor = "multi_thread")]
+async fn test_phi_agent_is_cancelled_initially_false() {
     let agent = build_test_agent();
     assert!(!agent.is_cancelled());
 }
 
-#[test]
-fn test_phi_agent_set_reasoning_effort() {
+#[tokio::test(flavor = "multi_thread")]
+async fn test_phi_agent_set_reasoning_effort() {
     let agent = build_test_agent();
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(agent.set_reasoning_effort(ReasoningEffort::Low));
+    agent.set_reasoning_effort(ReasoningEffort::Low).await;
     // Should not panic
 }
 
-#[test]
-fn test_phi_agent_list_tools_sorted() {
+#[tokio::test(flavor = "multi_thread")]
+async fn test_phi_agent_list_tools_sorted() {
     let client = Arc::new(SimpleMockLlmClient);
     let builder = base_agent_builder(client)
         .system_prompt("You are a helpful assistant.")
@@ -256,8 +253,7 @@ fn test_phi_agent_list_tools_sorted() {
         max_turns: Some(10),
     };
     let agent = phi_agent::PhiAgent::build(builder, config).expect("build agent");
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let tools = rt.block_on(agent.list_tools());
+    let tools = agent.list_tools().await;
     // Should be sorted by name
     for i in 1..tools.len() {
         assert!(

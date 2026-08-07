@@ -25,8 +25,8 @@ To keep phi-agent focused and maintainable, these features are **explicitly out 
 
 | Feature | Reason |
 |---------|--------|
-| **Built-in tools** (web search, file I/O, code exec) | phi-agent is tool-agnostic by design. Tools belong in separate opt-in crates (e.g., `phi-tools`, the planned `phi-extra`). |
-| **Built-in memory / vector DB** | No embedded vector store. State management is the user's responsibility. |
+| **Built-in business tools** (web search, file I/O, code exec, database query) | phi-agent is tool-agnostic by design. You register what you need via the `Tool` trait. Framework capabilities (memory, multi-agent, skills, MCP) are provided by agent-works as standard tools — these are opt-out, not built-in. |
+| **Built-in memory / vector DB** | No embedded vector store. File-based memory is available via agent-works (`memory` feature gate), opt-out with `.without_memory()`. |
 | **Prompt templates or chains** | No langchain-style abstractions. Users control their system prompts directly. |
 | **Workflow / DAG engine** | Agent behavior is LLM-driven via tool-choice, not graph-compiled. Use LangGraph for orchestration. |
 | **Pre-built agent types** (coder, researcher, etc.) | There is no one-size-fits-all agent. Users compose their own from tools + prompts. |

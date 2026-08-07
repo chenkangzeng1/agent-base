@@ -8,9 +8,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use agent_base::{
-    AgentBuilder, AgentResult, AgentRuntime, RunOutcome, RuntimeEvent, SessionId, Tool, ToolContext, ToolControlFlow,
-    ToolMetadata, ToolOutput,
+    AgentResult, AgentRuntime, RunOutcome, RuntimeEvent, SessionId, Tool, ToolContext, ToolControlFlow, ToolMetadata,
+    ToolOutput,
 };
+use agent_works::AgentBuilder;
 use async_trait::async_trait;
 use serde_json::Value;
 use tokio::sync::{Mutex, mpsc};

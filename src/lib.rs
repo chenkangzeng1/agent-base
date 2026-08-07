@@ -17,12 +17,17 @@ pub mod session;
 // ── Common agent-base types ──
 // Only re-export the types consumers use most often.
 // For the full type set, import directly from agent-base.
+//
+// Note: AgentBuilder re-exports agent_works::AgentBuilder (not agent_base::AgentBuilder)
+// because phi-agent is a full-stack framework that includes multi-agent, skills, MCP, etc.
+// For the bare runtime builder, use agent_base::AgentBuilder directly.
 pub use agent_base::{
-    AgentBuilder, AgentError, AgentResult, AgentRuntime, ApprovalHandler, ApprovalRequest, ConsecutiveFailureRecovery,
-    LlmClient, Middleware, OpenAiClient, PlanItem, PlanStepStatus, PostLlmCtx, PreLlmCtx, ReasoningConfig,
-    ReasoningEffort, RunOutcome, RuntimeEvent, SafetyConfig, SessionId, Tool, ToolContext, ToolControlFlow,
-    ToolMetadata, ToolOutput, ToolPolicy, TurnFactMiddleware, TurnToolLimitMiddleware, UpdatePlanTool, UserMessageCtx,
+    AgentError, AgentResult, AgentRuntime, ApprovalHandler, ApprovalRequest, ConsecutiveFailureRecovery, LlmClient,
+    Middleware, OpenAiClient, PlanItem, PlanStepStatus, PostLlmCtx, PreLlmCtx, ReasoningConfig, ReasoningEffort,
+    RunOutcome, RuntimeEvent, SafetyConfig, SessionId, Tool, ToolContext, ToolControlFlow, ToolMetadata, ToolOutput,
+    ToolPolicy, TurnFactMiddleware, TurnToolLimitMiddleware, UpdatePlanTool, UserMessageCtx,
 };
+pub use agent_works::AgentBuilder;
 
 // ── phi-telemetry (metrics types and storage) ──
 #[cfg(feature = "telemetry")]

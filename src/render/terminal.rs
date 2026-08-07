@@ -92,12 +92,7 @@ impl TerminalRenderer {
                         self.dim(args_json),
                     ))?;
                 } else {
-                    self.write_line(&format!(
-                        "{} {} {}",
-                        prefix,
-                        self.bold("\u{1F527}"),
-                        self.green(tool_name),
-                    ))?;
+                    self.write_line(&format!("{} {} {}", prefix, self.bold("\u{1F527}"), self.green(tool_name),))?;
                 }
             },
             RuntimeEvent::ToolCallFinished { tool_name: _, summary, .. } => {
@@ -321,7 +316,12 @@ mod tests {
             true,
             true,
             true,
-            RuntimeEvent::TextDelta { session_id: session_id(), text: "hello world".into() },
+            RuntimeEvent::TextDelta {
+                session_id: session_id(),
+                text: "hello world".into(),
+                agent_id: None,
+                trace_id: None,
+            },
         );
         assert!(out.contains("hello world"));
     }
@@ -332,7 +332,12 @@ mod tests {
             true,
             true,
             true,
-            RuntimeEvent::ThoughtDelta { session_id: session_id(), text: "thinking...".into() },
+            RuntimeEvent::ThoughtDelta {
+                session_id: session_id(),
+                text: "thinking...".into(),
+                agent_id: None,
+                trace_id: None,
+            },
         );
         assert!(out.contains("thinking..."));
     }
@@ -343,7 +348,12 @@ mod tests {
             false,
             true,
             true,
-            RuntimeEvent::ThoughtDelta { session_id: session_id(), text: "secret thought".into() },
+            RuntimeEvent::ThoughtDelta {
+                session_id: session_id(),
+                text: "secret thought".into(),
+                agent_id: None,
+                trace_id: None,
+            },
         );
         assert!(!out.contains("secret thought"));
     }
@@ -358,6 +368,8 @@ mod tests {
                 session_id: session_id(),
                 tool_name: "read_file".into(),
                 args_json: r#"{"path":"/tmp/a.txt"}"#.into(),
+                agent_id: None,
+                trace_id: None,
             },
         );
         assert!(out.contains("read_file"));
@@ -374,6 +386,8 @@ mod tests {
                 session_id: session_id(),
                 tool_name: "read_file".into(),
                 args_json: r#"{"path":"/tmp/a.txt"}"#.into(),
+                agent_id: None,
+                trace_id: None,
             },
         );
         assert!(out.contains("read_file"));
@@ -390,6 +404,8 @@ mod tests {
                 session_id: session_id(),
                 tool_name: "read_file".into(),
                 summary: "file contents here".into(),
+                agent_id: None,
+                trace_id: None,
             },
         );
         assert!(out.contains("file contents here"));
@@ -406,6 +422,8 @@ mod tests {
                 session_id: session_id(),
                 tool_name: "read_file".into(),
                 summary: long.clone(),
+                agent_id: None,
+                trace_id: None,
             },
         );
         assert!(!out.contains(&long));
@@ -428,6 +446,8 @@ mod tests {
                     risk_level: RiskLevel::Destructive,
                     raw: None,
                 },
+                agent_id: None,
+                trace_id: None,
             },
         );
         assert!(out.contains("Delete file"));
@@ -449,6 +469,8 @@ mod tests {
                     PlanItem { step: "Step 2".into(), status: PlanStepStatus::InProgress },
                     PlanItem { step: "Step 3".into(), status: PlanStepStatus::Pending },
                 ],
+                agent_id: None,
+                trace_id: None,
             },
         );
         assert!(out.contains("Plan Update"));
@@ -461,13 +483,23 @@ mod tests {
 
     #[test]
     fn test_render_run_cancelled() {
-        let out = render_one(true, true, true, RuntimeEvent::RunCancelled { session_id: session_id() });
+        let out = render_one(
+            true,
+            true,
+            true,
+            RuntimeEvent::RunCancelled { session_id: session_id(), agent_id: None, trace_id: None },
+        );
         assert!(out.contains("Cancelled"));
     }
 
     #[test]
     fn test_render_run_finished_no_output() {
-        let out = render_one(true, true, true, RuntimeEvent::RunFinished { session_id: session_id() });
+        let out = render_one(
+            true,
+            true,
+            true,
+            RuntimeEvent::RunFinished { session_id: session_id(), agent_id: None, trace_id: None },
+        );
         assert!(out.is_empty());
     }
 
@@ -480,6 +512,8 @@ mod tests {
             RuntimeEvent::UserEvent {
                 session_id: session_id(),
                 event: UserEvent::Progress { text: "loading...".into() },
+                agent_id: None,
+                trace_id: None,
             },
         );
         assert!(out.is_empty());
@@ -489,8 +523,12 @@ mod tests {
 
     #[test]
     fn test_finish_turn_contains_duration_and_tool_count() {
-        let out =
-            render_events(true, true, true, &[RuntimeEvent::TextDelta { session_id: session_id(), text: "hi".into() }]);
+        let out = render_events(
+            true,
+            true,
+            true,
+            &[RuntimeEvent::TextDelta { session_id: session_id(), text: "hi".into(), agent_id: None, trace_id: None }],
+        );
         assert!(out.contains("elapsed"));
         assert!(out.contains("tool call"));
     }
@@ -506,16 +544,22 @@ mod tests {
                     session_id: session_id(),
                     tool_name: "a".into(),
                     args_json: "{}".into(),
+                    agent_id: None,
+                    trace_id: None,
                 },
                 RuntimeEvent::ToolCallStarted {
                     session_id: session_id(),
                     tool_name: "b".into(),
                     args_json: "{}".into(),
+                    agent_id: None,
+                    trace_id: None,
                 },
                 RuntimeEvent::ToolCallStarted {
                     session_id: session_id(),
                     tool_name: "c".into(),
                     args_json: "{}".into(),
+                    agent_id: None,
+                    trace_id: None,
                 },
             ],
         );
@@ -531,10 +575,18 @@ mod tests {
                 session_id: session_id(),
                 tool_name: "t1".into(),
                 args_json: "{}".into(),
+                agent_id: None,
+                trace_id: None,
             })
             .unwrap();
             r.finish_turn().unwrap();
-            r.render(RuntimeEvent::TextDelta { session_id: session_id(), text: "hello".into() }).unwrap();
+            r.render(RuntimeEvent::TextDelta {
+                session_id: session_id(),
+                text: "hello".into(),
+                agent_id: None,
+                trace_id: None,
+            })
+            .unwrap();
             r.finish_turn().unwrap();
         }
         let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
@@ -547,8 +599,20 @@ mod tests {
         let (writer, buf) = SharedWriter::new();
         {
             let mut r = TerminalRenderer::new(true, true, true, Box::new(writer));
-            r.render(RuntimeEvent::ThoughtDelta { session_id: session_id(), text: "hmm".into() }).unwrap();
-            r.render(RuntimeEvent::TextDelta { session_id: session_id(), text: "hello".into() }).unwrap();
+            r.render(RuntimeEvent::ThoughtDelta {
+                session_id: session_id(),
+                text: "hmm".into(),
+                agent_id: None,
+                trace_id: None,
+            })
+            .unwrap();
+            r.render(RuntimeEvent::TextDelta {
+                session_id: session_id(),
+                text: "hello".into(),
+                agent_id: None,
+                trace_id: None,
+            })
+            .unwrap();
         }
         let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
         assert!(out.contains("hmm"));
@@ -570,8 +634,12 @@ mod tests {
                     event: Box::new(RuntimeEvent::TextDelta {
                         session_id: session_id(),
                         text: "found results".into(),
+                        agent_id: None,
+                        trace_id: None,
                     }),
                 },
+                agent_id: None,
+                trace_id: None,
             },
         );
         assert!(out.contains("[root/searcher]"));
@@ -592,8 +660,12 @@ mod tests {
                         session_id: session_id(),
                         tool_name: "search".into(),
                         args_json: r#"{"q":"test"}"#.into(),
+                        agent_id: None,
+                        trace_id: None,
                     }),
                 },
+                agent_id: None,
+                trace_id: None,
             },
         );
         assert!(out.contains("[root/worker]"));
@@ -614,8 +686,12 @@ mod tests {
                     event: Box::new(RuntimeEvent::ThoughtDelta {
                         session_id: session_id(),
                         text: "secret plan".into(),
+                        agent_id: None,
+                        trace_id: None,
                     }),
                 },
+                agent_id: None,
+                trace_id: None,
             },
         );
         assert!(!out.contains("secret plan"));
@@ -631,8 +707,14 @@ mod tests {
                 session_id: session_id(),
                 event: UserEvent::SubAgentEvent {
                     subagent: "root/worker".into(),
-                    event: Box::new(RuntimeEvent::RunCancelled { session_id: session_id() }),
+                    event: Box::new(RuntimeEvent::RunCancelled {
+                        session_id: session_id(),
+                        agent_id: None,
+                        trace_id: None,
+                    }),
                 },
+                agent_id: None,
+                trace_id: None,
             },
         );
         assert!(out.contains("[root/worker]"));

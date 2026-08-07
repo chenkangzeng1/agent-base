@@ -178,7 +178,12 @@ mod tests {
 
     #[test]
     fn test_text_delta_produces_valid_json() {
-        let lines = render_one(RuntimeEvent::TextDelta { session_id: session_id(), text: "hello".into() });
+        let lines = render_one(RuntimeEvent::TextDelta {
+            session_id: session_id(),
+            text: "hello".into(),
+            agent_id: None,
+            trace_id: None,
+        });
         assert_eq!(lines.len(), 1);
         let v: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
         assert_eq!(v["type"], "text_delta");
@@ -187,7 +192,12 @@ mod tests {
 
     #[test]
     fn test_thought_delta_produces_valid_json() {
-        let lines = render_one(RuntimeEvent::ThoughtDelta { session_id: session_id(), text: "thinking...".into() });
+        let lines = render_one(RuntimeEvent::ThoughtDelta {
+            session_id: session_id(),
+            text: "thinking...".into(),
+            agent_id: None,
+            trace_id: None,
+        });
         let v: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
         assert_eq!(v["type"], "thought_delta");
     }
@@ -198,6 +208,8 @@ mod tests {
             session_id: session_id(),
             tool_name: "shell".into(),
             args_json: r#"{"cmd":"ls"}"#.into(),
+            agent_id: None,
+            trace_id: None,
         });
         let v: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
         assert_eq!(v["type"], "tool_call_started");
@@ -211,6 +223,8 @@ mod tests {
             session_id: session_id(),
             tool_name: "shell".into(),
             summary: "done".into(),
+            agent_id: None,
+            trace_id: None,
         });
         let v: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
         assert_eq!(v["type"], "tool_call_finished");
@@ -229,6 +243,8 @@ mod tests {
                 risk_level: RiskLevel::Destructive,
                 raw: None,
             },
+            agent_id: None,
+            trace_id: None,
         });
         let v: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
         assert_eq!(v["type"], "approval_request");
@@ -242,6 +258,8 @@ mod tests {
             objective: "test".into(),
             explanation: Some("step 1 done".into()),
             plan: vec![PlanItem { step: "Step 1".into(), status: PlanStepStatus::Completed }],
+            agent_id: None,
+            trace_id: None,
         });
         let v: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
         assert_eq!(v["type"], "plan_updated");
@@ -252,6 +270,8 @@ mod tests {
         let lines = render_one(RuntimeEvent::UserEvent {
             session_id: session_id(),
             event: UserEvent::Structured { event_type: "custom".into(), data: serde_json::json!({"key": "value"}) },
+            agent_id: None,
+            trace_id: None,
         });
         let v: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
         assert_eq!(v["type"], "user_event");
@@ -264,26 +284,33 @@ mod tests {
         let lines = render_one(RuntimeEvent::UserEvent {
             session_id: session_id(),
             event: UserEvent::Progress { text: "loading...".into() },
+            agent_id: None,
+            trace_id: None,
         });
         assert!(lines.is_empty());
     }
 
     #[test]
     fn test_run_finished_no_output() {
-        let lines = render_one(RuntimeEvent::RunFinished { session_id: session_id() });
+        let lines = render_one(RuntimeEvent::RunFinished { session_id: session_id(), agent_id: None, trace_id: None });
         assert!(lines.is_empty());
     }
 
     #[test]
     fn test_run_cancelled_produces_valid_json() {
-        let lines = render_one(RuntimeEvent::RunCancelled { session_id: session_id() });
+        let lines = render_one(RuntimeEvent::RunCancelled { session_id: session_id(), agent_id: None, trace_id: None });
         let v: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
         assert_eq!(v["type"], "run_cancelled");
     }
 
     #[test]
     fn test_finish_turn_emits_summary() {
-        let lines = render_and_finish(&[RuntimeEvent::TextDelta { session_id: session_id(), text: "hello".into() }]);
+        let lines = render_and_finish(&[RuntimeEvent::TextDelta {
+            session_id: session_id(),
+            text: "hello".into(),
+            agent_id: None,
+            trace_id: None,
+        }]);
         let last: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
         assert_eq!(last["type"], "turn_finished");
         assert!(last["duration_ms"].as_u64().is_some());
@@ -293,8 +320,20 @@ mod tests {
     #[test]
     fn test_tool_call_count_incremented() {
         let lines = render_and_finish(&[
-            RuntimeEvent::ToolCallStarted { session_id: session_id(), tool_name: "a".into(), args_json: "{}".into() },
-            RuntimeEvent::ToolCallStarted { session_id: session_id(), tool_name: "b".into(), args_json: "{}".into() },
+            RuntimeEvent::ToolCallStarted {
+                session_id: session_id(),
+                tool_name: "a".into(),
+                args_json: "{}".into(),
+                agent_id: None,
+                trace_id: None,
+            },
+            RuntimeEvent::ToolCallStarted {
+                session_id: session_id(),
+                tool_name: "b".into(),
+                args_json: "{}".into(),
+                agent_id: None,
+                trace_id: None,
+            },
         ]);
         let last: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
         assert_eq!(last["tool_call_count"], 2);
@@ -303,8 +342,8 @@ mod tests {
     #[test]
     fn test_assistant_text_accumulated() {
         let lines = render_and_finish(&[
-            RuntimeEvent::TextDelta { session_id: session_id(), text: "Hello ".into() },
-            RuntimeEvent::TextDelta { session_id: session_id(), text: "World".into() },
+            RuntimeEvent::TextDelta { session_id: session_id(), text: "Hello ".into(), agent_id: None, trace_id: None },
+            RuntimeEvent::TextDelta { session_id: session_id(), text: "World".into(), agent_id: None, trace_id: None },
         ]);
         let last: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
         assert_eq!(last["assistant_text"], "Hello World");
@@ -321,8 +360,12 @@ mod tests {
                 event: Box::new(RuntimeEvent::TextDelta {
                     session_id: session_id(),
                     text: "found 3 items".into(),
+                    agent_id: None,
+                    trace_id: None,
                 }),
             },
+            agent_id: None,
+            trace_id: None,
         });
         assert_eq!(lines.len(), 1);
         let v: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
@@ -342,8 +385,12 @@ mod tests {
                     session_id: session_id(),
                     tool_name: "shell".into(),
                     args_json: r#"{"cmd":"ls"}"#.into(),
+                    agent_id: None,
+                    trace_id: None,
                 }),
             },
+            agent_id: None,
+            trace_id: None,
         });
         let v: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
         assert_eq!(v["type"], "subagent_event");

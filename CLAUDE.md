@@ -63,6 +63,18 @@ agent-works = "0.1.4"
 
 3. Remove `path` before committing.
 
+**CRITICAL: Always use local paths during development.** Every crate that depends on sibling crates MUST have `path = "../<crate>"` on its dependency line AND `[patch.crates-io]` pointing to the local path. Without this, Cargo resolves to the stale published version on crates.io, which may lack new methods (e.g., `metadatas()`) — causing confusing "method not found" errors even though the local source has the method.
+
+Pattern to use in EVERY crate's Cargo.toml during local dev:
+```toml
+[dependencies]
+agent-base = { version = "0.1.12", path = "../agent-base" }
+
+# LOCAL DEV ONLY — DO NOT COMMIT
+[patch.crates-io]
+agent-base = { path = "../agent-base" }
+```
+
 **After publishing a new version of a dependency:**
 
 ```bash

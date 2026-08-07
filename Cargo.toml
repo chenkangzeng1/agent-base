@@ -17,6 +17,7 @@ required-features = ["tools", "telemetry", "logging"]
 [dependencies]
 agent-base = "0.1.12"
 agent-works = "0.1.5"
+phi-kernel-tools = { version = "0.1.0" }
 phi-tools = { version = "0.1.4", optional = true }
 phi-telemetry = { version = "0.1.4", optional = true }
 log-core = { version = "0.1.3", optional = true }
@@ -38,12 +39,14 @@ uuid = { version = "1", features = ["v4"] }
 rustyline = "15"
 
 [features]
-default = ["tools", "telemetry", "logging"]
+default = ["tools", "telemetry", "logging", "multi-agent", "skill"]
 tools = ["phi-tools"]
 telemetry = ["phi-telemetry"]
 logging = ["log-core"]
 browser = ["tools", "phi-tools/browser"]
 mcp = ["agent-works/mcp"]
+multi-agent = ["phi-kernel-tools/multi-agent"]
+skill = ["phi-kernel-tools/skill", "agent-works/skill"]
 
 [dev-dependencies]
 tempfile = "3"

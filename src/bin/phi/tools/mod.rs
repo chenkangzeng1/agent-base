@@ -14,7 +14,7 @@ pub use phi_tools::{
 };
 
 #[cfg(feature = "browser")]
-use agent_base::AgentBuilder;
+use agent_works::AgentBuilder;
 
 /// Register all browser automation tools on the builder.
 /// The `browser` session must outlive the agent.

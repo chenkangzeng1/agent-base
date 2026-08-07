@@ -94,7 +94,13 @@ mod tests {
         };
         let format = OutputFormat::Terminal { show_thinking: true, show_tool_args: true, color: false };
         let mut r = create_renderer(&format, Some(Box::new(writer)));
-        r.render(RuntimeEvent::TextDelta { session_id: session_id(), text: "hello".into() }).unwrap();
+        r.render(RuntimeEvent::TextDelta {
+            session_id: session_id(),
+            text: "hello".into(),
+            agent_id: None,
+            trace_id: None,
+        })
+        .unwrap();
         drop(r);
         let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
         assert!(out.contains("hello"));
@@ -108,7 +114,13 @@ mod tests {
             (SharedWriter { inner: inner.clone() }, inner)
         };
         let mut r = create_renderer(&OutputFormat::Json, Some(Box::new(writer)));
-        r.render(RuntimeEvent::TextDelta { session_id: session_id(), text: "world".into() }).unwrap();
+        r.render(RuntimeEvent::TextDelta {
+            session_id: session_id(),
+            text: "world".into(),
+            agent_id: None,
+            trace_id: None,
+        })
+        .unwrap();
         drop(r);
         let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
         let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
@@ -122,7 +134,13 @@ mod tests {
             (SharedWriter { inner: inner.clone() }, inner)
         };
         let mut r = create_renderer(&OutputFormat::Quiet, Some(Box::new(writer)));
-        r.render(RuntimeEvent::TextDelta { session_id: session_id(), text: "quiet".into() }).unwrap();
+        r.render(RuntimeEvent::TextDelta {
+            session_id: session_id(),
+            text: "quiet".into(),
+            agent_id: None,
+            trace_id: None,
+        })
+        .unwrap();
         r.finish_turn().unwrap();
         drop(r);
         let out = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
@@ -135,13 +153,67 @@ mod tests {
         let sid = session_id();
 
         // Representative framework events should all succeed and produce no output.
-        assert!(r.render(RuntimeEvent::TextDelta { session_id: sid.clone(), text: "hello".into() }).is_ok());
-        assert!(r.render(RuntimeEvent::ThoughtDelta { session_id: sid.clone(), text: "thinking".into() }).is_ok());
-        assert!(r.render(RuntimeEvent::ToolCallStarted { session_id: sid.clone(), tool_name: "test_tool".into(), args_json: "{}".into() }).is_ok());
-        assert!(r.render(RuntimeEvent::ToolCallFinished { session_id: sid.clone(), tool_name: "test_tool".into(), summary: "done".into() }).is_ok());
-        assert!(r.render(RuntimeEvent::UserEvent { session_id: sid.clone(), event: agent_base::UserEvent::Progress { text: "progress".into() } }).is_ok());
-        assert!(r.render(RuntimeEvent::PlanUpdated { session_id: sid.clone(), objective: "obj".into(), explanation: None, plan: vec![] }).is_ok());
-        assert!(r.render(RuntimeEvent::RunFinished { session_id: sid.clone() }).is_ok());
+        assert!(
+            r.render(RuntimeEvent::TextDelta {
+                session_id: sid.clone(),
+                text: "hello".into(),
+                agent_id: None,
+                trace_id: None
+            })
+            .is_ok()
+        );
+        assert!(
+            r.render(RuntimeEvent::ThoughtDelta {
+                session_id: sid.clone(),
+                text: "thinking".into(),
+                agent_id: None,
+                trace_id: None
+            })
+            .is_ok()
+        );
+        assert!(
+            r.render(RuntimeEvent::ToolCallStarted {
+                session_id: sid.clone(),
+                tool_name: "test_tool".into(),
+                args_json: "{}".into(),
+                agent_id: None,
+                trace_id: None
+            })
+            .is_ok()
+        );
+        assert!(
+            r.render(RuntimeEvent::ToolCallFinished {
+                session_id: sid.clone(),
+                tool_name: "test_tool".into(),
+                summary: "done".into(),
+                agent_id: None,
+                trace_id: None
+            })
+            .is_ok()
+        );
+        assert!(
+            r.render(RuntimeEvent::UserEvent {
+                session_id: sid.clone(),
+                event: agent_base::UserEvent::Progress { text: "progress".into() },
+                agent_id: None,
+                trace_id: None
+            })
+            .is_ok()
+        );
+        assert!(
+            r.render(RuntimeEvent::PlanUpdated {
+                session_id: sid.clone(),
+                objective: "obj".into(),
+                explanation: None,
+                plan: vec![],
+                agent_id: None,
+                trace_id: None
+            })
+            .is_ok()
+        );
+        assert!(
+            r.render(RuntimeEvent::RunFinished { session_id: sid.clone(), agent_id: None, trace_id: None }).is_ok()
+        );
         assert!(r.finish_turn().is_ok());
         assert!(r.finish_session().is_ok());
     }

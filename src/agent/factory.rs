@@ -1,15 +1,17 @@
 use std::sync::Arc;
 
-use agent_base::{
-    AgentBuilder, AgentResult, AgentRuntime, ReasoningEffort, RunOutcome, RuntimeEvent, SafetyConfig, SessionId,
-};
+use agent_base::{AgentResult, AgentRuntime, ReasoningEffort, RunOutcome, RuntimeEvent, SafetyConfig, SessionId};
+
+use agent_works::AgentBuilder;
 
 use crate::agent::builder::base_agent_builder;
 
 /// phi-agent configuration (tool-agnostic).
 ///
 /// This config covers model and safety settings only. Tools are registered
-/// externally on [`AgentBuilder`] — phi-agent itself never bundles tools.
+/// externally on [`agent_works::AgentBuilder`] — phi-agent itself never bundles tools
+/// beyond kernel tools (multi-agent, skills) which are enabled by default and can be
+/// disabled via `.without_multi_agent()` or feature flags.
 #[derive(Clone, Default)]
 pub struct PhiAgentConfig {
     /// Model name passed to the LLM provider (e.g. `"opus"`, `"gpt-4o"`).

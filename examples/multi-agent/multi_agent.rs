@@ -15,9 +15,9 @@
 #[path = "../common/mod.rs"]
 mod common;
 
-use common::client;
 use agent_works::multi_agent::MultiAgentConfig;
-use phi_agent::{OutputFormat, create_stdout_renderer, build_system_prompt};
+use common::client;
+use phi_agent::{OutputFormat, build_system_prompt, create_stdout_renderer};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

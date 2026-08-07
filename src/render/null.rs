@@ -24,8 +24,22 @@ mod tests {
     #[test]
     fn test_null_renderer_always_ok() {
         let mut r = NullRenderer;
-        assert!(r.render(RuntimeEvent::RunFinished { session_id: SessionId { id: 1, external_id: None } }).is_ok());
-        assert!(r.render(RuntimeEvent::RunCancelled { session_id: SessionId { id: 1, external_id: None } }).is_ok());
+        assert!(
+            r.render(RuntimeEvent::RunFinished {
+                session_id: SessionId { id: 1, external_id: None },
+                agent_id: None,
+                trace_id: None
+            })
+            .is_ok()
+        );
+        assert!(
+            r.render(RuntimeEvent::RunCancelled {
+                session_id: SessionId { id: 1, external_id: None },
+                agent_id: None,
+                trace_id: None
+            })
+            .is_ok()
+        );
         assert!(r.finish_turn().is_ok());
         assert!(r.finish_session().is_ok());
     }

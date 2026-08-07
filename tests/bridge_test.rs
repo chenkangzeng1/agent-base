@@ -12,7 +12,7 @@ use serde_json::json;
 
 // ── Tests ─────────────────────────────────────────────────────────────
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_full_run_returns_events() {
     let mock = Arc::new(MockLlmClient::new());
     let server = build_server(mock);
@@ -31,7 +31,7 @@ async fn test_full_run_returns_events() {
     assert!(events.contains(&"run_finished".to_string()), "should finish: {events:?}");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_create_session_and_subscribe() {
     let mock = Arc::new(MockLlmClient::new());
     let server = build_server(mock);
@@ -53,7 +53,7 @@ fn test_protocol_version_is_1() {
 /// When the LLM requests a tool call but no slot has been prepared
 /// (single-slot is None), ProxyTool should return a clean error
 /// instead of panicking.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_br_04_empty_slot_returns_error() {
     let mock = Arc::new(MockLlmClient::new());
     // Pre-configure mock to return a tool call
@@ -83,7 +83,7 @@ async fn test_br_04_empty_slot_returns_error() {
 ///
 /// ``get_or_create_session`` with the same external_id should return
 /// the same underlying SessionId, preserving conversation context.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_br_05_session_id_reuse() {
     let mock = Arc::new(MockLlmClient::new());
     let server = build_server(mock);
@@ -113,7 +113,7 @@ async fn test_br_05_session_id_reuse() {
 /// should work correctly without cross-talk.  The single-slot pattern
 /// handles one at a time; this test verifies the slot is properly
 /// reset between calls.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_br_06_sequential_tool_calls() {
     let mock = Arc::new(MockLlmClient::new());
 
@@ -162,7 +162,7 @@ async fn test_br_06_sequential_tool_calls() {
 
 // ── ProtocolServer unit tests ──
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_register_tool_appears_in_list() {
     let mock = Arc::new(MockLlmClient::new());
     let server = build_server(mock);
@@ -173,7 +173,7 @@ async fn test_register_tool_appears_in_list() {
     assert!(tools.iter().any(|t| t.name == "my_tool"));
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_register_multiple_tools() {
     let mock = Arc::new(MockLlmClient::new());
     let server = build_server(mock);
@@ -183,16 +183,15 @@ async fn test_register_multiple_tools() {
     server.register_tool("mmm_tool".into(), "M".into(), json!({})).await;
 
     let tools = server.list_tools().await;
-    let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
-
-    // Tools should be sorted by name
-    assert!(tools.len() >= 3);
+    let names: Vec<&str> =
+        tools.iter().map(|t| t.name.as_str()).filter(|n| ["aaa_tool", "mmm_tool", "zzz_tool"].contains(n)).collect();
+    assert!(names.len() >= 3);
     assert_eq!(names[0], "aaa_tool");
     assert_eq!(names[1], "mmm_tool");
     assert_eq!(names[2], "zzz_tool");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_prepare_tool_call_sender_usable() {
     let mock = Arc::new(MockLlmClient::new());
     let server = build_server(mock);
@@ -208,7 +207,7 @@ async fn test_prepare_tool_call_sender_usable() {
     assert!(result.is_ok());
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_subscribe_events_receiver_open() {
     let mock = Arc::new(MockLlmClient::new());
     let server = build_server(mock);
@@ -218,7 +217,7 @@ async fn test_subscribe_events_receiver_open() {
     assert_eq!(rx.len(), 0);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_get_or_create_different_external_ids() {
     let mock = Arc::new(MockLlmClient::new());
     let server = build_server(mock);
@@ -229,7 +228,7 @@ async fn test_get_or_create_different_external_ids() {
     assert_ne!(sid1.id, sid2.id, "different external_ids should create different sessions");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn test_create_session_without_external_id() {
     let mock = Arc::new(MockLlmClient::new());
     let server = build_server(mock);

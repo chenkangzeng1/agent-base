@@ -107,14 +107,24 @@ mod tests {
 
     #[test]
     fn test_event_to_value_text_delta() {
-        let v = event_to_value(&RuntimeEvent::TextDelta { session_id: session_id(), text: "hello".into() });
+        let v = event_to_value(&RuntimeEvent::TextDelta {
+            session_id: session_id(),
+            text: "hello".into(),
+            agent_id: None,
+            trace_id: None,
+        });
         assert_eq!(v["type"], "text_delta");
         assert_eq!(v["text"], "hello");
     }
 
     #[test]
     fn test_event_to_value_thought_delta() {
-        let v = event_to_value(&RuntimeEvent::ThoughtDelta { session_id: session_id(), text: "thinking".into() });
+        let v = event_to_value(&RuntimeEvent::ThoughtDelta {
+            session_id: session_id(),
+            text: "thinking".into(),
+            agent_id: None,
+            trace_id: None,
+        });
         assert_eq!(v["type"], "thought_delta");
     }
 
@@ -124,6 +134,8 @@ mod tests {
             session_id: session_id(),
             tool_name: "shell".into(),
             args_json: r#"{"cmd":"ls"}"#.into(),
+            agent_id: None,
+            trace_id: None,
         });
         assert_eq!(v["type"], "tool_call_started");
         assert_eq!(v["tool"], "shell");
@@ -136,6 +148,8 @@ mod tests {
             session_id: session_id(),
             tool_name: "shell".into(),
             summary: "done".into(),
+            agent_id: None,
+            trace_id: None,
         });
         assert_eq!(v["type"], "tool_call_finished");
         assert_eq!(v["summary"], "done");
@@ -143,13 +157,14 @@ mod tests {
 
     #[test]
     fn test_event_to_value_run_finished() {
-        let v = event_to_value(&RuntimeEvent::RunFinished { session_id: session_id() });
+        let v = event_to_value(&RuntimeEvent::RunFinished { session_id: session_id(), agent_id: None, trace_id: None });
         assert_eq!(v["type"], "run_finished");
     }
 
     #[test]
     fn test_event_to_value_run_cancelled() {
-        let v = event_to_value(&RuntimeEvent::RunCancelled { session_id: session_id() });
+        let v =
+            event_to_value(&RuntimeEvent::RunCancelled { session_id: session_id(), agent_id: None, trace_id: None });
         assert_eq!(v["type"], "run_cancelled");
     }
 
@@ -158,6 +173,8 @@ mod tests {
         let v = event_to_value(&RuntimeEvent::UserEvent {
             session_id: session_id(),
             event: UserEvent::Progress { text: "loading".into() },
+            agent_id: None,
+            trace_id: None,
         });
         assert_eq!(v["type"], "other");
     }
@@ -167,6 +184,8 @@ mod tests {
         let v = event_to_value(&RuntimeEvent::UserEvent {
             session_id: session_id(),
             event: UserEvent::Structured { event_type: "custom".into(), data: serde_json::json!({"key": "value"}) },
+            agent_id: None,
+            trace_id: None,
         });
         assert_eq!(v["type"], "user_event");
         assert_eq!(v["event_type"], "custom");
@@ -176,7 +195,12 @@ mod tests {
 
     #[test]
     fn test_event_to_jsonl_returns_valid_json() {
-        let line = event_to_jsonl(&RuntimeEvent::TextDelta { session_id: session_id(), text: "hello".into() });
+        let line = event_to_jsonl(&RuntimeEvent::TextDelta {
+            session_id: session_id(),
+            text: "hello".into(),
+            agent_id: None,
+            trace_id: None,
+        });
         let v: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(v["type"], "text_delta");
     }
@@ -184,13 +208,30 @@ mod tests {
     #[test]
     fn test_event_to_jsonl_all_variants_valid() {
         let events: Vec<RuntimeEvent> = vec![
-            RuntimeEvent::TextDelta { session_id: session_id(), text: "t".into() },
-            RuntimeEvent::ThoughtDelta { session_id: session_id(), text: "t".into() },
-            RuntimeEvent::ToolCallStarted { session_id: session_id(), tool_name: "t".into(), args_json: "{}".into() },
-            RuntimeEvent::ToolCallFinished { session_id: session_id(), tool_name: "t".into(), summary: "s".into() },
-            RuntimeEvent::RunFinished { session_id: session_id() },
-            RuntimeEvent::RunCancelled { session_id: session_id() },
-            RuntimeEvent::UserEvent { session_id: session_id(), event: UserEvent::Progress { text: "t".into() } },
+            RuntimeEvent::TextDelta { session_id: session_id(), text: "t".into(), agent_id: None, trace_id: None },
+            RuntimeEvent::ThoughtDelta { session_id: session_id(), text: "t".into(), agent_id: None, trace_id: None },
+            RuntimeEvent::ToolCallStarted {
+                session_id: session_id(),
+                tool_name: "t".into(),
+                args_json: "{}".into(),
+                agent_id: None,
+                trace_id: None,
+            },
+            RuntimeEvent::ToolCallFinished {
+                session_id: session_id(),
+                tool_name: "t".into(),
+                summary: "s".into(),
+                agent_id: None,
+                trace_id: None,
+            },
+            RuntimeEvent::RunFinished { session_id: session_id(), agent_id: None, trace_id: None },
+            RuntimeEvent::RunCancelled { session_id: session_id(), agent_id: None, trace_id: None },
+            RuntimeEvent::UserEvent {
+                session_id: session_id(),
+                event: UserEvent::Progress { text: "t".into() },
+                agent_id: None,
+                trace_id: None,
+            },
         ];
         for e in &events {
             let line = event_to_jsonl(e);
@@ -208,7 +249,12 @@ mod tests {
     fn test_save_turn_log_creates_file() {
         let tmp = TempDir::new().unwrap();
         let ctx = make_session_ctx(&tmp);
-        let events = vec![RuntimeEvent::TextDelta { session_id: session_id(), text: "hello".into() }];
+        let events = vec![RuntimeEvent::TextDelta {
+            session_id: session_id(),
+            text: "hello".into(),
+            agent_id: None,
+            trace_id: None,
+        }];
         save_turn_log(&ctx, 1, &events, "test input").unwrap();
         let path = ctx.turn_path(1);
         assert!(path.exists());
@@ -220,7 +266,12 @@ mod tests {
     fn test_save_turn_log_contains_metadata() {
         let tmp = TempDir::new().unwrap();
         let ctx = make_session_ctx(&tmp);
-        let events = vec![RuntimeEvent::TextDelta { session_id: session_id(), text: "hello".into() }];
+        let events = vec![RuntimeEvent::TextDelta {
+            session_id: session_id(),
+            text: "hello".into(),
+            agent_id: None,
+            trace_id: None,
+        }];
         save_turn_log(&ctx, 1, &events, "my input").unwrap();
         let content = std::fs::read_to_string(ctx.turn_path(1)).unwrap();
         let lines: Vec<&str> = content.lines().collect();
@@ -235,8 +286,8 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let ctx = make_session_ctx(&tmp);
         let events = vec![
-            RuntimeEvent::TextDelta { session_id: session_id(), text: "hello".into() },
-            RuntimeEvent::RunFinished { session_id: session_id() },
+            RuntimeEvent::TextDelta { session_id: session_id(), text: "hello".into(), agent_id: None, trace_id: None },
+            RuntimeEvent::RunFinished { session_id: session_id(), agent_id: None, trace_id: None },
         ];
         save_turn_log(&ctx, 1, &events, "input").unwrap();
         let content = std::fs::read_to_string(ctx.turn_path(1)).unwrap();
@@ -253,7 +304,12 @@ mod tests {
     fn test_save_turn_log_contains_turn_end_marker() {
         let tmp = TempDir::new().unwrap();
         let ctx = make_session_ctx(&tmp);
-        let events = vec![RuntimeEvent::TextDelta { session_id: session_id(), text: "hello".into() }];
+        let events = vec![RuntimeEvent::TextDelta {
+            session_id: session_id(),
+            text: "hello".into(),
+            agent_id: None,
+            trace_id: None,
+        }];
         save_turn_log(&ctx, 1, &events, "input").unwrap();
         let content = std::fs::read_to_string(ctx.turn_path(1)).unwrap();
         let last_line = content.lines().last().unwrap();
@@ -266,8 +322,18 @@ mod tests {
     fn test_save_turn_log_appends() {
         let tmp = TempDir::new().unwrap();
         let ctx = make_session_ctx(&tmp);
-        let events1 = vec![RuntimeEvent::TextDelta { session_id: session_id(), text: "turn1".into() }];
-        let events2 = vec![RuntimeEvent::TextDelta { session_id: session_id(), text: "turn2".into() }];
+        let events1 = vec![RuntimeEvent::TextDelta {
+            session_id: session_id(),
+            text: "turn1".into(),
+            agent_id: None,
+            trace_id: None,
+        }];
+        let events2 = vec![RuntimeEvent::TextDelta {
+            session_id: session_id(),
+            text: "turn2".into(),
+            agent_id: None,
+            trace_id: None,
+        }];
         save_turn_log(&ctx, 1, &events1, "input1").unwrap();
         save_turn_log(&ctx, 1, &events2, "input2").unwrap();
         let content = std::fs::read_to_string(ctx.turn_path(1)).unwrap();
@@ -303,8 +369,12 @@ mod tests {
                 event: Box::new(RuntimeEvent::TextDelta {
                     session_id: session_id(),
                     text: "result".into(),
+                    agent_id: None,
+                    trace_id: None,
                 }),
             },
+            agent_id: None,
+            trace_id: None,
         });
         assert_eq!(v["type"], "subagent_event");
         assert_eq!(v["subagent"], "root/searcher");
@@ -326,10 +396,16 @@ mod tests {
                         event: Box::new(RuntimeEvent::TextDelta {
                             session_id: session_id(),
                             text: "deep".into(),
+                            agent_id: None,
+                            trace_id: None,
                         }),
                     },
+                    agent_id: None,
+                    trace_id: None,
                 }),
             },
+            agent_id: None,
+            trace_id: None,
         });
         assert_eq!(v["type"], "subagent_event");
         assert_eq!(v["subagent"], "root/parent");
