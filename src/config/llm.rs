@@ -1,4 +1,4 @@
-use anyhow::{Result, anyhow};
+use agent_base::{AgentError, AgentResult};
 
 const DEFAULT_MODEL: &str = "copilot";
 const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
@@ -17,10 +17,11 @@ pub struct LlmConfig {
 /// Resolve LLM configuration (API key, model, base_url).
 ///
 /// Priority: CLI arg > environment variable (.env) > default
-pub fn resolve_llm_config(model: Option<&str>, base_url: Option<&str>) -> Result<LlmConfig> {
-    let api_key = super::optional_env("LLM_API_KEY")
-        .or_else(|| super::optional_env("OPENAI_API_KEY"))
-        .ok_or_else(|| anyhow!("Missing environment variable LLM_API_KEY. Please configure it in .env."))?;
+pub fn resolve_llm_config(model: Option<&str>, base_url: Option<&str>) -> AgentResult<LlmConfig> {
+    let api_key =
+        super::optional_env("LLM_API_KEY").or_else(|| super::optional_env("OPENAI_API_KEY")).ok_or_else(|| {
+            AgentError::config_error("Missing environment variable LLM_API_KEY. Please configure it in .env.")
+        })?;
 
     let resolved_model = model
         .map(|s| s.to_string())
@@ -78,6 +79,9 @@ mod tests {
 
         // 1. Error when no API key set at all
         assert!(resolve_llm_config(None, None).is_err());
+        // Verify it returns AgentError::ConfigError so callers can match the variant
+        let api_err = resolve_llm_config(None, None).unwrap_err();
+        assert!(matches!(api_err, agent_base::AgentError::ConfigError(_)));
 
         // 2. LLM_API_KEY only
         set("LLM_API_KEY", "sk-llm");

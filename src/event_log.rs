@@ -9,34 +9,44 @@
 
 use std::io::Write;
 
-use agent_base::{RuntimeEvent, UserEvent};
-use anyhow::Result;
+use agent_base::{AgentResult, RuntimeEvent, UserEvent};
 
+use crate::error::{io_err, serde_err};
 use crate::session::SessionContext;
 
 /// Save all events from a turn to a JSONL file.
 ///
 /// Performs synchronous file I/O. Callers should invoke this via
 /// `tokio::task::spawn_blocking`.
-pub fn save_turn_log(session_ctx: &SessionContext, turn: u32, events: &[RuntimeEvent], user_input: &str) -> Result<()> {
+pub fn save_turn_log(
+    session_ctx: &SessionContext,
+    turn: u32,
+    events: &[RuntimeEvent],
+    user_input: &str,
+) -> AgentResult<()> {
     let turn_path = session_ctx.turn_path(turn as usize);
-    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(&turn_path)?;
+    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(&turn_path).map_err(io_err)?;
 
     let meta = serde_json::json!({
         "turn": turn,
         "timestamp": chrono::Utc::now().to_rfc3339(),
         "user_input": user_input,
     });
-    writeln!(file, "{}", serde_json::to_string(&meta)?)?;
+    writeln!(file, "{}", serde_json::to_string(&meta).map_err(serde_err)?).map_err(io_err)?;
 
     for event in events {
         let line = event_to_jsonl(event);
-        writeln!(file, "{}", line)?;
+        writeln!(file, "{}", line).map_err(io_err)?;
     }
 
-    writeln!(file, "{}", serde_json::to_string(&serde_json::json!({"type": "turn_end", "turn": turn}))?)?;
+    writeln!(
+        file,
+        "{}",
+        serde_json::to_string(&serde_json::json!({"type": "turn_end", "turn": turn})).map_err(serde_err)?
+    )
+    .map_err(io_err)?;
 
-    file.flush()?;
+    file.flush().map_err(io_err)?;
 
     Ok(())
 }

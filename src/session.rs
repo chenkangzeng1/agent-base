@@ -2,9 +2,11 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
-use anyhow::{Result, bail};
+use agent_base::{AgentError, AgentResult};
 use fs2::FileExt;
 use regex::Regex;
+
+use crate::error::{io_err, serde_err};
 
 static SESSION_ID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-zA-Z0-9\-_]+$").unwrap());
 
@@ -45,20 +47,23 @@ impl SessionContext {
 /// Validate session ID format.
 ///
 /// Allowed: alphanumerics, hyphens, underscores. 1–128 characters.
-pub fn validate_session_id(session_id: &str) -> Result<()> {
+pub fn validate_session_id(session_id: &str) -> AgentResult<()> {
     if session_id.is_empty() || session_id.len() > 128 {
-        bail!("Session ID must be 1-128 characters, got {}", session_id.len());
+        return Err(AgentError::config_error(format!("Session ID must be 1-128 characters, got {}", session_id.len())));
     }
 
     if !SESSION_ID_RE.is_match(session_id) {
-        bail!("Invalid session_id format '{}'. Only alphanumeric, hyphens, and underscores allowed.", session_id);
+        return Err(AgentError::config_error(format!(
+            "Invalid session_id format '{}'. Only alphanumeric, hyphens, and underscores allowed.",
+            session_id
+        )));
     }
 
     Ok(())
 }
 
 /// Resolve session ID (priority: CLI arg → `PHI_SESSION_ID` env var → auto-generate).
-pub fn resolve_session_id(cli_session_id: Option<&str>) -> Result<String> {
+pub fn resolve_session_id(cli_session_id: Option<&str>) -> AgentResult<String> {
     if let Some(id) = cli_session_id {
         validate_session_id(id)?;
         return Ok(id.to_string());
@@ -85,19 +90,19 @@ pub fn generate_session_id() -> String {
 /// Get or create a session directory under `base_dir/sessions/<session_id>`.
 ///
 /// Returns the directory path and whether it was newly created.
-pub fn get_or_create_session_dir(session_id: &str, base_dir: &Path) -> Result<(PathBuf, bool)> {
+pub fn get_or_create_session_dir(session_id: &str, base_dir: &Path) -> AgentResult<(PathBuf, bool)> {
     let session_dir = base_dir.join("sessions").join(session_id);
     let is_new = !session_dir.exists();
 
     if is_new {
-        std::fs::create_dir_all(&session_dir)?;
+        std::fs::create_dir_all(&session_dir).map_err(io_err)?;
         tracing::info!(session_id = %session_id, path = %session_dir.display(), "created new session directory");
     } else {
         tracing::info!(session_id = %session_id, path = %session_dir.display(), "reusing existing session directory");
     }
 
     // Write session_id file
-    std::fs::write(session_dir.join("session_id"), session_id)?;
+    std::fs::write(session_dir.join("session_id"), session_id).map_err(io_err)?;
 
     // Update session_meta.json
     update_session_meta(&session_dir, session_id)?;
@@ -109,27 +114,27 @@ pub fn get_or_create_session_dir(session_id: &str, base_dir: &Path) -> Result<(P
 ///
 /// Prevents concurrent access from other processes. Returns an error if the
 /// session is already in use.
-pub fn acquire_session_lock(session_dir: &Path) -> Result<File> {
+pub fn acquire_session_lock(session_dir: &Path) -> AgentResult<File> {
     let lock_path = session_dir.join("session.lock");
-    let file = File::create(&lock_path)?;
+    let file = File::create(&lock_path).map_err(io_err)?;
 
     file.try_lock_exclusive().map_err(|_| {
-        anyhow::anyhow!(
+        AgentError::resource_unavailable(format!(
             "Session '{}' is currently in use by another process",
             session_dir.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default()
-        )
+        ))
     })?;
 
     Ok(file)
 }
 
 /// Update session_meta.json
-fn update_session_meta(session_dir: &Path, session_id: &str) -> Result<()> {
+fn update_session_meta(session_dir: &Path, session_id: &str) -> AgentResult<()> {
     let meta_path = session_dir.join("session_meta.json");
 
     let mut meta = if meta_path.exists() {
-        let content = std::fs::read_to_string(&meta_path)?;
-        serde_json::from_str::<serde_json::Value>(&content)?
+        let content = std::fs::read_to_string(&meta_path).map_err(io_err)?;
+        serde_json::from_str::<serde_json::Value>(&content).map_err(serde_err)?
     } else {
         serde_json::json!({
             "session_id": session_id,
@@ -139,7 +144,7 @@ fn update_session_meta(session_dir: &Path, session_id: &str) -> Result<()> {
 
     meta["last_active_at"] = serde_json::json!(chrono::Utc::now().to_rfc3339());
 
-    std::fs::write(&meta_path, serde_json::to_string_pretty(&meta)?)?;
+    std::fs::write(&meta_path, serde_json::to_string_pretty(&meta).map_err(serde_err)?).map_err(io_err)?;
     Ok(())
 }
 
@@ -147,7 +152,7 @@ fn update_session_meta(session_dir: &Path, session_id: &str) -> Result<()> {
 ///
 /// Sessions inactive for more than `max_age_days` are removed from disk.
 /// Active (locked) sessions are skipped.
-pub fn cleanup_expired_sessions(base_dir: &Path, max_age_days: i64) -> Result<u32> {
+pub fn cleanup_expired_sessions(base_dir: &Path, max_age_days: i64) -> AgentResult<u32> {
     let sessions_dir = base_dir.join("sessions");
     if !sessions_dir.exists() {
         return Ok(0);
@@ -156,8 +161,8 @@ pub fn cleanup_expired_sessions(base_dir: &Path, max_age_days: i64) -> Result<u3
     let now = chrono::Utc::now();
     let mut cleaned = 0;
 
-    for entry in std::fs::read_dir(&sessions_dir)? {
-        let entry = entry?;
+    for entry in std::fs::read_dir(&sessions_dir).map_err(io_err)? {
+        let entry = entry.map_err(io_err)?;
         let path = entry.path();
 
         if !path.is_dir() {
@@ -174,13 +179,13 @@ pub fn cleanup_expired_sessions(base_dir: &Path, max_age_days: i64) -> Result<u3
 
         let meta_path = path.join("session_meta.json");
         if !meta_path.exists() {
-            std::fs::remove_dir_all(&path)?;
+            std::fs::remove_dir_all(&path).map_err(io_err)?;
             cleaned += 1;
             continue;
         }
 
-        let content = std::fs::read_to_string(&meta_path)?;
-        let meta: serde_json::Value = serde_json::from_str(&content)?;
+        let content = std::fs::read_to_string(&meta_path).map_err(io_err)?;
+        let meta: serde_json::Value = serde_json::from_str(&content).map_err(serde_err)?;
 
         if let Some(last_active) = meta["last_active_at"].as_str()
             && let Ok(last_active) = chrono::DateTime::parse_from_rfc3339(last_active)
@@ -188,7 +193,7 @@ pub fn cleanup_expired_sessions(base_dir: &Path, max_age_days: i64) -> Result<u3
             let age = now - last_active.with_timezone(&chrono::Utc);
             if age.num_days() > max_age_days {
                 tracing::info!(path = %path.display(), age_days = age.num_days(), "removing expired session");
-                std::fs::remove_dir_all(&path)?;
+                std::fs::remove_dir_all(&path).map_err(io_err)?;
                 cleaned += 1;
             }
         }
@@ -205,7 +210,7 @@ pub fn cleanup_expired_sessions(base_dir: &Path, max_age_days: i64) -> Result<u3
 ///
 /// This is the primary entry point for session setup. It combines ID resolution,
 /// directory creation, and lock acquisition into a single call.
-pub fn resolve_session(cli_session_id: Option<&str>, base_dir: &Path) -> Result<SessionContext> {
+pub fn resolve_session(cli_session_id: Option<&str>, base_dir: &Path) -> AgentResult<SessionContext> {
     let session_id = resolve_session_id(cli_session_id)?;
     let (session_dir, is_new) = get_or_create_session_dir(&session_id, base_dir)?;
     let lock = acquire_session_lock(&session_dir)?;
@@ -270,5 +275,53 @@ mod tests {
         let cleaned = cleanup_expired_sessions(tmp.path(), 7).unwrap();
         assert_eq!(cleaned, 1);
         assert!(!dir.exists());
+    }
+
+    // ── Phase 1: AgentError contract tests ──
+
+    #[test]
+    fn test_validate_session_id_returns_config_error() {
+        // Empty ID
+        let err = validate_session_id("").unwrap_err();
+        assert!(matches!(err, AgentError::ConfigError(_)), "expected ConfigError for empty session ID, got {:?}", err);
+
+        // Invalid characters
+        let err = validate_session_id("../etc").unwrap_err();
+        assert!(
+            matches!(err, AgentError::ConfigError(_)),
+            "expected ConfigError for invalid session ID, got {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_resolve_session_returns_config_error_for_invalid_id() {
+        let tmp = TempDir::new().unwrap();
+        let result = resolve_session(Some("bad id with spaces"), tmp.path());
+        assert!(result.is_err());
+        let err = result.err().unwrap();
+        assert!(
+            matches!(err, AgentError::ConfigError(_)),
+            "expected ConfigError for invalid session ID, got {:?}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_acquire_session_lock_returns_resource_unavailable_when_locked() {
+        let tmp = TempDir::new().unwrap();
+        let (_dir, _) = get_or_create_session_dir("lock-test", tmp.path()).unwrap();
+        let session_dir = tmp.path().join("sessions").join("lock-test");
+
+        // First lock succeeds
+        let _lock1 = acquire_session_lock(&session_dir).unwrap();
+
+        // Second lock should fail with ResourceUnavailable
+        let err = acquire_session_lock(&session_dir).unwrap_err();
+        assert!(
+            matches!(err, AgentError::ResourceUnavailable(_)),
+            "expected ResourceUnavailable for locked session, got {:?}",
+            err
+        );
     }
 }

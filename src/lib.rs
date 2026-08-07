@@ -8,6 +8,7 @@ pub mod agent;
 pub mod bridge;
 pub mod cli;
 pub mod config;
+pub(crate) mod error;
 pub mod event_log;
 pub mod prompt;
 pub mod render;
@@ -32,6 +33,10 @@ pub use phi_telemetry::{
 
 // ── agent-works ──
 pub use agent_works::focus::{Context as FocusContext, Focus, FocusError, FocusInput, FocusOutput};
+
+// ── MCP (feature-gated) ──
+#[cfg(feature = "mcp")]
+pub use agent_works::mcp::{McpServerConfig, McpTransport};
 
 // ── phi-agent types ──
 pub use agent::{CompressionConfig, PhiAgent, PhiAgentConfig, SummarizingMiddleware, base_agent_builder};
