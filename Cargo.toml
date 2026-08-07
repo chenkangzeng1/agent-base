@@ -43,7 +43,72 @@ tools = ["phi-tools"]
 telemetry = ["phi-telemetry"]
 logging = ["log-core"]
 browser = ["tools", "phi-tools/browser"]
+mcp = ["agent-works/mcp"]
 
 [dev-dependencies]
 tempfile = "3"
 futures-core = "0.3"
+
+# ── Examples ──
+
+[[example]]
+name = "hello_agent"
+path = "examples/minimal/hello_agent.rs"
+
+[[example]]
+name = "custom_tool"
+path = "examples/tools/custom_tool.rs"
+
+[[example]]
+name = "custom_policy"
+path = "examples/tools/custom_policy.rs"
+
+[[example]]
+name = "multi_tool"
+path = "examples/tools/multi_tool.rs"
+
+[[example]]
+name = "focus_demo"
+path = "examples/advanced/focus_demo.rs"
+
+[[example]]
+name = "html_renderer"
+path = "examples/observability/html_renderer.rs"
+
+# ── Phase 2: new examples ──
+
+[[example]]
+name = "mcp_client"
+path = "examples/mcp/mcp_client.rs"
+required-features = ["mcp"]
+
+[[example]]
+name = "mcp_dynamic_attach"
+path = "examples/mcp/mcp_dynamic_attach.rs"
+required-features = ["mcp"]
+
+[[example]]
+name = "session_persist"
+path = "examples/session/session_persist.rs"
+
+[[example]]
+name = "event_log"
+path = "examples/observability/event_log.rs"
+
+[[example]]
+name = "middleware_hooks"
+path = "examples/observability/middleware_hooks.rs"
+
+[[example]]
+name = "window_memory"
+path = "examples/advanced/window_memory.rs"
+
+[[example]]
+name = "summary_memory"
+path = "examples/advanced/summary_memory.rs"
+
+# ── Phase 3: multi-agent example ──
+
+[[example]]
+name = "multi_agent"
+path = "examples/multi-agent/multi_agent.rs"

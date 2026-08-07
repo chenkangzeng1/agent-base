@@ -76,6 +76,10 @@ pub fn event_to_value(event: &RuntimeEvent) -> serde_json::Value {
         RuntimeEvent::UserEvent { event: UserEvent::Structured { event_type, data }, .. } => {
             serde_json::json!({"type": "user_event", "event_type": event_type, "data": data})
         },
+        RuntimeEvent::UserEvent { event: UserEvent::SubAgentEvent { subagent, event: inner }, .. } => {
+            let inner = event_to_value(inner);
+            serde_json::json!({"type": "subagent_event", "subagent": subagent, "event": inner})
+        },
         RuntimeEvent::UserEvent { .. } => serde_json::json!({"type": "other"}),
         RuntimeEvent::RunCancelled { .. } => serde_json::json!({"type": "run_cancelled"}),
         RuntimeEvent::RunFinished { .. } => serde_json::json!({"type": "run_finished"}),
@@ -286,5 +290,51 @@ mod tests {
         let last: serde_json::Value = serde_json::from_str(lines[1]).unwrap();
         assert_eq!(last["type"], "turn_end");
         assert_eq!(last["turn"], 1);
+    }
+
+    // ── SubAgentEvent tests ──
+
+    #[test]
+    fn test_event_to_value_subagent_event() {
+        let v = event_to_value(&RuntimeEvent::UserEvent {
+            session_id: session_id(),
+            event: UserEvent::SubAgentEvent {
+                subagent: "root/searcher".into(),
+                event: Box::new(RuntimeEvent::TextDelta {
+                    session_id: session_id(),
+                    text: "result".into(),
+                }),
+            },
+        });
+        assert_eq!(v["type"], "subagent_event");
+        assert_eq!(v["subagent"], "root/searcher");
+        assert_eq!(v["event"]["type"], "text_delta");
+        assert_eq!(v["event"]["text"], "result");
+    }
+
+    #[test]
+    fn test_event_to_value_nested_subagent_event() {
+        // Subagent event wrapping another subagent event (nested)
+        let v = event_to_value(&RuntimeEvent::UserEvent {
+            session_id: session_id(),
+            event: UserEvent::SubAgentEvent {
+                subagent: "root/parent".into(),
+                event: Box::new(RuntimeEvent::UserEvent {
+                    session_id: session_id(),
+                    event: UserEvent::SubAgentEvent {
+                        subagent: "root/parent/child".into(),
+                        event: Box::new(RuntimeEvent::TextDelta {
+                            session_id: session_id(),
+                            text: "deep".into(),
+                        }),
+                    },
+                }),
+            },
+        });
+        assert_eq!(v["type"], "subagent_event");
+        assert_eq!(v["subagent"], "root/parent");
+        assert_eq!(v["event"]["type"], "subagent_event");
+        assert_eq!(v["event"]["subagent"], "root/parent/child");
+        assert_eq!(v["event"]["event"]["text"], "deep");
     }
 }

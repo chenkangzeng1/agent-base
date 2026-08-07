@@ -85,6 +85,15 @@ impl EventRenderer for JsonStreamRenderer {
                     "data": data,
                 }))?;
             },
+            RuntimeEvent::UserEvent { event: UserEvent::SubAgentEvent { subagent, event: inner }, .. } => {
+                use crate::event_log::event_to_value;
+                let inner_value = event_to_value(inner);
+                self.emit(&json!({
+                    "type": "subagent_event",
+                    "subagent": subagent,
+                    "event": inner_value,
+                }))?;
+            },
             RuntimeEvent::UserEvent { .. } => {},
             RuntimeEvent::Checkpoint { .. } => {},
             RuntimeEvent::RunFinished { .. } => {},
@@ -299,5 +308,47 @@ mod tests {
         ]);
         let last: serde_json::Value = serde_json::from_str(lines.last().unwrap()).unwrap();
         assert_eq!(last["assistant_text"], "Hello World");
+    }
+
+    // ── SubAgentEvent tests ──
+
+    #[test]
+    fn test_subagent_event_produces_structured_json() {
+        let lines = render_one(RuntimeEvent::UserEvent {
+            session_id: session_id(),
+            event: UserEvent::SubAgentEvent {
+                subagent: "root/searcher".into(),
+                event: Box::new(RuntimeEvent::TextDelta {
+                    session_id: session_id(),
+                    text: "found 3 items".into(),
+                }),
+            },
+        });
+        assert_eq!(lines.len(), 1);
+        let v: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
+        assert_eq!(v["type"], "subagent_event");
+        assert_eq!(v["subagent"], "root/searcher");
+        assert_eq!(v["event"]["type"], "text_delta");
+        assert_eq!(v["event"]["text"], "found 3 items");
+    }
+
+    #[test]
+    fn test_subagent_event_with_tool_call() {
+        let lines = render_one(RuntimeEvent::UserEvent {
+            session_id: session_id(),
+            event: UserEvent::SubAgentEvent {
+                subagent: "root/worker".into(),
+                event: Box::new(RuntimeEvent::ToolCallStarted {
+                    session_id: session_id(),
+                    tool_name: "shell".into(),
+                    args_json: r#"{"cmd":"ls"}"#.into(),
+                }),
+            },
+        });
+        let v: serde_json::Value = serde_json::from_str(&lines[0]).unwrap();
+        assert_eq!(v["type"], "subagent_event");
+        assert_eq!(v["subagent"], "root/worker");
+        assert_eq!(v["event"]["type"], "tool_call_started");
+        assert_eq!(v["event"]["tool"], "shell");
     }
 }
