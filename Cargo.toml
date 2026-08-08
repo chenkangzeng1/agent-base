@@ -34,7 +34,12 @@ typed-tools = ["schemars"]
 telemetry = ["opentelemetry", "tracing-opentelemetry"]
 
 [dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
 dotenvy = "0.15"
 insta = { version = "1", features = ["json"] }
 serial_test = "3"
 tempfile = "3"
+
+[[bench]]
+name = "tool_registry"
+harness = false

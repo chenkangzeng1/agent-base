@@ -141,6 +141,20 @@ impl AgentError {
     }
 }
 
+// ── Convenience From impls for common error types ──
+
+impl From<std::io::Error> for AgentError {
+    fn from(e: std::io::Error) -> Self {
+        AgentError::internal(e.to_string())
+    }
+}
+
+impl From<serde_json::Error> for AgentError {
+    fn from(e: serde_json::Error) -> Self {
+        AgentError::json(e.to_string())
+    }
+}
+
 /// Classifies an `AgentError` into a broad category for recovery decisions.
 ///
 /// Unlike `AgentError` which carries full context (messages, nested errors, etc.),
@@ -275,5 +289,43 @@ mod tests {
         assert_eq!(ErrorKind::ToolNotFound.to_string(), "tool not found");
         assert_eq!(ErrorKind::ModelOverloaded.to_string(), "model overloaded");
         assert_eq!(ErrorKind::RateLimited.to_string(), "rate limited");
+    }
+
+    // ── From impls ──
+
+    #[test]
+    fn from_io_error_maps_to_internal() {
+        let io_err = std::io::Error::new(std::io::ErrorKind::NotFound, "file missing");
+        let agent_err: AgentError = io_err.into();
+        assert!(matches!(agent_err, AgentError::Internal(_)));
+        assert!(agent_err.to_string().contains("file missing"));
+    }
+
+    #[test]
+    fn from_serde_json_error_maps_to_json() {
+        let json_err = serde_json::from_str::<serde_json::Value>("not json").unwrap_err();
+        let agent_err: AgentError = json_err.into();
+        assert!(matches!(agent_err, AgentError::Json(_)));
+    }
+
+    /// Verify `?` works: a function returning AgentResult<T> can use `?`
+    /// on io::Error and serde_json::Error through the From impls.
+    #[test]
+    fn from_impls_work_with_try_operator() -> AgentResult<()> {
+        // io::Error via ?
+        fn read_file() -> AgentResult<String> {
+            let _ = std::fs::read_to_string("/nonexistent/path")?;
+            unreachable!()
+        }
+        assert!(read_file().is_err());
+
+        // serde_json::Error via ?
+        fn parse_json() -> AgentResult<serde_json::Value> {
+            let v: serde_json::Value = serde_json::from_str("bad json")?;
+            Ok(v)
+        }
+        assert!(parse_json().is_err());
+
+        Ok(())
     }
 }
