@@ -86,35 +86,35 @@ impl ToolExecutionPipeline for DefaultPipeline {
         let mut output = result?;
 
         // 3. Output truncation
-        if let Some(max_chars) = self.max_output_chars {
-            if output.summary.len() > max_chars {
-                let original_summary_len = output.summary.len();
-                let original_raw_len = output.raw.as_ref().map(|v| v.to_string().len());
-                let suffix = "...(truncated)";
-                let keep = max_chars.saturating_sub(suffix.len());
-                if keep > 0 {
-                    // Use floor_char_boundary to avoid panicking on multi-byte
-                    // UTF-8 characters (e.g. CJK, emoji) where `keep` falls
-                    // in the middle of a character.
-                    let truncate_at = output.summary.floor_char_boundary(keep);
-                    output.summary.truncate(truncate_at);
-                    output.summary.push_str(suffix);
-                } else {
-                    output.summary = suffix[..max_chars].to_string();
-                }
-                output.truncation = Some(TruncationInfo {
-                    original_summary_len,
-                    original_raw_len,
-                    max_allowed_chars: max_chars,
-                });
-                tracing::debug!(
-                    tool = tool.name(),
-                    original_summary_len = original_summary_len,
-                    original_raw_len = original_raw_len,
-                    max_allowed_chars = max_chars,
-                    "tool output truncated"
-                );
+        if let Some(max_chars) = self.max_output_chars
+            && output.summary.len() > max_chars
+        {
+            let original_summary_len = output.summary.len();
+            let original_raw_len = output.raw.as_ref().map(|v| v.to_string().len());
+            let suffix = "...(truncated)";
+            let keep = max_chars.saturating_sub(suffix.len());
+            if keep > 0 {
+                // Use floor_char_boundary to avoid panicking on multi-byte
+                // UTF-8 characters (e.g. CJK, emoji) where `keep` falls
+                // in the middle of a character.
+                let truncate_at = output.summary.floor_char_boundary(keep);
+                output.summary.truncate(truncate_at);
+                output.summary.push_str(suffix);
+            } else {
+                output.summary = suffix[..max_chars].to_string();
             }
+            output.truncation = Some(TruncationInfo {
+                original_summary_len,
+                original_raw_len,
+                max_allowed_chars: max_chars,
+            });
+            tracing::debug!(
+                tool = tool.name(),
+                original_summary_len = original_summary_len,
+                original_raw_len = original_raw_len,
+                max_allowed_chars = max_chars,
+                "tool output truncated"
+            );
         }
 
         // 4. after_call hook

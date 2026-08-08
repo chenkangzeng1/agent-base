@@ -1,8 +1,8 @@
 //! Benchmarks: ToolRegistry operations (register, find, metadatas, remove).
 
-use criterion::{Criterion, black_box, criterion_group, criterion_main};
-use agent_base::{Tool, ToolContext, ToolMetadata, ToolOutput, AgentResult, ToolControlFlow};
 use agent_base::tool::ToolRegistry;
+use agent_base::{AgentResult, Tool, ToolContext, ToolControlFlow, ToolMetadata, ToolOutput};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 /// A no-op tool for benchmarking.
 #[derive(Clone)]
@@ -13,13 +13,18 @@ struct NoopTool {
 
 impl NoopTool {
     fn new_named(name: &'static str) -> Self {
-        Self { name, description: "No-op benchmark tool" }
+        Self {
+            name,
+            description: "No-op benchmark tool",
+        }
     }
 }
 
 #[async_trait::async_trait]
 impl Tool for NoopTool {
-    fn name(&self) -> &'static str { self.name }
+    fn name(&self) -> &'static str {
+        self.name
+    }
     fn definition(&self) -> serde_json::Value {
         serde_json::json!({
             "function": {

@@ -85,10 +85,10 @@ impl ConsecutiveFailureRecovery {
     /// Reset failure count for a specific tool in a session.
     /// Call this when a tool succeeds to avoid false positives.
     pub fn reset_failures(&self, session_id: &SessionId, tool_name: &str) {
-        if let Ok(mut counts) = self.failure_counts.lock() {
-            if let Some(session_counts) = counts.get_mut(&session_id.id) {
-                session_counts.remove(tool_name);
-            }
+        if let Ok(mut counts) = self.failure_counts.lock()
+            && let Some(session_counts) = counts.get_mut(&session_id.id)
+        {
+            session_counts.remove(tool_name);
         }
     }
 
@@ -131,7 +131,7 @@ impl ToolErrorRecovery for ConsecutiveFailureRecovery {
                 .filter(|name| {
                     session_counts
                         .get(*name)
-                        .map_or(false, |&c| c >= self.max_consecutive_failures)
+                        .is_some_and(|&c| c >= self.max_consecutive_failures)
                 })
                 .cloned()
                 .collect();

@@ -17,6 +17,7 @@ fn usage_summary(usage: &agent_base::UsageInfo) -> String {
 }
 
 /// 单次测试结果
+#[allow(dead_code)]
 struct TestResult {
     thought_chars: usize,
     text_chars: usize,

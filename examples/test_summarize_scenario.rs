@@ -92,7 +92,7 @@ async fn test_summarize(
 
     if text.is_empty() && tool_calls == 0 {
         println!("  ⚠️  空响应！react_loop 会重试");
-    } else if text.is_empty() && thought.len() > 0 {
+    } else if text.is_empty() && !thought.is_empty() {
         println!("  ⚠️  有思考无正文（思考内容应该作为兜底输出）");
     } else {
         println!("  ✅ 正常");

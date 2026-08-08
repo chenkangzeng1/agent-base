@@ -40,7 +40,7 @@ fn normalize_step_text(raw: &str) -> String {
         .or_else(|| text.strip_prefix("step"))
     {
         let rest = rest.trim_start_matches(|c: char| c.is_ascii_digit() || c == ' ');
-        rest.trim_start_matches(|c: char| c == ':' || c == '.' || c == ')' || c == ' ')
+        rest.trim_start_matches([':', '.', ')', ' '])
     } else {
         text
     };
@@ -58,9 +58,7 @@ fn normalize_step_text(raw: &str) -> String {
         });
         // Strip "步" and following punctuation/whitespace
         rest.strip_prefix('步')
-            .map(|r| {
-                r.trim_start_matches(|c: char| matches!(c, '：' | ':' | '、' | '.' | ')' | ' '))
-            })
+            .map(|r| r.trim_start_matches(['：', ':', '、', '.', ')', ' ']))
             .unwrap_or(text)
     } else {
         text

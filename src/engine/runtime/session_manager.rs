@@ -268,18 +268,18 @@ impl SessionManager {
         // Layer 3: Oversized message safety valve
         if let Some(max_tokens) = self.config.max_message_tokens {
             let mut sessions = self.sessions.write().await;
-            if let Some(session) = sessions.get_mut(session_id) {
-                if let Some(last) = session.chat_messages().last() {
-                    let tokens = ContextWindowManager::message_tokens(last);
-                    if tokens > max_tokens {
-                        session.pop_last_message();
-                        tracing::warn!(
-                            session_id = session_id.id,
-                            tokens,
-                            max_tokens,
-                            "oversized message removed from session (safety valve)"
-                        );
-                    }
+            if let Some(session) = sessions.get_mut(session_id)
+                && let Some(last) = session.chat_messages().last()
+            {
+                let tokens = ContextWindowManager::message_tokens(last);
+                if tokens > max_tokens {
+                    session.pop_last_message();
+                    tracing::warn!(
+                        session_id = session_id.id,
+                        tokens,
+                        max_tokens,
+                        "oversized message removed from session (safety valve)"
+                    );
                 }
             }
         }

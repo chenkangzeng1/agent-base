@@ -250,7 +250,7 @@ impl AgentRuntime {
     ) -> AgentResult<()> {
         self.with_session_mut(session_id, |session| session.set_chat_messages(messages))
             .await?
-            .map_err(|e| AgentError::internal(e))
+            .map_err(AgentError::internal)
     }
 
     pub async fn validate_session(&self, session_id: &SessionId) -> AgentResult<()> {

@@ -48,6 +48,7 @@ impl ToolEngine {
         tools.inject_event_bus(&self.event_bus);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn execute_tool<F>(
         &self,
         session_id: &SessionId,
@@ -209,6 +210,7 @@ impl ToolEngine {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn process_approval<F>(
         &self,
         session_id: &SessionId,

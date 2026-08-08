@@ -98,15 +98,15 @@ impl OpenAiClient {
         if self.is_qwen_model() {
             // qwen 模型使用 enable_thinking 和 thinking_budget
             // 对于 OpenAI 兼容接口，直接放在请求体顶层
-            if let Some(enabled) = config.enabled {
-                if let Some(obj) = request_body.as_object_mut() {
-                    obj.insert("enable_thinking".to_string(), json!(enabled));
-                }
+            if let Some(enabled) = config.enabled
+                && let Some(obj) = request_body.as_object_mut()
+            {
+                obj.insert("enable_thinking".to_string(), json!(enabled));
             }
-            if let Some(budget) = config.budget_tokens {
-                if let Some(obj) = request_body.as_object_mut() {
-                    obj.insert("thinking_budget".to_string(), json!(budget));
-                }
+            if let Some(budget) = config.budget_tokens
+                && let Some(obj) = request_body.as_object_mut()
+            {
+                obj.insert("thinking_budget".to_string(), json!(budget));
             }
             // 将 effort 转换为 thinking_budget
             if let Some(effort) = &config.effort {
@@ -151,10 +151,10 @@ impl OpenAiClient {
                 if let Some(budget) = config.budget_tokens {
                     extra_body.insert("thinking_budget".to_string(), json!(budget));
                 }
-                if !extra_body.is_empty() {
-                    if let Some(obj) = request_body.as_object_mut() {
-                        obj.insert("extra_body".to_string(), Value::Object(extra_body));
-                    }
+                if !extra_body.is_empty()
+                    && let Some(obj) = request_body.as_object_mut()
+                {
+                    obj.insert("extra_body".to_string(), Value::Object(extra_body));
                 }
             }
         } else {
@@ -212,7 +212,7 @@ impl OpenAiClient {
                 }
                 if let Some(tc) = tool_calls {
                     let tool_calls_json: Vec<Value> =
-                        tc.iter().map(|t| Self::tool_call_to_json(t)).collect();
+                        tc.iter().map(Self::tool_call_to_json).collect();
                     obj.insert("tool_calls".to_string(), json!(tool_calls_json));
                 }
                 Value::Object(obj)
@@ -307,10 +307,10 @@ impl LlmClient for OpenAiClient {
 
         self.apply_reasoning_config(&mut request_body, reasoning);
 
-        if let Some(rf) = response_format {
-            if let Some(obj) = request_body.as_object_mut() {
-                obj.insert("response_format".to_string(), rf.to_api_value());
-            }
+        if let Some(rf) = response_format
+            && let Some(obj) = request_body.as_object_mut()
+        {
+            obj.insert("response_format".to_string(), rf.to_api_value());
         }
 
         tracing::info!(model = %self.model, msg_count = messages.len(), "llm chat request");
@@ -366,10 +366,10 @@ impl LlmClient for OpenAiClient {
 
         self.apply_reasoning_config(&mut request_body, reasoning);
 
-        if let Some(rf) = response_format {
-            if let Some(obj) = request_body.as_object_mut() {
-                obj.insert("response_format".to_string(), rf.to_api_value());
-            }
+        if let Some(rf) = response_format
+            && let Some(obj) = request_body.as_object_mut()
+        {
+            obj.insert("response_format".to_string(), rf.to_api_value());
         }
 
         tracing::debug!(request_body = %serde_json::to_string_pretty(&request_body).unwrap_or_default(), "llm stream request body");
@@ -408,7 +408,7 @@ impl LlmClient for OpenAiClient {
 
                     let choices = data.get("choices").and_then(Value::as_array);
 
-                    if choices.is_none() || choices.map_or(true, |c| c.is_empty()) {
+                    if choices.is_none() || choices.is_none_or(|c| c.is_empty()) {
                         if let Some(usage) = data.get("usage") {
                             return Ok(StreamChunk::Usage(UsageInfo {
                                 prompt_tokens: usage
@@ -436,16 +436,16 @@ impl LlmClient for OpenAiClient {
                         return Ok(StreamChunk::ToolCall(choice.clone()));
                     }
 
-                    if let Some(reasoning) = delta.get("reasoning_content") {
-                        if let Some(text) = reasoning.as_str() {
-                            return Ok(StreamChunk::Thought(text.to_string()));
-                        }
+                    if let Some(reasoning) = delta.get("reasoning_content")
+                        && let Some(text) = reasoning.as_str()
+                    {
+                        return Ok(StreamChunk::Thought(text.to_string()));
                     }
 
-                    if let Some(content) = delta.get("content") {
-                        if let Some(text) = content.as_str() {
-                            return Ok(StreamChunk::Text(text.to_string()));
-                        }
+                    if let Some(content) = delta.get("content")
+                        && let Some(text) = content.as_str()
+                    {
+                        return Ok(StreamChunk::Text(text.to_string()));
                     }
 
                     if finish_reason == "stop" {

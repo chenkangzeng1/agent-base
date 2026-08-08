@@ -28,6 +28,7 @@ struct PlanData {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 struct StepData {
     id: String,
     command: String,

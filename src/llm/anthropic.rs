@@ -103,10 +103,10 @@ impl AnthropicClient {
                     tool_calls,
                 } => {
                     let mut parts: Vec<Value> = Vec::new();
-                    if let Some(text) = content {
-                        if !text.is_empty() {
-                            parts.push(json!({"type": "text", "text": text}));
-                        }
+                    if let Some(text) = content
+                        && !text.is_empty()
+                    {
+                        parts.push(json!({"type": "text", "text": text}));
                     }
                     if let Some(tc) = tool_calls {
                         for t in tc {
@@ -181,16 +181,16 @@ impl AnthropicClient {
             "messages": anthropic_messages,
         });
 
-        if !anthropic_tools.is_empty() {
-            if let Some(obj) = body.as_object_mut() {
-                obj.insert("tools".to_string(), json!(anthropic_tools));
-            }
+        if !anthropic_tools.is_empty()
+            && let Some(obj) = body.as_object_mut()
+        {
+            obj.insert("tools".to_string(), json!(anthropic_tools));
         }
 
-        if let Some(system) = system_prompt {
-            if let Some(obj) = body.as_object_mut() {
-                obj.insert("system".to_string(), json!(system));
-            }
+        if let Some(system) = system_prompt
+            && let Some(obj) = body.as_object_mut()
+        {
+            obj.insert("system".to_string(), json!(system));
         }
 
         if let Some(config) = reasoning {
@@ -246,31 +246,31 @@ impl AnthropicClient {
             "content_block_start" => {
                 let cb = data.get("content_block");
                 let idx = data.get("index").and_then(Value::as_u64).unwrap_or(0);
-                if let Some(cb) = cb {
-                    if cb.get("type").and_then(Value::as_str) == Some("tool_use") {
-                        let id = cb
-                            .get("id")
-                            .and_then(Value::as_str)
-                            .unwrap_or("")
-                            .to_string();
-                        let name = cb
-                            .get("name")
-                            .and_then(Value::as_str)
-                            .unwrap_or("")
-                            .to_string();
-                        return Ok(StreamChunk::ToolCall(json!({
-                            "delta": {
-                                "tool_calls": [{
-                                    "index": idx,
-                                    "id": if id.is_empty() { Value::Null } else { json!(id) },
-                                    "function": {
-                                        "name": name,
-                                        "arguments": "",
-                                    }
-                                }]
-                            }
-                        })));
-                    }
+                if let Some(cb) = cb
+                    && cb.get("type").and_then(Value::as_str) == Some("tool_use")
+                {
+                    let id = cb
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    let name = cb
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                    return Ok(StreamChunk::ToolCall(json!({
+                        "delta": {
+                            "tool_calls": [{
+                                "index": idx,
+                                "id": if id.is_empty() { Value::Null } else { json!(id) },
+                                "function": {
+                                    "name": name,
+                                    "arguments": "",
+                                }
+                            }]
+                        }
+                    })));
                 }
                 Ok(StreamChunk::Text(String::new()))
             }

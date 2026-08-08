@@ -85,10 +85,7 @@ impl ContextWindowManager {
                 reasoning_content,
                 tool_calls,
             } => {
-                let mut tokens = content
-                    .as_deref()
-                    .map(|c| Self::estimate_tokens(c))
-                    .unwrap_or(0);
+                let mut tokens = content.as_deref().map(Self::estimate_tokens).unwrap_or(0);
                 if let Some(rc) = reasoning_content {
                     tokens += Self::estimate_tokens(rc);
                 }
@@ -119,7 +116,7 @@ impl ContextWindowManager {
             return;
         }
 
-        let total_tokens: usize = messages.iter().map(|m| Self::message_tokens(m)).sum();
+        let total_tokens: usize = messages.iter().map(Self::message_tokens).sum();
         if total_tokens <= self.max_tokens {
             return;
         }

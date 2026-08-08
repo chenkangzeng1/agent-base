@@ -1,6 +1,5 @@
-use agent_base::{AgentBuilder, ChatMessage, LlmClient, OpenAiClient, RuntimeEvent, StreamChunk};
+use agent_base::{AgentBuilder, ChatMessage, LlmClient, StreamChunk};
 use async_trait::async_trait;
-use futures_util::StreamExt;
 use serde_json::{Value, json};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
@@ -37,10 +36,10 @@ impl LlmClient for CaptureLlmClient {
 
     async fn chat_stream(
         &self,
-        messages: &[ChatMessage],
-        tools: &[Value],
+        _messages: &[ChatMessage],
+        _tools: &[Value],
         reasoning: Option<&agent_base::ReasoningConfig>,
-        response_format: Option<&agent_base::ResponseFormat>,
+        _response_format: Option<&agent_base::ResponseFormat>,
     ) -> agent_base::AgentResult<
         Pin<Box<dyn futures_core::Stream<Item = agent_base::AgentResult<StreamChunk>> + Send>>,
     > {
@@ -53,15 +52,15 @@ impl LlmClient for CaptureLlmClient {
         });
 
         if let Some(config) = reasoning {
-            if let Some(enabled) = config.enabled {
-                if let Some(obj) = body.as_object_mut() {
-                    obj.insert("enable_thinking".to_string(), json!(enabled));
-                }
+            if let Some(enabled) = config.enabled
+                && let Some(obj) = body.as_object_mut()
+            {
+                obj.insert("enable_thinking".to_string(), json!(enabled));
             }
-            if let Some(budget) = config.budget_tokens {
-                if let Some(obj) = body.as_object_mut() {
-                    obj.insert("thinking_budget".to_string(), json!(budget));
-                }
+            if let Some(budget) = config.budget_tokens
+                && let Some(obj) = body.as_object_mut()
+            {
+                obj.insert("thinking_budget".to_string(), json!(budget));
             }
         }
 

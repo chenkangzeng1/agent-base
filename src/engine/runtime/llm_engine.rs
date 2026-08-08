@@ -114,7 +114,7 @@ impl LlmEngine {
             tokio::select! {
                 recv_result = event_rx.recv() => {
                     match recv_result {
-                        Ok(event) => on_event(RuntimeEvent::from(event))?,
+                        Ok(event) => on_event(event)?,
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
@@ -178,17 +178,15 @@ impl LlmEngine {
                                     .and_then(Value::as_u64)
                                     .unwrap_or(0) as usize;
                                 let entry = aggregator.partials.entry(idx).or_insert_with(|| (String::new(), String::new(), String::new()));
-                                if let Some(id) = tool_call.get("id").and_then(Value::as_str) {
-                                    if !id.is_empty() {
+                                if let Some(id) = tool_call.get("id").and_then(Value::as_str)
+                                    && !id.is_empty() {
                                         entry.0 = id.to_string();
                                     }
-                                }
                                 if let Some(func) = tool_call.get("function") {
-                                    if let Some(name) = func.get("name").and_then(Value::as_str) {
-                                        if !name.is_empty() {
+                                    if let Some(name) = func.get("name").and_then(Value::as_str)
+                                        && !name.is_empty() {
                                             entry.1 = name.to_string();
                                         }
-                                    }
                                     if let Some(args) = func.get("arguments").and_then(Value::as_str) {
                                         entry.2.push_str(args);
                                     }

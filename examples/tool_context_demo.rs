@@ -129,7 +129,7 @@ impl Tool for AnalyzeTextTool {
         // Step 1: Count characters / words
         ctx.emit_progress("Analyzing text: tokenizing...");
 
-        let is_chinese = text.chars().any(|c| c >= '\u{4e00}' && c <= '\u{9fff}');
+        let is_chinese = text.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c));
 
         let char_or_word_count = if is_chinese {
             // For CJK text, count non-whitespace characters (each char ≈ one word)
@@ -511,10 +511,8 @@ async fn main() -> AgentResult<()> {
                             println!("  🤖 [SubAgent:{}] {:?}", subagent, event);
                         }
                     },
-                    RuntimeEvent::RunFinished { .. } => {
-                        if assistant_started {
-                            println!();
-                        }
+                    RuntimeEvent::RunFinished { .. } if assistant_started => {
+                        println!();
                     }
                     _ => {}
                 }

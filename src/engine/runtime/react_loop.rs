@@ -1151,10 +1151,10 @@ impl RuntimeCore {
                     )
                     .await;
                     // Persist session on cancellation (LLM-stream path bypasses handle_tool_error)
-                    if e.is_cancelled() {
-                        if let Ok(session) = self.session_manager.session_or_err(session_id).await {
-                            let _ = self.session_manager.session_store().save(&session).await;
-                        }
+                    if e.is_cancelled()
+                        && let Ok(session) = self.session_manager.session_or_err(session_id).await
+                    {
+                        let _ = self.session_manager.session_store().save(&session).await;
                     }
                     return Err(e);
                 }

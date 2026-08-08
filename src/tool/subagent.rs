@@ -159,11 +159,8 @@ impl Tool for SubAgentTool {
 
         let mut final_text = String::new();
         for event in &runtime_events {
-            match event {
-                RuntimeEvent::TextDelta { text, .. } => {
-                    final_text.push_str(&text);
-                }
-                _ => {}
+            if let RuntimeEvent::TextDelta { text, .. } = event {
+                final_text.push_str(text);
             }
             // Forward each sub-agent event to the parent via UserEvent::SubAgentEvent
             let _ = user_event_tx.send(UserEvent::SubAgentEvent {
