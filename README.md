@@ -172,6 +172,19 @@ phi
 phi --format json "list files"
 ```
 
+### Building from Source
+
+```bash
+git clone https://github.com/hibuka-labs/phi-agent.git
+cd phi-agent
+
+# The phi binary requires shell, mcp, telemetry, logging features
+cargo run --features full
+
+# Or enable specific features:
+cargo run --features shell,mcp,telemetry,logging
+```
+
 ## ✅ What phi-agent is Good For
 
 - **Embedded & edge applications** — single binary, zero system dependencies, runs on ARM Linux and IoT gateways

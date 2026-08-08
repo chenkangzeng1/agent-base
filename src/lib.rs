@@ -4,14 +4,17 @@
 //! config resolution, session management, and other infrastructure.
 //! **Does not bundle any tools** — tools are injected by consumers.
 
+#![warn(missing_docs)]
+
 pub mod agent;
 pub mod bridge;
 pub mod cli;
 pub mod config;
-pub(crate) mod error;
 pub mod event_log;
+/// System prompt generation (EN/CN).
 pub mod prompt;
 pub mod render;
+/// Session management — ID resolution, locking, snapshots, cleanup.
 pub mod session;
 
 // ── Common agent-base types ──

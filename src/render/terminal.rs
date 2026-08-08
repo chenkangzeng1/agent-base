@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use std::io::{self, Write};
 
 use agent_base::{AgentResult, PlanStepStatus, RuntimeEvent};

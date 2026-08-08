@@ -2,7 +2,8 @@
 //!
 //! Long tool-heavy conversations balloon the message list that gets sent to the
 //! LLM on every turn, which slows each call down (and, past the window, fails).
-//! This middleware observes the per-LLM-call message list in [`Middleware::on_pre_llm`]
+//! This middleware observes the per-LLM-call message list in
+//! [`Middleware::on_pre_llm`](agent_base::Middleware::on_pre_llm)
 //! and, once it exceeds [`CompressionConfig::trigger_tokens`], summarises the
 //! *earlier* portion of the conversation into a single compact message.
 //!
@@ -63,6 +64,7 @@ pub struct SummarizingMiddleware {
     cache: Mutex<HashMap<(u64, u64), (usize, String)>>,
 }
 
+#[allow(missing_docs)]
 impl SummarizingMiddleware {
     pub fn new(client: Arc<dyn LlmClient>) -> Self {
         Self { client, config: CompressionConfig::default(), cache: Mutex::new(HashMap::new()) }

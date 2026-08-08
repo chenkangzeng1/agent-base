@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use agent_base::{AgentResult, RuntimeEvent};
 
 use crate::render::EventRenderer;

@@ -7,7 +7,9 @@
 //! - [`SummarizingMiddleware`] — LLM-based context compression for long sessions
 
 pub mod builder;
+/// LLM-based context compression middleware for long sessions.
 pub mod compression;
+/// PhiAgent struct and configuration — the primary public API.
 pub mod factory;
 
 pub use builder::base_agent_builder;

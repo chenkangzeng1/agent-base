@@ -16,6 +16,12 @@ use async_trait::async_trait;
 use serde_json::Value;
 use tokio::sync::{Mutex, mpsc};
 
+/// Bridge protocol server — wraps an [`AgentRuntime`] and exposes it over
+/// the NDJSON bridge protocol for external SDK consumption.
+///
+/// Manages sessions, tool registration via proxy tools, and event forwarding.
+/// Tool calls use a single-slot pattern: the serve loop pushes a receiver
+/// before each tool call, and ProxyTool pops it.
 #[derive(Clone)]
 pub struct ProtocolServer {
     runtime: AgentRuntime,
@@ -28,16 +34,21 @@ pub struct ProtocolServer {
 }
 
 impl ProtocolServer {
+    /// Wrap an existing [`AgentRuntime`] in a protocol server.
     pub fn new(runtime: AgentRuntime) -> Self {
         Self { runtime, slot: Arc::new(Mutex::new(None)), sessions: Arc::new(Mutex::new(HashMap::new())) }
     }
 
+    /// Build a protocol server from an [`AgentBuilder`].
     pub fn from_builder(builder: AgentBuilder) -> Result<Self, agent_base::AgentError> {
         let runtime = builder.build()?;
         Ok(Self::new(runtime))
     }
 
-    /// Register a Python-side tool.
+    /// Register a tool implemented on the SDK side.
+    ///
+    /// The tool's `call` will block until the SDK sends a `tool_result`
+    /// message through the bridge.
     pub async fn register_tool(&self, name: String, description: String, parameters: Value) {
         let proxy = ProxyTool { name, description, parameters, slot: self.slot.clone() };
         let tools_arc = self.runtime.tools_mut();
@@ -53,6 +64,7 @@ impl ProtocolServer {
         tx
     }
 
+    /// Create a new session, optionally with an external ID for reuse.
     pub async fn create_session(&self, external_id: Option<String>) -> (SessionId, Option<String>) {
         let sid = self.runtime.create_session().await;
         // NOTE: We intentionally do NOT set sid.external_id because
@@ -83,10 +95,12 @@ impl ProtocolServer {
         self.create_session(None).await.0
     }
 
+    /// Subscribe to runtime events broadcast by the agent.
     pub fn subscribe_events(&self) -> tokio::sync::broadcast::Receiver<RuntimeEvent> {
         self.runtime.subscribe_runtime_events()
     }
 
+    /// Run a turn on the given session, forwarding events to the callback.
     pub async fn run_turn<F>(&self, sid: &SessionId, input: &str, f: F) -> AgentResult<RunOutcome>
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
@@ -94,6 +108,7 @@ impl ProtocolServer {
         self.runtime.run_turn(sid.clone(), input, f).await
     }
 
+    /// Cancel the currently running turn.
     pub fn cancel(&self) {
         self.runtime.cancel();
     }

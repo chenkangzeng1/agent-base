@@ -6,8 +6,6 @@ use agent_base::{AgentError, AgentResult};
 use fs2::FileExt;
 use regex::Regex;
 
-use crate::error::{io_err, serde_err};
-
 static SESSION_ID_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-zA-Z0-9\-_]+$").unwrap());
 static SNAPSHOT_NAME_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-zA-Z0-9\-_]+$").unwrap());
 
@@ -16,9 +14,13 @@ static SNAPSHOT_NAME_RE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^[a-zA-
 /// Created via [`resolve_session`]. The lock is released when the struct is dropped.
 #[derive(Debug)]
 pub struct SessionContext {
+    /// Session identifier (user-provided or auto-generated).
     pub session_id: String,
+    /// Path to the session directory on disk.
     pub session_dir: PathBuf,
+    /// Base directory for all session data.
     pub base_dir: PathBuf,
+    /// Whether this session was just created (vs reused).
     pub is_new_session: bool,
     _lock: Option<File>,
 }
@@ -123,14 +125,14 @@ pub fn get_or_create_session_dir(session_id: &str, base_dir: &Path) -> AgentResu
     let is_new = !session_dir.exists();
 
     if is_new {
-        std::fs::create_dir_all(&session_dir).map_err(io_err)?;
+        std::fs::create_dir_all(&session_dir)?;
         tracing::info!(session_id = %session_id, path = %session_dir.display(), "created new session directory");
     } else {
         tracing::info!(session_id = %session_id, path = %session_dir.display(), "reusing existing session directory");
     }
 
     // Write session_id file
-    std::fs::write(session_dir.join("session_id"), session_id).map_err(io_err)?;
+    std::fs::write(session_dir.join("session_id"), session_id)?;
 
     // Update session_meta.json
     update_session_meta(&session_dir, session_id)?;
@@ -144,7 +146,7 @@ pub fn get_or_create_session_dir(session_id: &str, base_dir: &Path) -> AgentResu
 /// session is already in use.
 pub fn acquire_session_lock(session_dir: &Path) -> AgentResult<File> {
     let lock_path = session_dir.join("session.lock");
-    let file = File::create(&lock_path).map_err(io_err)?;
+    let file = File::create(&lock_path)?;
 
     file.try_lock_exclusive().map_err(|_| {
         AgentError::resource_unavailable(format!(
@@ -161,8 +163,8 @@ fn update_session_meta(session_dir: &Path, session_id: &str) -> AgentResult<()> 
     let meta_path = session_dir.join("session_meta.json");
 
     let mut meta = if meta_path.exists() {
-        let content = std::fs::read_to_string(&meta_path).map_err(io_err)?;
-        serde_json::from_str::<serde_json::Value>(&content).map_err(serde_err)?
+        let content = std::fs::read_to_string(&meta_path)?;
+        serde_json::from_str::<serde_json::Value>(&content)?
     } else {
         serde_json::json!({
             "session_id": session_id,
@@ -172,7 +174,7 @@ fn update_session_meta(session_dir: &Path, session_id: &str) -> AgentResult<()> 
 
     meta["last_active_at"] = serde_json::json!(chrono::Utc::now().to_rfc3339());
 
-    std::fs::write(&meta_path, serde_json::to_string_pretty(&meta).map_err(serde_err)?).map_err(io_err)?;
+    std::fs::write(&meta_path, serde_json::to_string_pretty(&meta)?)?;
     Ok(())
 }
 
@@ -189,8 +191,8 @@ pub fn cleanup_expired_sessions(base_dir: &Path, max_age_days: i64) -> AgentResu
     let now = chrono::Utc::now();
     let mut cleaned = 0;
 
-    for entry in std::fs::read_dir(&sessions_dir).map_err(io_err)? {
-        let entry = entry.map_err(io_err)?;
+    for entry in std::fs::read_dir(&sessions_dir)? {
+        let entry = entry?;
         let path = entry.path();
 
         if !path.is_dir() {
@@ -207,13 +209,13 @@ pub fn cleanup_expired_sessions(base_dir: &Path, max_age_days: i64) -> AgentResu
 
         let meta_path = path.join("session_meta.json");
         if !meta_path.exists() {
-            std::fs::remove_dir_all(&path).map_err(io_err)?;
+            std::fs::remove_dir_all(&path)?;
             cleaned += 1;
             continue;
         }
 
-        let content = std::fs::read_to_string(&meta_path).map_err(io_err)?;
-        let meta: serde_json::Value = serde_json::from_str(&content).map_err(serde_err)?;
+        let content = std::fs::read_to_string(&meta_path)?;
+        let meta: serde_json::Value = serde_json::from_str(&content)?;
 
         if let Some(last_active) = meta["last_active_at"].as_str()
             && let Ok(last_active) = chrono::DateTime::parse_from_rfc3339(last_active)
@@ -221,7 +223,7 @@ pub fn cleanup_expired_sessions(base_dir: &Path, max_age_days: i64) -> AgentResu
             let age = now - last_active.with_timezone(&chrono::Utc);
             if age.num_days() > max_age_days {
                 tracing::info!(path = %path.display(), age_days = age.num_days(), "removing expired session");
-                std::fs::remove_dir_all(&path).map_err(io_err)?;
+                std::fs::remove_dir_all(&path)?;
                 cleaned += 1;
             }
         }
@@ -245,24 +247,24 @@ pub fn create_snapshot(session_ctx: &SessionContext, name: &str, base_dir: &Path
     let snapshot_dir = base_dir.join("snapshots").join(name);
 
     if snapshot_dir.exists() {
-        std::fs::remove_dir_all(&snapshot_dir).map_err(io_err)?;
+        std::fs::remove_dir_all(&snapshot_dir)?;
     }
-    std::fs::create_dir_all(&snapshot_dir).map_err(io_err)?;
+    std::fs::create_dir_all(&snapshot_dir)?;
 
     // Copy session metadata
     let meta_path = session_ctx.metadata_path();
     if meta_path.exists() {
-        std::fs::copy(&meta_path, snapshot_dir.join("session_meta.json")).map_err(io_err)?;
+        std::fs::copy(&meta_path, snapshot_dir.join("session_meta.json"))?;
     }
 
     // Copy all turn logs
     let mut turn_count = 0u32;
-    for entry in std::fs::read_dir(&session_ctx.session_dir).map_err(io_err)? {
-        let entry = entry.map_err(io_err)?;
+    for entry in std::fs::read_dir(&session_ctx.session_dir)? {
+        let entry = entry?;
         let name = entry.file_name();
         let name_str = name.to_string_lossy();
         if name_str.starts_with("turn_") && name_str.ends_with(".jsonl") {
-            std::fs::copy(entry.path(), snapshot_dir.join(&*name_str)).map_err(io_err)?;
+            std::fs::copy(entry.path(), snapshot_dir.join(&*name_str))?;
             turn_count += 1;
         }
     }
@@ -274,8 +276,7 @@ pub fn create_snapshot(session_ctx: &SessionContext, name: &str, base_dir: &Path
         "created_at": chrono::Utc::now().to_rfc3339(),
         "turn_count": turn_count,
     });
-    std::fs::write(snapshot_dir.join("snapshot_info.json"), serde_json::to_string_pretty(&info).map_err(serde_err)?)
-        .map_err(io_err)?;
+    std::fs::write(snapshot_dir.join("snapshot_info.json"), serde_json::to_string_pretty(&info)?)?;
 
     tracing::info!(
         session_id = %session_ctx.session_id,
@@ -297,8 +298,8 @@ pub fn list_snapshots(base_dir: &Path) -> AgentResult<Vec<SnapshotInfo>> {
     }
 
     let mut snapshots = Vec::new();
-    for entry in std::fs::read_dir(&snapshots_dir).map_err(io_err)? {
-        let entry = entry.map_err(io_err)?;
+    for entry in std::fs::read_dir(&snapshots_dir)? {
+        let entry = entry?;
         let path = entry.path();
         if !path.is_dir() {
             continue;
@@ -309,8 +310,8 @@ pub fn list_snapshots(base_dir: &Path) -> AgentResult<Vec<SnapshotInfo>> {
             continue;
         }
 
-        let content = std::fs::read_to_string(&info_path).map_err(io_err)?;
-        let info: serde_json::Value = serde_json::from_str(&content).map_err(serde_err)?;
+        let content = std::fs::read_to_string(&info_path)?;
+        let info: serde_json::Value = serde_json::from_str(&content)?;
 
         let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
         let session_id = info["session_id"].as_str().unwrap_or("-").to_string();
@@ -326,10 +327,15 @@ pub fn list_snapshots(base_dir: &Path) -> AgentResult<Vec<SnapshotInfo>> {
 
 /// Info about a saved snapshot.
 pub struct SnapshotInfo {
+    /// Snapshot name.
     pub name: String,
+    /// Original session ID this snapshot was taken from.
     pub session_id: String,
+    /// ISO-8601 timestamp of when the snapshot was created.
     pub created_at: String,
+    /// Number of turns captured in the snapshot.
     pub turn_count: u32,
+    /// Path to the snapshot directory on disk.
     pub path: PathBuf,
 }
 
@@ -348,12 +354,12 @@ pub fn restore_snapshot(name: &str, base_dir: &Path) -> AgentResult<SessionConte
     let (new_session_dir, _) = get_or_create_session_dir(&new_session_id, base_dir)?;
 
     // Copy turn logs from snapshot
-    for entry in std::fs::read_dir(&snapshot_dir).map_err(io_err)? {
-        let entry = entry.map_err(io_err)?;
+    for entry in std::fs::read_dir(&snapshot_dir)? {
+        let entry = entry?;
         let fname = entry.file_name();
         let name_str = fname.to_string_lossy();
         if name_str.starts_with("turn_") && name_str.ends_with(".jsonl") {
-            std::fs::copy(entry.path(), new_session_dir.join(&*name_str)).map_err(io_err)?;
+            std::fs::copy(entry.path(), new_session_dir.join(&*name_str))?;
         }
     }
 
@@ -376,7 +382,7 @@ pub fn delete_snapshot(name: &str, base_dir: &Path) -> AgentResult<()> {
     if !snapshot_dir.exists() {
         return Err(AgentError::config_error(format!("Snapshot '{}' not found", name)));
     }
-    std::fs::remove_dir_all(&snapshot_dir).map_err(io_err)?;
+    std::fs::remove_dir_all(&snapshot_dir)?;
     tracing::info!(name = name, "snapshot deleted");
     Ok(())
 }

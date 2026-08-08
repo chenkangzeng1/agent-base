@@ -5,13 +5,19 @@ All notable changes to phi-agent will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.9.0] - 2026-08-08
 
 ### Added
 - **Phase 5: File system tools** — `read_file`, `write_file`, `list_files` (phi-kernel-tools, feature gate `file`, enabled by default). The LLM can now explore, read, and modify the file system directly.
 - **Phase 5: Skills → prompt-injection mode** — Skills are no longer tools. LLM discovers skills via system prompt and reads `SKILL.md` with `read_file`. This aligns with Claude Code/Codex conventions.
 - **Phase 5: Memory → prompt-injection mode** — Memory is now file-based (`.phi/memory/`). No dedicated `remember`/`recall`/`forget` tools. LLM uses `read_file`/`write_file` to manage memories, same as Claude Code Memory.
 - **Phase 4 收尾: CLI `phi serve` as MCP Server** — stdio + HTTP transport for external orchestrator integration. Exposes agent as a single `run` tool via JSON-RPC 2.0.
+- **Phase 6: REPL debug commands** — `/events`, `/session`, `/tools`, `/snapshot`, `/snapshots` for session introspection.
+- **Phase 6: Session snapshots** — create, list, restore, and delete session snapshots.
+- **Phase 6: Memory templates** — Pre-built `.md` templates in phi-tools for project/config/user memories.
+- **Phase 6: `hybrid_langgraph` example** — LangGraph ↔ phi-agent integration via MCP.
+- **Phase 7: Performance benchmarks** — Criterion benchmarks for phi-agent, agent-base, agent-works, and phi-kernel-tools. Full baseline data documented.
+- **Phase 7: Stress tests** — Bridge protocol concurrency tests, session isolation verification, `stress_test.sh` for process-level concurrency.
 - **MCP Server bridge API** — `PhiAgent::into_mcp_server()` for programmatic use.
 - New examples: `mcp_server` (MCP Server), `file_ops` (file tools)
 - `agent_works::build_memory_system_prompt()` — reusable memory prompt generator
@@ -28,11 +34,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Skills: `LazySkillPrompter` is now the default (compact listing with file paths). Removed old skill-specific tools (`ListSkillsTool`, `SkillDetailTool`, `ApplySkillTool`).
 - System prompt now includes persistent memory instructions (`.phi/memory/` directory, `MEMORY.md` index, frontmatter convention).
 - All phi-agent layer functions return `AgentResult` instead of `anyhow::Result` (Phase 1)
+- **MCP hub uses `tokio::sync::Mutex`** instead of `std::sync::Mutex` for async safety.
+- **`attach_mcp` registers only the new server's tools** (O(1) instead of O(n) re-registration).
+- **Removed `io_err`/`serde_err` helpers** — `From<io::Error>` and `From<serde_json::Error>` impls added to agent-base's `AgentError`.
+- Bump version to 0.9.0
 
 ### Removed
 - phi-kernel-tools `skill` feature and associated 3 tools (`ListSkillsTool`, `SkillDetailTool`, `ApplySkillTool`)
 - agent-works `with_skill_detail_tool_factory()` and `with_list_skills_tool_factory()` builder methods
 - Old `bridge` module (replaced by MCP Server)
+- `src/error.rs` — `io_err()` and `serde_err()` helper functions (replaced by From impls)
 
 ## [0.3.0] - 2026-08-06
 
@@ -148,8 +159,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - LLM config resolution (CLI > env > .env > default)
 - `LocalShellTool` (via phi-tools)
 
-[Unreleased]: https://github.com/hibuka-labs/phi-agent/compare/v0.2.8...HEAD
-[0.2.8]: https://github.com/hibuka-labs/phi-agent/compare/v0.2.7...v0.2.8
+[0.9.0]: https://github.com/hibuka-labs/phi-agent/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/hibuka-labs/phi-agent/compare/v0.2.9...v0.3.0
+[0.2.9]: https://github.com/hibuka-labs/phi-agent/compare/v0.2.8...v0.2.9
 [0.2.7]: https://github.com/hibuka-labs/phi-agent/compare/v0.2.6...v0.2.7
 [0.2.6]: https://github.com/hibuka-labs/phi-agent/compare/v0.2.5...v0.2.6
 [0.2.5]: https://github.com/hibuka-labs/phi-agent/compare/v0.2.4...v0.2.5

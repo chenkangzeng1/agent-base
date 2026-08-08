@@ -1,3 +1,8 @@
+//! LLM configuration types and resolution helpers.
+//!
+//! Supports multi-source config resolution: CLI flags > environment
+//! variables > `.env` file > built-in defaults.
+
 use agent_base::{AgentError, AgentResult};
 
 const DEFAULT_MODEL: &str = "copilot";

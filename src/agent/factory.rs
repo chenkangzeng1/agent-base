@@ -47,7 +47,7 @@ pub struct PhiAgent {
     pub config: PhiAgentConfig,
     /// MCP hub for runtime server management. Only available with the `mcp` feature.
     #[cfg(feature = "mcp")]
-    mcp_hub: Arc<std::sync::Mutex<Option<Arc<agent_works::mcp::EnhancedMcpHub>>>>,
+    mcp_hub: Arc<tokio::sync::Mutex<Option<Arc<agent_works::mcp::EnhancedMcpHub>>>>,
 }
 
 impl PhiAgent {
@@ -67,7 +67,7 @@ impl PhiAgent {
             runtime,
             config,
             #[cfg(feature = "mcp")]
-            mcp_hub: Arc::new(std::sync::Mutex::new(None)),
+            mcp_hub: Arc::new(tokio::sync::Mutex::new(None)),
         })
     }
 
@@ -117,8 +117,8 @@ impl PhiAgent {
 #[cfg(feature = "mcp")]
 impl PhiAgent {
     /// Get or lazily initialize the MCP hub.
-    fn get_or_init_hub(&self) -> Arc<agent_works::mcp::EnhancedMcpHub> {
-        let mut guard = self.mcp_hub.lock().unwrap();
+    async fn get_or_init_hub(&self) -> Arc<agent_works::mcp::EnhancedMcpHub> {
+        let mut guard = self.mcp_hub.lock().await;
         if let Some(ref hub) = *guard {
             return hub.clone();
         }
@@ -145,7 +145,7 @@ impl PhiAgent {
     /// register only the newly attached server's tools.
     pub async fn attach_mcp(&self, config: agent_works::mcp::McpServerConfig) -> AgentResult<()> {
         let name = config.name.clone();
-        let hub = self.get_or_init_hub();
+        let hub = self.get_or_init_hub().await;
 
         // Add server config and attempt connection
         hub.add_server(config);
@@ -163,11 +163,10 @@ impl PhiAgent {
             },
         };
 
-        // Register discovered tools into the runtime
-        // TODO(perf): register only the new server's tools instead of all servers
+        // Register only the newly attached server's tools
         let tools = self.runtime.tools_mut();
         let mut registry = tools.write().await;
-        hub.register_all(&mut registry).await;
+        hub.register_server(&mut registry, &name).await;
 
         // Inject framework dependencies (e.g. EventBus) into the new tools
         self.runtime.inject_framework_deps(&registry);
@@ -201,7 +200,7 @@ impl PhiAgent {
     /// since `hub.remove_server` disconnects clients.
     pub async fn detach_mcp(&self, name: &str) {
         let hub = {
-            let guard = self.mcp_hub.lock().unwrap();
+            let guard = self.mcp_hub.lock().await;
             match *guard {
                 Some(ref hub) => hub.clone(),
                 None => return,

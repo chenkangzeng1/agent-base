@@ -1,3 +1,9 @@
+//! Approval strategies for tool calls.
+//!
+//! Provides [`AutoApprovalHandler`] which implements a pure-strategy
+//! approval model — automatically approve all calls or deny all calls
+//! — suitable for CLI, CI, and headless environments.
+
 use agent_base::{AgentResult, ApprovalDecision, ApprovalHandler, ApprovalRequest};
 use async_trait::async_trait;
 

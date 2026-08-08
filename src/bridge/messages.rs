@@ -1,6 +1,8 @@
 //! NDJSON protocol message types shared between phi-agent and language SDKs.
 //!
 //! This module has **zero** dependency on `agent-base` — it is a pure serde
+//! contract. Message fields are self-documenting by their names.
+#![allow(missing_docs)]
 //! contract.  SDK authors can use this file as the authoritative reference for
 //! the wire format without pulling in the entire Rust crate.
 //!

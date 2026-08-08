@@ -173,6 +173,19 @@ phi
 phi --format json "列出文件"
 ```
 
+### 从源码构建
+
+```bash
+git clone https://github.com/hibuka-labs/phi-agent.git
+cd phi-agent
+
+# phi 二进制需要 shell、mcp、telemetry、logging 四个 feature
+cargo run --features full
+
+# 或单独指定：
+cargo run --features shell,mcp,telemetry,logging
+```
+
 ## ✅ 适合做什么
 
 - **嵌入式 & 边缘应用** — 单二进制，零系统依赖，可在 ARM Linux 和 IoT 网关上运行

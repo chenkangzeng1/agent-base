@@ -1,3 +1,10 @@
+//! Event renderers — transform [`RuntimeEvent`] streams into display output.
+//!
+//! Three renderers are provided:
+//! - [`TerminalRenderer`] — colored terminal output with duration/tool-count
+//! - [`JsonStreamRenderer`] — newline-delimited JSON for programmatic consumers
+//! - [`NullRenderer`] — silent no-op for automated/CI scenarios
+
 pub mod json_stream;
 pub mod null;
 pub mod terminal;
@@ -31,7 +38,14 @@ pub trait EventRenderer: Send {
 #[derive(Clone, Debug)]
 pub enum OutputFormat {
     /// Rich terminal output (with colors and emoji)
-    Terminal { show_thinking: bool, show_tool_args: bool, color: bool },
+    Terminal {
+        /// Whether to display the model's thinking/reasoning content.
+        show_thinking: bool,
+        /// Whether to display tool call arguments.
+        show_tool_args: bool,
+        /// Whether to use ANSI color codes.
+        color: bool,
+    },
     /// One JSON object per line
     Json,
     /// No output

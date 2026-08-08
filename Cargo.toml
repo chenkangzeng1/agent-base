@@ -1,6 +1,6 @@
 [package]
 name = "phi-agent"
-version = "0.3.0"
+version = "0.9.0"
 edition = "2024"
 description = "phi-agent — General-purpose AI Agent framework (builder factory, renderer, config, session management)"
 license = "MIT"
@@ -52,6 +52,27 @@ multi-agent = ["phi-kernel-tools/multi-agent"]
 [dev-dependencies]
 tempfile = "3"
 futures-core = "0.3"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "session"
+harness = false
+
+[[bench]]
+name = "serialization"
+harness = false
+
+[[bench]]
+name = "agent_build"
+harness = false
+
+[[bench]]
+name = "bridge"
+harness = false
+
+[[bench]]
+name = "system_prompt"
+harness = false
 
 # ── Examples ──
 
@@ -130,6 +151,23 @@ required-features = ["mcp"]
 [[example]]
 name = "multi_agent"
 path = "examples/multi-agent/multi_agent.rs"
+
+# ── Phase 7: stress tests ──
+
+[[test]]
+name = "bridge_concurrent"
+path = "tests/stress/bridge_concurrent.rs"
+required-features = ["shell"]
+
+[[test]]
+name = "bridge_protocol"
+path = "tests/stress/bridge_protocol.rs"
+required-features = ["shell"]
+
+# bridge_messages only tests message (de)serialization — no runtime deps needed
+[[test]]
+name = "bridge_messages"
+path = "tests/stress/bridge_messages.rs"
 
 # LOCAL DEV ONLY — DO NOT COMMIT
 [patch.crates-io]
