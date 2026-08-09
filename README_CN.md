@@ -5,7 +5,7 @@
 [![Docs.rs](https://docs.rs/phi-agent/badge.svg)](https://docs.rs/phi-agent)
 [![codecov](https://codecov.io/gh/hibuka-labs/phi-agent/branch/master/graph/badge.svg)](https://codecov.io/gh/hibuka-labs/phi-agent)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Documentation](https://img.shields.io/badge/docs-book-green.svg)](https://docs.phi-agent.dev)
+[![Documentation](https://img.shields.io/badge/docs-book-green.svg)](https://docs.phiagent.dev)
 [![PyPI](https://img.shields.io/pypi/v/phi-agent.svg)](https://pypi.org/project/phi-agent/)
 
 不是又一个 AI Agent，而是构建 Agent 应用的开放基座 — 专为嵌入式、边缘及垂直行业打造，同样适合高定制、高性能的云端和桌面 AI 应用，简单、纯粹、可控。
@@ -283,7 +283,7 @@ cargo run --features browser -- --enable-browser --headed "打开淘宝搜索机
 cargo run --features browser -- --connect-ws ws://localhost:9222 "在当前页面查找..."
 ```
 
-📖 [完整浏览器指南 →](https://docs.phi-agent.dev)
+📖 [完整浏览器指南 →](https://docs.phiagent.dev)
 
 ## 自定义工具示例
 
@@ -328,26 +328,26 @@ impl Tool for HelloTool {
 
 ## 文档
 
-📖 **[docs.phi-agent.dev](https://docs.phi-agent.dev)** — 完整文档站，支持搜索、导航和中英文双语。
+📖 **[docs.phiagent.dev](https://docs.phiagent.dev)** — 完整文档站，支持搜索、导航和中英文双语。
 
 | 文档 | 说明 |
 |------|------|
-| [快速开始](https://docs.phi-agent.dev/zh/guide/getting-started/) | 5 分钟上手 |
-| [配置详解](https://docs.phi-agent.dev/zh/guide/configuration/) | 配置参考 |
-| [自定义工具](https://docs.phi-agent.dev/zh/guide/custom-tool/) | 如何编写 Tool |
-| [文件工具](https://docs.phi-agent.dev/zh/guide/file-tools/) | read_file / write_file / list_files |
-| [浏览器](https://docs.phi-agent.dev/zh/guide/browser/) | 21 个 CDP 网页自动化工具 |
-| [多 Agent](https://docs.phi-agent.dev/zh/guide/multi-agent/) | 子 Agent 调度与编排 |
-| [MCP](https://docs.phi-agent.dev/zh/guide/mcp/) | 客户端 + 服务器 (Model Context Protocol) |
-| [Skills](https://docs.phi-agent.dev/zh/guide/skills/) | 可复用 Agent 行为 (agentskills.io) |
-| [记忆](https://docs.phi-agent.dev/zh/guide/memory/) | 基于文件系统的跨轮次持久化 |
-| [会话与快照](https://docs.phi-agent.dev/zh/guide/session/) | 会话生命周期、快照、REPL 命令 |
-| [Focus 专注判断](https://docs.phi-agent.dev/zh/guide/focus/) | 结构化单任务 LLM 调用 |
-| [架构设计](https://docs.phi-agent.dev/zh/guide/architecture/) | 设计决策与内部原理 |
-| [CLI 使用](https://docs.phi-agent.dev/zh/guide/cli/) | CLI 参数、REPL、one-shot |
-| [phi serve](https://docs.phi-agent.dev/zh/guide/phi-serve/) | MCP Server / Bridge 协议 |
-| [可观测性](https://docs.phi-agent.dev/zh/guide/observability/) | 日志、追踪、指标 |
-| [高级用法](https://docs.phi-agent.dev/zh/guide/advanced/) | 中间件、审批策略 |
+| [快速开始](https://docs.phiagent.dev/zh/guide/getting-started/) | 5 分钟上手 |
+| [配置详解](https://docs.phiagent.dev/zh/guide/getting-started/configuration/) | 配置参考 |
+| [自定义工具](https://docs.phiagent.dev/zh/guide/tools/custom-tool/) | 如何编写 Tool |
+| [文件工具](https://docs.phiagent.dev/zh/guide/tools/file-tools/) | read_file / write_file / list_files |
+| [浏览器](https://docs.phiagent.dev/zh/guide/tools/browser/) | 21 个 CDP 网页自动化工具 |
+| [多 Agent](https://docs.phiagent.dev/zh/guide/advanced/multi-agent/) | 子 Agent 调度与编排 |
+| [MCP](https://docs.phiagent.dev/zh/guide/advanced/mcp/) | 客户端 + 服务器 (Model Context Protocol) |
+| [Skills](https://docs.phiagent.dev/zh/guide/concepts/skills/) | 可复用 Agent 行为 (agentskills.io) |
+| [记忆](https://docs.phiagent.dev/zh/guide/concepts/memory/) | 基于文件系统的跨轮次持久化 |
+| [会话与快照](https://docs.phiagent.dev/zh/guide/advanced/session/) | 会话生命周期、快照、REPL 命令 |
+| [Focus 专注判断](https://docs.phiagent.dev/zh/guide/concepts/focus/) | 结构化单任务 LLM 调用 |
+| [架构设计](https://docs.phiagent.dev/zh/guide/concepts/architecture/) | 设计决策与内部原理 |
+| [CLI 使用](https://docs.phiagent.dev/zh/guide/cli/cli/) | CLI 参数、REPL、one-shot |
+| [phi serve](https://docs.phiagent.dev/zh/guide/cli/phi-serve/) | MCP Server / Bridge 协议 |
+| [可观测性](https://docs.phiagent.dev/zh/guide/advanced/observability/) | 日志、追踪、指标 |
+| [高级用法](https://docs.phiagent.dev/zh/guide/advanced/advanced/) | 中间件、审批策略 |
 | [API 参考](https://docs.rs/phi-agent) | docs.rs 上的 Rustdoc |
 
 源文件也可在 [guide/](guide/) 目录下离线阅读。

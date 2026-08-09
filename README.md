@@ -5,7 +5,7 @@
 [![Docs.rs](https://docs.rs/phi-agent/badge.svg)](https://docs.rs/phi-agent)
 [![codecov](https://codecov.io/gh/hibuka-labs/phi-agent/branch/master/graph/badge.svg)](https://codecov.io/gh/hibuka-labs/phi-agent)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Documentation](https://img.shields.io/badge/docs-book-green.svg)](https://docs.phi-agent.dev)
+[![Documentation](https://img.shields.io/badge/docs-book-green.svg)](https://docs.phiagent.dev)
 [![PyPI](https://img.shields.io/pypi/v/phi-agent.svg)](https://pypi.org/project/phi-agent/)
 
 Not another AI Agent, but an open application framework for building Agents — purpose-built for embedded, edge, and vertical industries, equally suited for highly customizable, high-performance cloud and desktop AI applications. Simple, pure, predictable.
@@ -282,7 +282,7 @@ cargo run --features browser -- --enable-browser --headed "browse example.com"
 cargo run --features browser -- --connect-ws ws://localhost:9222 "find something on the page..."
 ```
 
-📖 [Full browser guide →](https://docs.phi-agent.dev)
+📖 [Full browser guide →](https://docs.phiagent.dev)
 
 ## Custom Tool Example
 
@@ -322,26 +322,26 @@ Full guide: [guide/custom-tool.md](guide/custom-tool.md)
 
 ## Documentation
 
-📖 **[docs.phi-agent.dev](https://docs.phi-agent.dev)** — full documentation site with search, navigation, and bilingual (EN/CN) support.
+📖 **[docs.phiagent.dev](https://docs.phiagent.dev)** — full documentation site with search, navigation, and bilingual (EN/CN) support.
 
 | Resource | Description |
 |----------|-------------|
-| [Getting Started](https://docs.phi-agent.dev/guide/getting-started/) | 5-minute quick start |
-| [Configuration](https://docs.phi-agent.dev/guide/configuration/) | Config reference |
-| [Custom Tools](https://docs.phi-agent.dev/guide/custom-tool/) | How to write a Tool |
-| [File Tools](https://docs.phi-agent.dev/guide/file-tools/) | read_file / write_file / list_files |
-| [Browser](https://docs.phi-agent.dev/guide/browser/) | 21 CDP tools for web automation |
-| [Multi-Agent](https://docs.phi-agent.dev/guide/multi-agent/) | Sub-agent spawning and orchestration |
-| [MCP](https://docs.phi-agent.dev/guide/mcp/) | Client + Server (Model Context Protocol) |
-| [Skills](https://docs.phi-agent.dev/guide/skills/) | Reusable agent behaviors (agentskills.io) |
-| [Memory](https://docs.phi-agent.dev/guide/memory/) | File-based persistence across turns |
-| [Session & Snapshots](https://docs.phi-agent.dev/guide/session/) | Session lifecycle, snapshots, REPL commands |
-| [Focus](https://docs.phi-agent.dev/guide/focus/) | Structured single-purpose LLM calls |
-| [Architecture](https://docs.phi-agent.dev/guide/architecture/) | Design decisions and internals |
-| [CLI Usage](https://docs.phi-agent.dev/guide/cli/) | CLI flags, REPL, one-shot |
-| [phi serve](https://docs.phi-agent.dev/guide/phi-serve/) | MCP Server / Bridge protocol |
-| [Observability](https://docs.phi-agent.dev/guide/observability/) | Logging, tracing, metrics |
-| [Advanced](https://docs.phi-agent.dev/guide/advanced/) | Middleware, policies |
+| [Getting Started](https://docs.phiagent.dev/guide/getting-started/) | 5-minute quick start |
+| [Configuration](https://docs.phiagent.dev/guide/getting-started/configuration/) | Config reference |
+| [Custom Tools](https://docs.phiagent.dev/guide/tools/custom-tool/) | How to write a Tool |
+| [File Tools](https://docs.phiagent.dev/guide/tools/file-tools/) | read_file / write_file / list_files |
+| [Browser](https://docs.phiagent.dev/guide/tools/browser/) | 21 CDP tools for web automation |
+| [Multi-Agent](https://docs.phiagent.dev/guide/advanced/multi-agent/) | Sub-agent spawning and orchestration |
+| [MCP](https://docs.phiagent.dev/guide/advanced/mcp/) | Client + Server (Model Context Protocol) |
+| [Skills](https://docs.phiagent.dev/guide/concepts/skills/) | Reusable agent behaviors (agentskills.io) |
+| [Memory](https://docs.phiagent.dev/guide/concepts/memory/) | File-based persistence across turns |
+| [Session & Snapshots](https://docs.phiagent.dev/guide/advanced/session/) | Session lifecycle, snapshots, REPL commands |
+| [Focus](https://docs.phiagent.dev/guide/concepts/focus/) | Structured single-purpose LLM calls |
+| [Architecture](https://docs.phiagent.dev/guide/concepts/architecture/) | Design decisions and internals |
+| [CLI Usage](https://docs.phiagent.dev/guide/cli/cli/) | CLI flags, REPL, one-shot |
+| [phi serve](https://docs.phiagent.dev/guide/cli/phi-serve/) | MCP Server / Bridge protocol |
+| [Observability](https://docs.phiagent.dev/guide/advanced/observability/) | Logging, tracing, metrics |
+| [Advanced](https://docs.phiagent.dev/guide/advanced/advanced/) | Middleware, policies |
 | [API Reference](https://docs.rs/phi-agent) | Rustdoc on docs.rs |
 
 Source files are also available in [guide/](guide/) for offline reading.
