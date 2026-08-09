@@ -10,7 +10,9 @@
 
 Not another AI Agent, but an open application framework for building Agents — purpose-built for embedded, edge, and vertical industries, equally suited for highly customizable, high-performance cloud and desktop AI applications. Simple, pure, predictable.
 
-> **Unlike LangChain, CrewAI, or AutoGen, phi-agent ships with zero built-in tools.** No pre-packaged toolkits, no hidden prompt engineering, no magic workflow engine — just a clean Rust runtime. You define every tool, you control every behavior.
+> **phi-agent ships with zero application tools.** No web search, no database connector, no code executor — just a clean Rust runtime. What tools your agent needs, and how it interacts with the world, is entirely up to you.
+>
+> Kernel primitives like file I/O, shell execution, and sub-agent spawning are provided via `phi-kernel-tools` as opt-in infrastructure — the OS-level syscalls an agent needs to sense and act. Every kernel tool is gated behind a feature flag; nothing you don't ask for is included.
 
 Built on [agent-base](https://crates.io/crates/agent-base) and [agent-works](https://crates.io/crates/agent-works). **phi-agent provides the infrastructure. You bring the tools.**
 
@@ -66,12 +68,12 @@ graph TB
     AB[agent-base<br/>Tool trait · Runtime<br/>LLM clients · Events]
 
     AB --> AW[agent-works<br/>MCP · Skills · Focus]
-    AB --> PT[phi-tools<br/>LocalShellTool]
+    AB --> PKT[phi-kernel-tools<br/>Kernel tools]
     AB --> YT[your-tools<br/>Custom Tool impls]
 
     AW --> PA[phi-agent<br/>Builder factory<br/>Renderers · Config · Session<br/>CLI binary]
 
-    PT --> PA
+    PKT --> PA
     YT --> PA
 
     PA --> Terminal[Terminal REPL]
@@ -79,7 +81,19 @@ graph TB
     PA --> Web[Web Backend]
 ```
 
-**Core principle**: phi-agent ships with **zero** built-in tools. You define them, you register them. phi-agent discovers and manages them at runtime — listing, logging, and routing tool calls automatically.
+**Core principle**: phi-agent ships with **zero** application tools. You define them, you register them. phi-agent discovers and manages them at runtime — listing, logging, and routing tool calls automatically.
+
+### Kernel Tools
+
+phi-agent bundles **kernel tools** via `phi-kernel-tools` — low-level primitives that give the agent basic environmental awareness. Think of them as an OS kernel's syscalls, not application-level tools. All are opt-in via feature flags:
+
+| Feature | Capability | Default |
+|---------|-----------|---------|
+| `file` | Read / write / list files | ✅ on |
+| `shell` | Execute shell commands | ✅ on |
+| `multi-agent` | Spawn sub-agents | off |
+
+These are **not** tools in the LangChain sense — no web search, no database connector, no pre-built agent templates. Kernel tools are infrastructure. **Application tools are still 100% your responsibility.**
 
 ## Why phi-agent
 
@@ -114,7 +128,7 @@ async fn main() -> anyhow::Result<()> {
     // 1. Create LLM client
     let llm_client = Arc::new(OpenAiClient::new(
         std::env::var("LLM_API_KEY")?,
-        "opus".into(),
+        "gpt-4o".into(),
         Some("https://api.openai.com/v1".into()),
     ));
 
@@ -124,7 +138,7 @@ async fn main() -> anyhow::Result<()> {
         .register_tool(your_tool);
 
     let agent = PhiAgent::build(builder, PhiAgentConfig {
-        model: "opus".into(),
+        model: "gpt-4o".into(),
         enable_thinking: true,
         thinking_budget: None,
         thinking_effort: ReasoningEffort::Medium,
@@ -153,6 +167,7 @@ See [examples/](examples/) for more complete examples, organized by category:
 - [minimal/](examples/minimal/) — hello agent
 - [tools/](examples/tools/) — custom tools and policies
 - [mcp/](examples/mcp/) — MCP client and dynamic attach/detach
+- [multi-agent/](examples/multi-agent/) — sub-agent spawning and orchestration
 - [session/](examples/session/) — session persistence and lifecycle
 - [observability/](examples/observability/) — event log, middleware hooks
 - [advanced/](examples/advanced/) — window memory, summary memory, focus
@@ -198,13 +213,13 @@ cargo run --features shell,mcp,telemetry,logging
 
 phi-agent the **framework** is intentionally lean. The following are **explicitly out of scope** and will not be built into the framework itself (but some may be available as separate opt-in crates in the ecosystem):
 
-- **Built-in tools** — the framework ships with zero tools. You define and register every tool yourself. For convenience, the ecosystem provides optional companion crates (e.g., `phi-tools`, the planned `phi-extra`), and more tool libraries may be contributed over time — all opt-in, none bundled.
-- **Built-in memory / vector DB** — no Pinecone/Chroma/Weaviate integration, no automatic embedding. You manage state yourself.
+- **Pre-packaged application tools** — no web search, no database connector, no code executor template, no platform-specific integrations. phi-agent provides **kernel tools** (file I/O, shell, sub-agents) as opt-in infrastructure and **browser tools** (21 CDP tools) as an optional extension — both gated behind feature flags. You define all application-level tools yourself.
+- **Vector database / embeddings** — phi-agent includes file-based memory (`.phi/memory/`, prompt-injection mode) for persistence across turns, but there is no Pinecone/Chroma/Weaviate integration, no automatic embedding, no semantic search. For RAG or long-term semantic memory, bring your own vector DB.
 - **Pre-built agent types** — no "research agent," "coding agent," "support agent" templates. You compose your own.
 - **Workflow engine** — no DAG execution, no conditional branching engine, no LangGraph-style graph compiler. Agent behavior is driven by LLM tool-choice.
 - **Prompt templates** — no langchain-style prompt chains, no automatic context stuffing. You control the system prompt.
 - **Streaming HTTP server** — phi-agent is a library and CLI. You build the server layer (Actix/Axum/Warp) yourself.
-- **Multi-agent orchestration** — currently not in scope (on the roadmap for v0.4.0, but will be a separate opt-in crate).
+- **Multi-agent orchestration** — available behind the `multi-agent` feature gate (opt-in). The framework itself does not prescribe multi-agent topologies; sub-agent spawning is provided as a kernel primitive.
 
 If you need these, combine phi-agent with:
 - **Memory**: bring your own vector DB (Qdrant, pgvector, LanceDB)
@@ -228,7 +243,7 @@ phi-agent and **LangGraph** solve different problems and work well together:
 
 **phi-agent does NOT sandbox the LLM or sanitize tool calls.** The agent executes whatever tools you register, with whatever permissions those tools have. You are responsible for:
 
-- **Tool permissions** — if you register a shell tool, the LLM can run arbitrary commands. Consider allowlists, sandboxing, or OS-level restrictions.
+- **Tool permissions** — if you register a shell tool, the LLM can run arbitrary commands. phi-agent provides an **approval handler** mechanism: tools declare their risk level (Safe / Sensitive / Destructive), and you can intercept every tool call before execution — auto-approve in CI, prompt interactively in a terminal, or implement custom review logic via the `ApprovalHandler` trait. Consider additional sandboxing or OS-level restrictions for production.
 - **Prompt injection** — user input goes directly into the prompt. There is no input filtering or sanitization built in.
 - **Network access** — the LLM client makes outbound HTTP calls to the configured API endpoint. No traffic inspection is performed.
 - **Session data** — session logs are written to `~/.phi-agent/sessions/` in plain JSONL. They may contain sensitive information from your conversations.
@@ -237,61 +252,22 @@ phi-agent and **LangGraph** solve different problems and work well together:
 
 Report security vulnerabilities to **[phiagent@hibuka.com](mailto:phiagent@hibuka.com)**. See [SECURITY.md](SECURITY.md) for our full policy.
 
-## FAQ
-
-```bash
-cargo install phi-agent
-phi "What's in this directory?"
-```
-
-```bash
-# REPL mode
-phi
-
-# JSON output for scripting
-phi --format json "list files"
-```
-
 ## Browser Automation
 
-phi-agent includes 21 browser tools (gated behind the `browser` Cargo feature) for web browsing, form interaction, and data extraction via Chrome DevTools Protocol.
-
-### Quick Start
+phi-agent includes optional browser automation via Chrome DevTools Protocol (opt-in, behind the `browser` Cargo feature). 21 tools cover navigation, interaction, content extraction, and tab management.
 
 ```bash
 # Build and run with browser enabled
-cargo run --features browser -- --enable-browser "上网查今天天气"
+cargo run --features browser -- --enable-browser "search for today's weather"
 
-# Headed mode (visible browser window, useful for debugging)
-cargo run --features browser -- --enable-browser --headed "打开淘宝搜索机械键盘"
+# Headed mode (visible browser window)
+cargo run --features browser -- --enable-browser --headed "browse example.com"
 
 # Connect to an existing Chrome instance
-# First, start Chrome with remote debugging:
-#   /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
-cargo run --features browser -- --connect-ws ws://localhost:9222 "在当前页面查找..."
+cargo run --features browser -- --connect-ws ws://localhost:9222 "find something on the page..."
 ```
 
-### Available Browser Tools (21)
-
-| Category | Tools |
-|---|---|
-| **Navigation** | `browser_navigate`, `browser_go_back`, `browser_go_forward`, `browser_wait` |
-| **Interaction** | `browser_click`, `browser_hover`, `browser_input_fill`, `browser_select`, `browser_press_key`, `browser_scroll` |
-| **Viewing** | `browser_snapshot`, `browser_screenshot`, `browser_get_markdown`, `browser_read_links`, `browser_evaluate` |
-| **Tab** | `browser_new_tab`, `browser_tab_list`, `browser_switch_tab`, `browser_close_tab` |
-| **Control** | `browser_close`, `browser_extract_content` |
-
-### How It Works
-
-1. `--enable-browser` launches a headless Chrome instance
-2. `browser_navigate` opens a URL and returns an ARIA accessibility snapshot with numbered interactive elements
-3. The AI clicks elements by index (e.g., `browser_click index=5`) instead of writing fragile CSS selectors
-4. `browser_screenshot` captures visual snapshots; `browser_get_markdown` extracts readable content
-
-### Requirements
-
-- Chrome or Chromium installed
-- `cargo run --features browser` (the `browser` feature gates the heavy `headless_chrome` dependency)
+📖 [Full browser guide →](https://docs.phi-agent.dev)
 
 ## Custom Tool Example
 
@@ -331,18 +307,21 @@ Full guide: [guide/custom-tool.md](guide/custom-tool.md)
 
 ## Documentation
 
-📖 **Full documentation**: [docs.phi-agent.dev](https://docs.phi-agent.dev)
+📖 **[docs.phi-agent.dev](https://docs.phi-agent.dev)** — full documentation site with search, navigation, and bilingual (EN/CN) support.
 
-| Document | Description |
+| Resource | Description |
 |----------|-------------|
-| [Getting Started](guide/getting-started.md) | 5-minute quick start |
-| [Custom Tools](guide/custom-tool.md) | How to write a Tool |
-| [CLI Usage](guide/cli.md) | CLI flags, REPL, one-shot |
-| [Configuration](guide/configuration.md) | Config reference |
-| [Focus](guide/focus.md) | Structured single-purpose LLM calls |
-| [Architecture](guide/architecture.md) | Design decisions and internals |
-| [Observability](guide/observability.md) | Logging, tracing, metrics |
-| [Advanced](guide/advanced.md) | Middleware, sessions, event log |
+| [Getting Started](https://docs.phi-agent.dev/guide/getting-started/) | 5-minute quick start |
+| [Custom Tools](https://docs.phi-agent.dev/guide/custom-tool/) | How to write a Tool |
+| [CLI Usage](https://docs.phi-agent.dev/guide/cli/) | CLI flags, REPL, one-shot |
+| [Configuration](https://docs.phi-agent.dev/guide/configuration/) | Config reference |
+| [Focus](https://docs.phi-agent.dev/guide/focus/) | Structured single-purpose LLM calls |
+| [Architecture](https://docs.phi-agent.dev/guide/architecture/) | Design decisions and internals |
+| [Observability](https://docs.phi-agent.dev/guide/observability/) | Logging, tracing, metrics |
+| [Advanced](https://docs.phi-agent.dev/guide/advanced/) | Middleware, sessions, event log |
+| [API Reference](https://docs.rs/phi-agent) | Rustdoc on docs.rs |
+
+Source files are also available in [guide/](guide/) for offline reading.
 
 ## FAQ
 

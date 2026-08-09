@@ -38,11 +38,11 @@ hide:
 
 <div class="grid cards" markdown>
 
--   :material-puzzle-outline:{ .lg .middle } **零内置，全定制**
+-   :material-puzzle-outline:{ .lg .middle } **你的工具，你掌控**
 
     ---
 
-    不预设任何工具，不绑定任何平台，一个工具只需 3 个方法 — `name()`、`definition()`、`call()`，你注册什么，Agent 就用什么，只带你的场景真正需要的东西，LLM 自由，精准、干净、可控。
+    内核原语（文件读写、Shell、子 Agent 调度）提供基础能力 — 其余全部由你定义。一个工具只需 3 个方法：`name()`、`definition()`、`call()`。你注册什么，Agent 就用什么。不绑定平台，没有隐藏行为。
 
 -   :material-chart-line:{ .lg .middle } **全程可观测，每一步可解释**
 
@@ -61,11 +61,11 @@ graph TB
     AB[agent-base<br/>运行时内核<br/>Tool trait · LLM 客户端]
 
     AB --> AW[agent-works<br/>MCP · Skills · Focus]
-    AB --> PT[phi-tools<br/>LocalShellTool]
+    AB --> PKT[phi-kernel-tools<br/>内核工具]
     AB --> YT[your-tools<br/>自定义工具实现]
 
     AW --> PA
-    PT --> PA
+    PKT --> PA
     YT --> PA
 
     PA[phi-agent<br/>Builder 工厂 · 渲染器<br/>配置 · 会话 · CLI]

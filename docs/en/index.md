@@ -38,11 +38,11 @@ Not another AI Agent, but an open application framework for building Agents — 
 
 <div class="grid cards" markdown>
 
--   :material-puzzle-outline:{ .lg .middle } **Zero Built-in, Fully Customizable**
+-   :material-puzzle-outline:{ .lg .middle } **Your Tools, Your Control**
 
     ---
 
-    No pre-packaged tools, no platform lock-in — a tool is just 3 methods: `name()`, `definition()`, `call()`, you register what you need, the Agent uses what you register, LLM freedom, precise and clean.
+    Kernel primitives (file I/O, shell, sub-agents) provide the foundation — everything else you define. A tool is just 3 methods: `name()`, `definition()`, `call()`. Register what you need, the Agent uses what you register. No platform lock-in, no hidden behavior.
 
 -   :material-chart-line:{ .lg .middle } **Fully Observable, Every Step Explainable**
 
@@ -61,11 +61,11 @@ graph TB
     AB[agent-base<br/>Runtime kernel<br/>Tool trait · LLM clients]
 
     AB --> AW[agent-works<br/>MCP · Skills · Focus]
-    AB --> PT[phi-tools<br/>LocalShellTool]
+    AB --> PKT[phi-kernel-tools<br/>Kernel tools]
     AB --> YT[your-tools<br/>Custom Tool impls]
 
     AW --> PA
-    PT --> PA
+    PKT --> PA
     YT --> PA
 
     PA[phi-agent<br/>Builder factory · Renderers<br/>Config · Session · CLI]

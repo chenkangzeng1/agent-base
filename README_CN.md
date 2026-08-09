@@ -10,7 +10,9 @@
 
 不是又一个 AI Agent，而是构建 Agent 应用的开放基座 — 专为嵌入式、边缘及垂直行业打造，同样适合高定制、高性能的云端和桌面 AI 应用，简单、纯粹、可控。
 
-> **与 LangChain、CrewAI、AutoGen 不同，phi-agent 不内置任何工具。** 没有预设的工具集，没有隐藏的 prompt 工程，没有黑盒的 workflow 引擎 — 只是一个干净的 Rust 运行时。每个工具由你定义，所有行为由你掌控。
+> **phi-agent 不内置任何应用工具。** 不绑定搜索引擎、不绑定数据库、不绑定特定平台 — 只是一个干净的 Rust 运行时。你的 Agent 需要什么工具、如何与世界交互，完全由你决定。
+>
+> 文件读写、命令执行、子 Agent 调度等**内核工具**由 `phi-kernel-tools` 提供，作为 Agent 感知和操作环境的基础能力。所有内核工具均通过 feature flag 按需启用，不启用则不引入。
 
 基于 [agent-base](https://crates.io/crates/agent-base) 和 [agent-works](https://crates.io/crates/agent-works) 构建。**phi-agent 提供基础设施，工具由你来定义。**
 
@@ -66,11 +68,11 @@ graph TB
     AB[agent-base<br/>Tool trait · 运行时<br/>LLM 客户端 · 事件]
 
     AB --> AW[agent-works<br/>MCP · Skills · Focus]
-    AB --> PT[phi-tools<br/>LocalShellTool]
+    AB --> PKT[phi-kernel-tools<br/>内核工具]
     AB --> YT[你的工具<br/>自定义 Tool 实现]
 
     AW --> PA
-    PT --> PA
+    PKT --> PA
     YT --> PA
 
     PA[phi-agent<br/>Builder 工厂<br/>渲染器 · 配置 · 会话管理<br/>CLI binary]
@@ -80,7 +82,19 @@ graph TB
     PA --> Web[Web 后端]
 ```
 
-**核心理念**：phi-agent **不内置**任何工具。工具由你定义、由你注册，phi-agent 在运行时自动发现、管理和调度——工具列表可查、调用可追踪。
+**核心理念**：phi-agent **不内置**任何应用工具。工具由你定义、由你注册，phi-agent 在运行时自动发现、管理和调度——工具列表可查、调用可追踪。
+
+### 内核工具
+
+phi-agent 通过 `phi-kernel-tools` 内置了**内核工具** — 为 Agent 提供基础环境感知能力的底层原语。可以把它们理解为操作系统的"系统调用"，而非应用级工具。所有内核工具均通过 feature flag 按需启用：
+
+| Feature | 能力 | 默认 |
+|---------|------|------|
+| `file` | 文件读写与目录浏览 | ✅ 开 |
+| `shell` | 执行 Shell 命令 | ✅ 开 |
+| `multi-agent` | 子 Agent 调度 | 关 |
+
+这些**不是** LangChain 意义上的"工具" — 没有网页搜索、没有数据库连接器、没有预设 Agent 模板。内核工具是基础设施，**应用工具仍然 100% 由你负责。**
 
 ## 为什么选择 phi-agent
 
@@ -115,7 +129,7 @@ async fn main() -> anyhow::Result<()> {
     // 1. 创建 LLM 客户端
     let llm_client = Arc::new(OpenAiClient::new(
         std::env::var("LLM_API_KEY")?,
-        "opus".into(),
+        "gpt-4o".into(),
         Some("https://api.openai.com/v1".into()),
     ));
 
@@ -125,7 +139,7 @@ async fn main() -> anyhow::Result<()> {
         .register_tool(your_tool);
 
     let agent = PhiAgent::build(builder, PhiAgentConfig {
-        model: "opus".into(),
+        model: "gpt-4o".into(),
         enable_thinking: true,
         thinking_budget: None,
         thinking_effort: ReasoningEffort::Medium,
@@ -154,6 +168,7 @@ async fn main() -> anyhow::Result<()> {
 - [minimal/](examples/minimal/) — 最简示例
 - [tools/](examples/tools/) — 自定义工具与审批策略
 - [mcp/](examples/mcp/) — MCP 客户端与动态连接管理
+- [multi-agent/](examples/multi-agent/) — 子 Agent 调度与编排
 - [session/](examples/session/) — 会话持久化与生命周期
 - [observability/](examples/observability/) — 事件日志、中间件钩子
 - [advanced/](examples/advanced/) — 滑动窗口记忆、摘要记忆、专注判断
@@ -199,13 +214,13 @@ cargo run --features shell,mcp,telemetry,logging
 
 phi-agent **框架本身**刻意保持精简。以下功能**明确不内建到框架中**（但部分可能以独立可选 crate 形式在生态中提供）：
 
-- **内建工具** — 框架不内建任何工具，不提供网页搜索、文件系统、代码执行器、数据库连接器。所有工具由你定义和注册。生态提供了可选配套 crate（如 `phi-tools`、规划中的 `phi-extra`），后续也可能随发展贡献更多工具库 — 全部按需引入，不捆绑。
-- **内建记忆 / 向量数据库** — 不集成 Pinecone/Chroma/Weaviate，不自动做 embedding。状态管理由你自己掌控。
+- **预设应用工具** — 不绑定网页搜索、数据库连接器、代码执行器模板、平台集成。phi-agent 提供**内核工具**（文件读写、Shell、子 Agent 调度）作为可选基础设施，**浏览器工具**（21 个 CDP 工具）作为可选扩展 — 均通过 feature flag 控制。所有应用级工具由你自行定义。
+- **向量数据库 / embedding** — phi-agent 内置了基于文件系统的记忆功能（`.phi/memory/`，prompt-injection 模式）用于跨轮次持久化，但不集成 Pinecone/Chroma/Weaviate，不自动做 embedding，不提供语义搜索。需要 RAG 或长期语义记忆时，自行接入向量数据库。
 - **预设 Agent 类型** — 不提供"研究 Agent""编程 Agent""客服 Agent"等模板。你自行组合。
 - **工作流引擎** — 不提供 DAG 执行、条件分支引擎、LangGraph 式图编译器。Agent 行为由 LLM tool-choice 驱动。
 - **Prompt 模板** — 不提供 langchain 式的 prompt 链、自动上下文填充。system prompt 由你控制。
 - **HTTP 服务器** — phi-agent 是库 + CLI。服务器层（Actix/Axum/Warp）由你自行搭建。
-- **多 Agent 编排** — 暂不在当前版本范围内（v0.4.0 路线图中，但会作为独立可选 crate）。
+- **多 Agent 编排** — 已通过 `multi-agent` feature gate 提供（需主动开启）。框架本身不预设多 Agent 拓扑结构，子 Agent 调度以内核原语形式提供。
 
 如果需要上述功能，可将 phi-agent 与以下组件结合使用：
 - **记忆**：自选向量数据库（Qdrant、pgvector、LanceDB）
@@ -229,7 +244,7 @@ phi-agent 和 **LangGraph** 解决不同层面的问题，可以很好地协同�
 
 **phi-agent 不会对 LLM 进行沙箱隔离，也不会对工具调用做安全过滤。** Agent 会执行你注册的任何工具，工具拥有什么权限，LLM 就能使用什么权限。你需要自行负责：
 
-- **工具权限** — 如果你注册了 shell 工具，LLM 就能执行任意命令。请考虑使用允许列表、沙箱或操作系统级限制。
+- **工具权限** — 如果你注册了 shell 工具，LLM 就能执行任意命令。phi-agent 提供了**审批处理器**机制：工具声明风险等级（Safe / Sensitive / Destructive），你可以在每次工具调用前拦截 — CI 环境自动放行、终端环境交互确认、或通过 `ApprovalHandler` trait 实现自定义审核逻辑。生产环境建议额外配合沙箱或操作系统级权限限制。
 - **Prompt 注入** — 用户输入直接进入 prompt，框架不做输入过滤或清洗。
 - **网络访问** — LLM 客户端会向你配置的 API 端点发起 HTTP 请求，框架不做流量检查。
 - **会话数据** — 会话日志以明文 JSONL 存储在 `~/.phi-agent/sessions/`，可能包含对话中的敏感信息。
@@ -238,26 +253,9 @@ phi-agent 和 **LangGraph** 解决不同层面的问题，可以很好地协同�
 
 安全漏洞请报告至 **[phiagent@hibuka.com](mailto:phiagent@hibuka.com)**。详见 [SECURITY.md](SECURITY.md)。
 
-## 常见问题
-
-```bash
-cargo install phi-agent
-phi "这个目录下有什么文件？"
-```
-
-```bash
-# REPL 模式
-phi
-
-# JSON 输出（方便脚本处理）
-phi --format json "列出文件"
-```
-
 ## 浏览器自动化
 
-phi-agent 内置 21 个浏览器工具（通过 `browser` Cargo feature 控制），支持网页浏览、表单交互、数据提取，基于 Chrome DevTools Protocol。
-
-### 快速开始
+phi-agent 提供可选的浏览器自动化能力（通过 `browser` Cargo feature 按需引入，基于 Chrome DevTools Protocol）。21 个工具覆盖导航、交互、内容提取和标签页管理。
 
 ```bash
 # 编译并启用浏览器功能
@@ -267,32 +265,10 @@ cargo run --features browser -- --enable-browser "上网查今天天气"
 cargo run --features browser -- --enable-browser --headed "打开淘宝搜索机械键盘"
 
 # 连接已有的 Chrome 实例
-# 首先启动 Chrome 并开启远程调试：
-#   /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome --remote-debugging-port=9222
 cargo run --features browser -- --connect-ws ws://localhost:9222 "在当前页面查找..."
 ```
 
-### 浏览器工具列表（21 个）
-
-| 类别 | 工具 |
-|---|---|
-| **导航** | `browser_navigate`, `browser_go_back`, `browser_go_forward`, `browser_wait` |
-| **交互** | `browser_click`, `browser_hover`, `browser_input_fill`, `browser_select`, `browser_press_key`, `browser_scroll` |
-| **查看** | `browser_snapshot`, `browser_screenshot`, `browser_get_markdown`, `browser_read_links`, `browser_evaluate` |
-| **标签页** | `browser_new_tab`, `browser_tab_list`, `browser_switch_tab`, `browser_close_tab` |
-| **控制** | `browser_close`, `browser_extract_content` |
-
-### 工作原理
-
-1. `--enable-browser` 启动一个无头 Chrome 实例
-2. `browser_navigate` 打开网页并返回 ARIA 无障碍快照，可交互元素带有数字索引
-3. AI 通过索引点击元素（如 `browser_click index=5`），无需编写脆弱的 CSS 选择器
-4. `browser_screenshot` 截取页面截图；`browser_get_markdown` 提取可读内容
-
-### 环境要求
-
-- 需安装 Chrome 或 Chromium
-- 编译需带 `--features browser`（`browser` feature 控制 `headless_chrome` 等重量级依赖）
+📖 [完整浏览器指南 →](https://docs.phi-agent.dev)
 
 ## 自定义工具示例
 
@@ -337,18 +313,21 @@ impl Tool for HelloTool {
 
 ## 文档
 
-📖 **完整文档站**: [docs.phi-agent.dev](https://docs.phi-agent.dev)
+📖 **[docs.phi-agent.dev](https://docs.phi-agent.dev)** — 完整文档站，支持搜索、导航和中英文双语。
 
 | 文档 | 说明 |
 |------|------|
-| [快速开始](guide/getting-started_CN.md) | 5 分钟上手 |
-| [自定义工具](guide/custom-tool_CN.md) | 如何编写 Tool |
-| [CLI 使用](guide/cli_CN.md) | CLI 参数、REPL、one-shot |
-| [配置详解](guide/configuration_CN.md) | 配置参考 |
-| [Focus 专注判断](guide/focus_CN.md) | 结构化单任务 LLM 调用 |
-| [架构设计](guide/architecture_CN.md) | 设计决策与内部原理 |
-| [可观测性](guide/observability_CN.md) | 日志、追踪、指标 |
-| [高级用法](guide/advanced_CN.md) | 中间件、会话、事件日志 |
+| [快速开始](https://docs.phi-agent.dev/zh/guide/getting-started/) | 5 分钟上手 |
+| [自定义工具](https://docs.phi-agent.dev/zh/guide/custom-tool/) | 如何编写 Tool |
+| [CLI 使用](https://docs.phi-agent.dev/zh/guide/cli/) | CLI 参数、REPL、one-shot |
+| [配置详解](https://docs.phi-agent.dev/zh/guide/configuration/) | 配置参考 |
+| [Focus 专注判断](https://docs.phi-agent.dev/zh/guide/focus/) | 结构化单任务 LLM 调用 |
+| [架构设计](https://docs.phi-agent.dev/zh/guide/architecture/) | 设计决策与内部原理 |
+| [可观测性](https://docs.phi-agent.dev/zh/guide/observability/) | 日志、追踪、指标 |
+| [高级用法](https://docs.phi-agent.dev/zh/guide/advanced/) | 中间件、会话、事件日志 |
+| [API 参考](https://docs.rs/phi-agent) | docs.rs 上的 Rustdoc |
+
+源文件也可在 [guide/](guide/) 目录下离线阅读。
 
 ## 常见问题
 
@@ -384,6 +363,7 @@ agent-base 是运行时内核（LLM 调用、工具编排、事件流）。phi-a
     <td align="center"><a href="https://github.com/shard872"><img src="https://github.com/shard872.png" width="100px;" alt=""/><br /><sub><b>shard872</b></sub></a><br /><a href="https://github.com/hibuka-labs/phi-agent/pull/7" title="Code">💻</a></td>
     <td align="center"><a href="https://github.com/Krshs90"><img src="https://github.com/Krshs90.png" width="100px;" alt=""/><br /><sub><b>Krish Shah</b></sub></a><br /><a href="https://github.com/hibuka-labs/phi-agent/pull/8" title="Code">💻</a></td>
     <td align="center"><a href="https://github.com/slegarraga"><img src="https://github.com/slegarraga.png" width="100px;" alt=""/><br /><sub><b>Sebastian Legarraga</b></sub></a><br /><a href="https://github.com/hibuka-labs/phi-agent/pull/9" title="Code">💻</a></td>
+    <td align="center"><a href="https://github.com/MsfPablo"><img src="https://github.com/MsfPablo.png" width="100px;" alt=""/><br /><sub><b>Pablo Garcia</b></sub></a><br /><a href="https://github.com/hibuka-labs/phi-agent/pull/11" title="Code">💻</a></td>
   </tr>
 </table>
 <!-- ALL-CONTRIBUTORS-LIST:END -->
