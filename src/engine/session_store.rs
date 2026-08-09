@@ -86,3 +86,66 @@ impl SessionStore for InMemorySessionStore {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{MessageRole, SessionId};
+
+    #[tokio::test]
+    async fn save_and_load_round_trips_a_session_snapshot() {
+        let store = InMemorySessionStore::new();
+        let id = SessionId::with_external_id(1, "session-1");
+        let mut session = AgentSession::new(id.clone());
+        session.push_message(MessageRole::User, "hello");
+
+        store.save(&session).await.unwrap();
+
+        let loaded = store.load(&id).await.unwrap().expect("saved session");
+        assert_eq!(loaded.id(), Some(id));
+        assert_eq!(
+            serde_json::to_value(loaded.chat_messages()).unwrap(),
+            serde_json::to_value(session.chat_messages()).unwrap()
+        );
+    }
+
+    #[tokio::test]
+    async fn load_of_an_unknown_session_returns_none() {
+        let store = InMemorySessionStore::new();
+
+        assert!(store.load(&SessionId::new(404)).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn list_returns_every_saved_session_id() {
+        let store = InMemorySessionStore::new();
+        let expected = (1..=3).map(SessionId::new).collect::<Vec<_>>();
+
+        for id in &expected {
+            store.save(&AgentSession::new(id.clone())).await.unwrap();
+        }
+
+        let mut actual = store.list().await.unwrap();
+        actual.sort_by_key(|id| id.id);
+        assert_eq!(actual, expected);
+    }
+
+    #[tokio::test]
+    async fn delete_removes_a_saved_session() {
+        let store = InMemorySessionStore::new();
+        let id = SessionId::new(1);
+        store.save(&AgentSession::new(id.clone())).await.unwrap();
+
+        store.delete(&id).await.unwrap();
+
+        assert!(store.load(&id).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn delete_of_an_unknown_session_is_a_no_op() {
+        let store = InMemorySessionStore::new();
+
+        store.delete(&SessionId::new(404)).await.unwrap();
+        assert!(store.list().await.unwrap().is_empty());
+    }
+}
