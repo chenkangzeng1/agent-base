@@ -14,7 +14,7 @@
 
 ```toml
 [dependencies]
-agent-base = "0.1.2"
+agent-base = "0.1.13"
 ```
 
 ## 设计原则
@@ -27,19 +27,25 @@ agent-base = "0.1.2"
 ## 特性
 
 - **LLM 抽象** — `LlmClient` trait，内置 OpenAI 和 Anthropic 实现
-- **工具系统** — `Tool` trait + `ToolRegistry` 注册和调度
-- **审批流程** — `ApprovalHandler` trait，支持 `AllowOnce` / `AllowAlways` / `Deny` 决策
-- **错误恢复** — `ToolErrorRecovery` trait；默认 `StopOnError`，可选 `RetryOnError`
-- **事件流** — 结构化 `RuntimeEvent` 流，用于 UI、日志、审计和调试
-- **多轮会话** — `AgentSession` 管理消息历史；`SessionStore` 可选持久化
+- **LLM 重试** — 可配置的指数退避重试策略 `RetryConfig`
+- **工具系统** — `Tool` trait + `ToolRegistry` 注册和调度；可配置 `tool_timeout`
+- **审批流程** — `ApprovalHandler` trait，支持 `AllowOnce` / `AllowAlways` / `Deny` 决策，内置取消支持
+- **错误恢复** — `ToolErrorRecovery` trait；默认 `StopOnError`，可选 `RetryOnError` + 自定义重试提示
+- **事件流** — 结构化 `RuntimeEvent` 流，可配置 `EventBus` 容量
+- **多轮会话** — `AgentSession` 管理消息历史；`SessionStore` 可选持久化；支持 `max_sessions` / `max_turns_per_session` 限制
 - **子 Agent** — `SubAgentTool`，支持 `Ephemeral`（默认）或 `Persistent` 会话策略
-- **上下文管理** — 可配置的 `ContextWindowManager` 控制 token 预算
+- **上下文管理** — 可配置的 `ContextWindowManager` 控制 token 预算；`max_message_tokens` 上限
 - **中间件** — `on_user_message`、`on_pre_llm`、`on_post_llm` 三个钩子用于扩展
 - **临时消息（Ephemeral Messages）** — 消息可标记为临时，LLM 本轮可见，turn 结束后自动从内存清理且不持久化
-- **Plan 检查清单** — `UpdatePlanTool` 内置工具，支持多步骤任务追踪
-- **检查点** — 结构化 `Checkpoint` 事件支持未来的重放、调试和恢复
+- **Plan 检查清单** — `UpdatePlanTool` 内置工具，支持 `PlanItem` / `PlanStepStatus` 多步骤任务追踪
+- **检查点** — 结构化 `CheckpointData` / `CheckpointStep` 事件支持重放、调试和恢复
 - **工具执行强制** — `ToolEnforcementMiddleware` 促使 LLM 调用工具而非仅描述操作
 - **Turn 工具限制** — `TurnToolLimitMiddleware` 可按 turn 限制工具调用次数
+- **熔断器** — `ConsecutiveFailureRecovery` 连续失败 N 次后自动停止
+- **Thinking / Reasoning** — 支持按模型配置思考预算和思考强度
+- **结构化输出** — 通过 `ResponseFormat` 指定输出格式（JSON Schema / JSON Object）
+- **会话 ID 生成器** — 可插拔的 `SessionIdGenerator` 支持自定义 ID 策略
+- **工具输出截断** — 可配置 `max_tool_output_chars`，附带结构化 `TruncationInfo`
 
 ## 快速上手
 
@@ -81,7 +87,7 @@ impl Tool for WeatherTool {
             summary: format!("{}天气：22°C，晴", city),
             raw: None,
             control_flow: ToolControlFlow::Continue,
-            truncated: false,
+            truncation: None,
         })
     }
 }
@@ -92,8 +98,8 @@ impl Tool for WeatherTool {
 ```rust
 use std::sync::Arc;
 use agent_base::{
-    AgentBuilder, RuntimeEvent, AgentResult, RunOutcome,
-    OpenAiClient, StopOnError,
+    AgentBuilder, AgentResult, RuntimeEvent, RunOutcome,
+    OpenAiClient,
 };
 
 #[tokio::main]
@@ -104,35 +110,35 @@ async fn main() -> AgentResult<()> {
         None,
     ));
 
-    let mut runtime = AgentBuilder::new(llm)
+    let runtime = AgentBuilder::new(llm)
         .system_prompt("你是一个有用的天气助手。")
         .register_tool(WeatherTool)
-        .build();
+        .build()?;
 
-    let session_id = runtime.create_session();
-    let (events, outcome) = runtime.run_turn_collect(
-        session_id,
-        "东京今天天气怎么样？",
-    ).await?;
+    let session_id = runtime.create_session().await;
 
-    for event in &events {
-        match event {
-            RuntimeEvent::TextDelta { text, .. } => print!("{}", text),
-            RuntimeEvent::ToolCallStarted { tool_name, .. } => {
-                println!("\n[调用工具: {}]", tool_name);
+    runtime
+        .run_turn(session_id, "东京今天天气怎么样？", |event| {
+            match event {
+                RuntimeEvent::TextDelta { text, .. } => print!("{}", text),
+                RuntimeEvent::ToolCallStarted { tool_name, .. } => {
+                    println!("\n[调用工具: {}]", tool_name);
+                }
+                RuntimeEvent::ToolCallFinished { summary, .. } => {
+                    println!("[工具结果: {}]", summary);
+                }
+                RuntimeEvent::RunFinished { .. } => println!("\n[完成]"),
+                _ => {}
             }
-            RuntimeEvent::ToolCallFinished { summary, .. } => {
-                println!("[工具结果: {}]", summary);
-            }
-            RuntimeEvent::RunFinished { .. } => println!("\n[完成]"),
-            _ => {}
-        }
-    }
+            Ok(())
+        })
+        .await?;
 
-    assert_eq!(outcome, RunOutcome::Completed);
     Ok(())
 }
 ```
+
+回调模式让你完全掌控事件处理。简单场景可改用 `run_turn_collect`，它直接返回 `(Vec<RuntimeEvent>, RunOutcome)`。
 
 ### 3. 处理工具错误
 
@@ -141,10 +147,10 @@ async fn main() -> AgentResult<()> {
 ```rust
 use agent_base::RetryOnError;
 
-let mut runtime = AgentBuilder::new(llm)
+let runtime = AgentBuilder::new(llm)
     .register_tool(MyTool)
     .error_recovery(Arc::new(RetryOnError))  // ← 失败时重试
-    .build();
+    .build()?;
 ```
 
 ### 4. 为敏感工具添加审批
@@ -154,21 +160,29 @@ use agent_base::{
     ApprovalHandler, ApprovalRequest, ApprovalDecision,
     ToolPolicy, RiskLevel,
 };
+use tokio_util::sync::CancellationToken;
 
 struct MyApprovalHandler;
 #[async_trait::async_trait]
 impl ApprovalHandler for MyApprovalHandler {
-    async fn approve(&self, _req: ApprovalRequest) -> AgentResult<ApprovalDecision> {
+    async fn approve(
+        &self,
+        _req: ApprovalRequest,
+        _cancel_token: CancellationToken,
+    ) -> AgentResult<ApprovalDecision> {
         // 通过 UI、CLI 等方式询问用户
         Ok(ApprovalDecision::AllowOnce)
     }
 }
 
 struct MyToolPolicy;
+#[async_trait::async_trait]
 impl ToolPolicy for MyToolPolicy {
-    fn evaluate_approval(&self, tool_name: &str, _args: &Value, _json: &str)
-        -> Option<ApprovalRequest>
-    {
+    async fn evaluate_approval(
+        &self,
+        tool_name: &str,
+        args: &serde_json::Value,
+    ) -> Option<ApprovalRequest> {
         if tool_name == "dangerous_tool" {
             Some(ApprovalRequest {
                 title: "确认操作".into(),
@@ -180,13 +194,15 @@ impl ToolPolicy for MyToolPolicy {
             None  // 自动放行
         }
     }
+
+    // before_call / after_call 钩子可用于日志记录、审计等
 }
 
-let mut runtime = AgentBuilder::new(llm)
+let runtime = AgentBuilder::new(llm)
     .register_tool(DangerousTool)
     .tool_policy(Arc::new(MyToolPolicy))
     .approval_handler(Arc::new(MyApprovalHandler))
-    .build();
+    .build()?;
 ```
 
 ### 5. 使用子 Agent
@@ -198,7 +214,7 @@ use agent_base::SubAgentTool;
 let sub_llm = Arc::new(OpenAiClient::new(key, model, None));
 let sub_runtime = AgentBuilder::new(sub_llm)
     .system_prompt("你是一个数学专家。")
-    .build();
+    .build()?;
 
 // 包装为工具
 let math_tool = SubAgentTool::new(
@@ -208,9 +224,9 @@ let math_tool = SubAgentTool::new(
 );
 
 // 注册到父 Agent
-let mut parent = AgentBuilder::new(parent_llm)
+let parent = AgentBuilder::new(parent_llm)
     .register_tool(math_tool)
-    .build();
+    .build()?;
 ```
 
 每次子 Agent 调用默认创建新会话。使用 `SubAgentTool::with_persistent()` 可跨调用共享上下文。
@@ -222,17 +238,26 @@ let mut parent = AgentBuilder::new(parent_llm)
 cp .env.example .env
 # 编辑 .env，填入你的 OPENAI_API_KEY 或 ANTHROPIC_API_KEY
 
-# 运行 REPL 示例
+# 交互式 REPL
 cargo run --example repl
 
-# 运行子 Agent 示例
+# 完整快速上手示例（工具 + 审批 + 中间件）
+cargo run --example quickstart_demo
+
+# 子 Agent 示例
 cargo run --example subagent_demo
 
-# 运行中间件示例
+# 中间件示例
 cargo run --example middleware_demo
 
-# 运行 Plan 示例
-cargo run --example plan_demo
+# 审批策略示例
+cargo run --example approval_policy_demo
+
+# 工具上下文示例
+cargo run --example tool_context_demo
+
+# Thinking / Reasoning 测试
+cargo run --example thinking_test
 ```
 
 ## agent-base 不做什么
@@ -243,21 +268,22 @@ cargo run --example plan_demo
 - 终端 UI 或内置审批对话框
 - 生产级持久化或事务系统
 
-业务特定的工具和策略属于**上层**（如 `ops-agent`、`agent-works`、`db-agent`、`browser-agent`）。
+业务特定的工具和策略属于**上层**（如 `phi-agent`、`agent-works`、`phi-tools`）。
 
 ## 典型分层
 
 ```
-ops-agent / agent-works / ...          ← 业务 Agent / 增强工具集
-    └── agent-base                      ← 轻量级运行时内核
+phi-agent / agent-works / ...              ← 框架 / 增强工具集
+    └── agent-base                          ← 轻量级运行时内核
 ```
 
 ## v1 语义
 
 | 约定 | 含义 |
 |---|---|
-| `run_turn_*` → `AgentResult<RunOutcome>` | `Ok(Completed)` = 成功，`Ok(Failed)` = 已完成但有错误 |
-| `RuntimeEvent::RunFinished` | 流程结束 — 最终状态见 `RunOutcome` |
+| `run_turn` → 回调 `FnMut(RuntimeEvent)` | 实时处理事件流；`run_turn_collect` 则批量返回 |
+| `RunOutcome` | `Completed` / `Failed` / `MaxTurnsExceeded` / `Cancelled` |
+| `RuntimeEvent::RunFinished` | 流程结束 — 最终状态见 `run_turn` 返回值 |
 | 工具失败 → 默认 `StopOnError` | 注入 `RetryOnError` 获得自愈能力 |
 | SubAgent → 默认 `Ephemeral` | 使用 `with_persistent()` 共享上下文 |
 | Session → 内存是唯一数据源 | `SessionStore` 是可选的持久化适配器 |
@@ -268,7 +294,7 @@ ops-agent / agent-works / ...          ← 业务 Agent / 增强工具集
 
 ## 稳定性
 
-本项目处于早期开发阶段（v0.1.2）。核心抽象已趋于稳定但尚未冻结。生态演进过程中可能会有小幅 API 变更。
+本项目处于早期开发阶段（v0.1.13）。核心抽象已趋于稳定但尚未冻结。生态演进过程中可能会有小幅 API 变更。
 
 ## 许可证
 

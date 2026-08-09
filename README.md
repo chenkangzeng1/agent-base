@@ -14,7 +14,7 @@ A lightweight **Agent Runtime Kernel** for building AI agents in Rust.
 
 ```toml
 [dependencies]
-agent-base = "0.1.2"
+agent-base = "0.1.13"
 ```
 
 ## Design Principles
@@ -27,19 +27,25 @@ agent-base = "0.1.2"
 ## Features
 
 - **LLM Abstraction** — `LlmClient` trait with built-in OpenAI and Anthropic implementations
-- **Tool System** — `Tool` trait + `ToolRegistry` for registration and dispatch
-- **Approval Flow** — `ApprovalHandler` trait with `AllowOnce` / `AllowAlways` / `Deny` decisions
-- **Error Recovery** — `ToolErrorRecovery` trait; defaults to `StopOnError`, opt-in `RetryOnError`
-- **Event Streaming** — Structured `RuntimeEvent` stream for UI, logging, auditing, and debugging
-- **Multi-turn Sessions** — `AgentSession` manages message history; `SessionStore` for optional persistence
+- **LLM Retry** — Configurable retry with exponential backoff via `RetryConfig`
+- **Tool System** — `Tool` trait + `ToolRegistry` for registration and dispatch; configurable `tool_timeout`
+- **Approval Flow** — `ApprovalHandler` trait with `AllowOnce` / `AllowAlways` / `Deny` decisions + cancellation support
+- **Error Recovery** — `ToolErrorRecovery` trait; defaults to `StopOnError`, opt-in `RetryOnError` + custom retry prompts
+- **Event Streaming** — Structured `RuntimeEvent` stream with configurable `EventBus` capacity
+- **Multi-turn Sessions** — `AgentSession` manages message history; `SessionStore` for optional persistence; `max_sessions` / `max_turns_per_session` limits
 - **Sub-Agents** — `SubAgentTool` with `Ephemeral` (default) or `Persistent` session policies
-- **Context Management** — configurable `ContextWindowManager` for token budget control
-- **Middleware** — hooks at `on_user_message`, `on_pre_llm`, and `on_post_llm` for extensions
-- **Ephemeral Messages** — messages can be marked ephemeral; visible to LLM during the current turn, automatically cleaned from memory after turn ends, excluded from persistence
-- **Plan Checklist** — built-in `UpdatePlanTool` for multi-step task tracking
-- **Checkpoints** — structured `Checkpoint` events enable future replay, debugging, and resume
+- **Context Management** — Configurable `ContextWindowManager` for token budget control; `max_message_tokens` cap
+- **Middleware** — Hooks at `on_user_message`, `on_pre_llm`, and `on_post_llm` for extensions
+- **Ephemeral Messages** — Messages can be marked ephemeral; visible to LLM during the current turn, automatically cleaned from memory after turn ends, excluded from persistence
+- **Plan Checklist** — Built-in `UpdatePlanTool` for multi-step task tracking with `PlanItem` / `PlanStepStatus`
+- **Checkpoints** — Structured `CheckpointData` / `CheckpointStep` events enable replay, debugging, and resume
 - **Tool Enforcement** — `ToolEnforcementMiddleware` nudges the LLM to call tools instead of just describing actions
 - **Turn Tool Limit** — `TurnToolLimitMiddleware` caps tool calls per turn
+- **Circuit Breaker** — `ConsecutiveFailureRecovery` stops the run after N consecutive failures
+- **Thinking / Reasoning** — Per-model thinking budget and effort level configuration
+- **Response Format** — Structured output via `ResponseFormat` (JSON Schema / JSON Object)
+- **Session ID Generator** — Pluggable `SessionIdGenerator` for custom ID strategies
+- **Tool Output Truncation** — Configurable `max_tool_output_chars` with structured `TruncationInfo`
 
 ## Quick Start
 
@@ -81,7 +87,7 @@ impl Tool for WeatherTool {
             summary: format!("Weather in {}: 22°C, sunny", city),
             raw: None,
             control_flow: ToolControlFlow::Continue,
-            truncated: false,
+            truncation: None,
         })
     }
 }
@@ -92,8 +98,8 @@ impl Tool for WeatherTool {
 ```rust
 use std::sync::Arc;
 use agent_base::{
-    AgentBuilder, RuntimeEvent, AgentResult, RunOutcome,
-    OpenAiClient, StopOnError,
+    AgentBuilder, AgentResult, RuntimeEvent, RunOutcome,
+    OpenAiClient,
 };
 
 #[tokio::main]
@@ -104,35 +110,35 @@ async fn main() -> AgentResult<()> {
         None,
     ));
 
-    let mut runtime = AgentBuilder::new(llm)
+    let runtime = AgentBuilder::new(llm)
         .system_prompt("You are a helpful weather assistant.")
         .register_tool(WeatherTool)
-        .build();
+        .build()?;
 
-    let session_id = runtime.create_session();
-    let (events, outcome) = runtime.run_turn_collect(
-        session_id,
-        "What's the weather in Tokyo?",
-    ).await?;
+    let session_id = runtime.create_session().await;
 
-    for event in &events {
-        match event {
-            RuntimeEvent::TextDelta { text, .. } => print!("{}", text),
-            RuntimeEvent::ToolCallStarted { tool_name, .. } => {
-                println!("\n[Calling tool: {}]", tool_name);
+    runtime
+        .run_turn(session_id, "What's the weather in Tokyo?", |event| {
+            match event {
+                RuntimeEvent::TextDelta { text, .. } => print!("{}", text),
+                RuntimeEvent::ToolCallStarted { tool_name, .. } => {
+                    println!("\n[Calling tool: {}]", tool_name);
+                }
+                RuntimeEvent::ToolCallFinished { summary, .. } => {
+                    println!("[Tool result: {}]", summary);
+                }
+                RuntimeEvent::RunFinished { .. } => println!("\n[Done]"),
+                _ => {}
             }
-            RuntimeEvent::ToolCallFinished { summary, .. } => {
-                println!("[Tool result: {}]", summary);
-            }
-            RuntimeEvent::RunFinished { .. } => println!("\n[Done]"),
-            _ => {}
-        }
-    }
+            Ok(())
+        })
+        .await?;
 
-    assert_eq!(outcome, RunOutcome::Completed);
     Ok(())
 }
 ```
+
+The callback approach gives you full control over event handling. For simpler cases, `run_turn_collect` returns `(Vec<RuntimeEvent>, RunOutcome)` directly.
 
 ### 3. Handle Tool Errors
 
@@ -141,10 +147,10 @@ By default, tool failures stop the run. For self-healing agents (e.g. code agent
 ```rust
 use agent_base::RetryOnError;
 
-let mut runtime = AgentBuilder::new(llm)
+let runtime = AgentBuilder::new(llm)
     .register_tool(MyTool)
     .error_recovery(Arc::new(RetryOnError))  // ← retry on failure
-    .build();
+    .build()?;
 ```
 
 ### 4. Add Approval for Sensitive Tools
@@ -154,21 +160,29 @@ use agent_base::{
     ApprovalHandler, ApprovalRequest, ApprovalDecision,
     ToolPolicy, RiskLevel,
 };
+use tokio_util::sync::CancellationToken;
 
 struct MyApprovalHandler;
 #[async_trait::async_trait]
 impl ApprovalHandler for MyApprovalHandler {
-    async fn approve(&self, _req: ApprovalRequest) -> AgentResult<ApprovalDecision> {
+    async fn approve(
+        &self,
+        _req: ApprovalRequest,
+        _cancel_token: CancellationToken,
+    ) -> AgentResult<ApprovalDecision> {
         // Ask user via UI, CLI, etc.
         Ok(ApprovalDecision::AllowOnce)
     }
 }
 
 struct MyToolPolicy;
+#[async_trait::async_trait]
 impl ToolPolicy for MyToolPolicy {
-    fn evaluate_approval(&self, tool_name: &str, _args: &Value, _json: &str)
-        -> Option<ApprovalRequest>
-    {
+    async fn evaluate_approval(
+        &self,
+        tool_name: &str,
+        args: &serde_json::Value,
+    ) -> Option<ApprovalRequest> {
         if tool_name == "dangerous_tool" {
             Some(ApprovalRequest {
                 title: "Confirm action".into(),
@@ -180,13 +194,15 @@ impl ToolPolicy for MyToolPolicy {
             None  // auto-allow
         }
     }
+
+    // before_call / after_call hooks available for logging, auditing, etc.
 }
 
-let mut runtime = AgentBuilder::new(llm)
+let runtime = AgentBuilder::new(llm)
     .register_tool(DangerousTool)
     .tool_policy(Arc::new(MyToolPolicy))
     .approval_handler(Arc::new(MyApprovalHandler))
-    .build();
+    .build()?;
 ```
 
 ### 5. Use a Sub-Agent
@@ -198,7 +214,7 @@ use agent_base::SubAgentTool;
 let sub_llm = Arc::new(OpenAiClient::new(key, model, None));
 let sub_runtime = AgentBuilder::new(sub_llm)
     .system_prompt("You are a math expert.")
-    .build();
+    .build()?;
 
 // Wrap it as a tool
 let math_tool = SubAgentTool::new(
@@ -208,9 +224,9 @@ let math_tool = SubAgentTool::new(
 );
 
 // Register in the parent agent
-let mut parent = AgentBuilder::new(parent_llm)
+let parent = AgentBuilder::new(parent_llm)
     .register_tool(math_tool)
-    .build();
+    .build()?;
 ```
 
 Each sub-agent call creates a fresh session by default. Use `SubAgentTool::with_persistent()` to share context across calls.
@@ -222,17 +238,26 @@ Each sub-agent call creates a fresh session by default. Use `SubAgentTool::with_
 cp .env.example .env
 # Edit .env with your OPENAI_API_KEY or ANTHROPIC_API_KEY
 
-# Run the REPL example
+# Interactive REPL
 cargo run --example repl
 
-# Run the SubAgent demo
+# Full quickstart demo (tools + approval + middleware)
+cargo run --example quickstart_demo
+
+# SubAgent demo
 cargo run --example subagent_demo
 
-# Run the Middleware demo
+# Middleware demo
 cargo run --example middleware_demo
 
-# Run the Plan demo
-cargo run --example plan_demo
+# Approval & policy demo
+cargo run --example approval_policy_demo
+
+# Tool context demo
+cargo run --example tool_context_demo
+
+# Thinking / reasoning test
+cargo run --example thinking_test
 ```
 
 ## What agent-base Does NOT Do
@@ -243,21 +268,22 @@ cargo run --example plan_demo
 - Terminal UI or built-in approval dialog
 - Production-grade persistence or transaction system
 
-Business-specific tools and strategies belong in **upper layers** (e.g. `ops-agent`, `agent-works`, `db-agent`, `browser-agent`).
+Business-specific tools and strategies belong in **upper layers** (e.g. `phi-agent`, `agent-works`, `phi-tools`).
 
 ## Typical Layering
 
 ```
-ops-agent / agent-works / ...          ← Business agents / Enhanced toolkits
-    └── agent-base                      ← Lightweight Runtime Kernel
+phi-agent / agent-works / ...              ← Framework / Enhanced toolkits
+    └── agent-base                          ← Lightweight Runtime Kernel
 ```
 
 ## v1 Semantics
 
 | Convention | Meaning |
 |---|---|
-| `run_turn_*` → `AgentResult<RunOutcome>` | `Ok(Completed)` = success, `Ok(Failed)` = finished with error |
-| `RuntimeEvent::RunFinished` | Process ended — final status is in `RunOutcome` |
+| `run_turn` → callback `FnMut(RuntimeEvent)` | Process events as they arrive; `run_turn_collect` batches them |
+| `RunOutcome` | `Completed` / `Failed` / `MaxTurnsExceeded` / `Cancelled` |
+| `RuntimeEvent::RunFinished` | Process ended — final status is in the `run_turn` return value |
 | Tool failure → defaults to `StopOnError` | Inject `RetryOnError` for self-healing agents |
 | SubAgent → defaults to `Ephemeral` | Use `with_persistent()` for shared context |
 | Session → memory is source of truth | `SessionStore` is an optional persistence adapter |
@@ -268,7 +294,7 @@ This project draws inspiration from the [OpenAI Codex CLI](https://github.com/op
 
 ## Stability
 
-This project is in early development (v0.1.2). The core abstractions are settling but not yet frozen. Expect minor API changes as the ecosystem evolves.
+This project is in early development (v0.1.13). The core abstractions are settling but not yet frozen. Expect minor API changes as the ecosystem evolves.
 
 ## License
 
