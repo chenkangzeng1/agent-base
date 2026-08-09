@@ -31,12 +31,13 @@ CLI argument > environment variable > .env file > default
 | `thinking_budget` | `Option<u64>` | Token budget for thinking | `None` (provider default) |
 | `thinking_effort` | `ReasoningEffort` | Low / Medium / High / XHigh | `Medium` |
 | `safety` | `SafetyConfig` | Tool call limits | See below |
+| `max_turns` | `Option<u32>` | Per-run react-loop cap | `None` (builder default: 200) |
 
 ## Safety Config
 
 ```rust
 SafetyConfig {
-    max_tool_calls_per_turn: 30,   // Max tool invocations per turn
+    max_tool_calls_per_turn: 128,  // Max tool invocations per turn
     max_consecutive_failures: 3,   // Stop after N consecutive failures
 }
 ```

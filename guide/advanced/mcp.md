@@ -61,20 +61,15 @@ phi serve --transport http --port 8080
 
 The server exposes a single `run` tool:
 
-```
-External orchestrator
-       │
-       │  MCP tools/list → ["run"]
-       │  MCP tools/call run { "prompt": "..." }
-       │
-       ▼
-   phi-agent (Rust runtime)
-       │
-       │  Tool calls, reasoning, multi-step execution
-       │  Progress notifications via MCP progress
-       │
-       ▼
-   Result returned to orchestrator
+```mermaid
+graph TD
+    EXT["External Orchestrator"]
+    PHI["phi-agent<br/>Rust Runtime"]
+
+    EXT -->|"MCP tools/list → ['run']"| PHI
+    EXT -->|"MCP tools/call run { prompt }"| PHI
+    PHI -->|"Tool calls, reasoning, multi-step execution<br/>Progress notifications via MCP progress"| EXT
+    PHI -->|"Result"| EXT
 ```
 
 This design follows the same pattern as Claude Code's `claude_code()` function and Codex — expose the agent, not individual tools.

@@ -102,7 +102,7 @@ phi-agent 通过 `phi-kernel-tools` 内置了**内核工具** — 为 Agent 提�
 
 **极致轻量，哪里都能跑。** Rust 单二进制，无运行时依赖，从嵌入式 Linux、边缘网关到云端容器、桌面应用，`cargo install` 即用，随地部署。
 
-**零内置，全定制。** 不预设任何工具，不绑定任何平台，一个工具只需 3 个方法 — `name()`、`definition()`、`call()`，你注册什么，Agent 就用什么，只带你的场景真正需要的东西，LLM 自由，精准、干净、可控。
+**零应用工具，全定制。** 内核原语（文件读写、Shell、子 Agent 调度）为可选基础设施 — 不预设任何应用工具，不绑定任何平台。一个工具只需 3 个方法 — `name()`、`definition()`、`call()`，你注册什么，Agent 就用什么，只带你的场景真正需要的东西，LLM 自由，精准、干净、可控。
 
 **全程可观测，每一步可解释。** 每次决策有记录，每个步骤可追踪，内置会话日志与结构化追踪，会话指标一目了然，垂直场景合规审计无压力。
 
@@ -164,14 +164,29 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-更多示例参见 [examples/](examples/)，按类别组织：
-- [minimal/](examples/minimal/) — 最简示例
-- [tools/](examples/tools/) — 自定义工具与审批策略
-- [mcp/](examples/mcp/) — MCP 客户端与动态连接管理
-- [multi-agent/](examples/multi-agent/) — 子 Agent 调度与编排
-- [session/](examples/session/) — 会话持久化与生命周期
-- [observability/](examples/observability/) — 事件日志、中间件钩子
-- [advanced/](examples/advanced/) — 滑动窗口记忆、摘要记忆、专注判断
+更多示例参见 [examples/](examples/)。不需要 API Key 的例子可快速体验：
+
+| 示例 | 描述 | API Key |
+|------|------|:------:|
+| [`custom_policy`](examples/tools/custom_policy.rs) | ToolPolicy + Middleware + 事件钩子（Mock LLM） | ❌ |
+| [`session_persist`](examples/session/session_persist.rs) | 会话创建、恢复、文件锁、清理 | ❌ |
+| [`event_log`](examples/observability/event_log.rs) | 每轮事件 JSONL 持久化 | ❌ |
+| [`hello_agent`](examples/minimal/hello_agent.rs) | 最小化 Agent 启动 | ✅ |
+| [`custom_tool`](examples/tools/custom_tool.rs) | 实现自定义 Tool | ✅ |
+| [`multi_tool`](examples/tools/multi_tool.rs) | 注册多个工具 | ✅ |
+| [`file_ops`](examples/tools/file_ops.rs) | 文件系统操作 | ✅ |
+| [`focus_demo`](examples/advanced/focus_demo.rs) | Focus 专注判断 | ✅ |
+| [`multi_agent`](examples/multi-agent/multi_agent.rs) | 子 Agent 生成与编排 | ✅ |
+| [`middleware_hooks`](examples/observability/middleware_hooks.rs) | 中间件生命周期钩子 | ✅ |
+| [`html_renderer`](examples/observability/html_renderer.rs) | HTML 事件流渲染器 | ✅ |
+| [`window_memory`](examples/advanced/window_memory.rs) | 滑动窗口记忆 | ✅ |
+| [`summary_memory`](examples/advanced/summary_memory.rs) | 摘要式记忆 | ✅ |
+| [`mcp_client`](examples/mcp/mcp_client.rs) | MCP 客户端连接 | ✅ |
+| [`mcp_server`](examples/mcp/mcp_server.rs) | MCP 服务端桥接 | ✅ |
+| [`mcp_dynamic_attach`](examples/mcp/mcp_dynamic_attach.rs) | 动态 MCP 连接管理 | ✅ |
+| [`hybrid_langgraph`](examples/advanced/hybrid_langgraph.rs) | LangGraph 混合编排 | ✅ |
+
+执行 `cargo run --example <名称>` 即可运行。
 
 ## CLI
 

@@ -9,6 +9,14 @@ phi-agent 支持生成子 Agent 进行并行任务执行。此功能由 `multi-a
 - 通过消息（而非共享状态）通信
 - 按名称/路径追踪，便于观测
 
+**启用后，Agent 不会无条件生成子 Agent。** 它会根据任务复杂度自行判断：简单问题直接回答，只有涉及多个独立维度（如同时搜索和审核）时，Agent 才选择并行生成。这是 LLM 基于 6 个工具定义做出的自主决策，不是硬编码的规则。
+
+你可以通过 system prompt 引导这一行为，例如：
+
+- 鼓励并行：*"对于涉及多个独立信息源的问题，使用子 Agent 并行搜索"*
+- 限制使用：*"分析类任务不要用多 Agent，直接处理即可"*
+- 定义角色：*"将研究类任务委派给 searcher，综合类任务委派给 analyst"*
+
 ## 启用方式
 
 ```toml
@@ -37,21 +45,26 @@ cargo run --features multi-agent
 
 ## Agent 生命周期
 
-```
-spawn_agent("searcher", "搜索网页...")
-     │
-     ├──▶ followup_task("searcher", "查找 X")
-     │         │
-     │         └──▶ (searcher 独立工作)
-     │                    │
-     ├──▶ spawn_agent("analyst", "分析搜索结果")
-     │         │
-     │         └──▶ followup_task("analyst", "审核发现")
-     │
-     └──▶ wait_agent("searcher")   ←─ 父 Agent 收集结果
-           wait_agent("analyst")
-           close_agent("searcher")
-           close_agent("analyst")
+```mermaid
+sequenceDiagram
+    participant P as 父 Agent
+    participant S as searcher
+    participant A as analyst
+
+    P->>S: spawn_agent("searcher")
+    P->>S: followup_task("查找 X")
+    activate S
+    Note over S: 独立工作...
+    P->>A: spawn_agent("analyst")
+    P->>A: followup_task("审核发现")
+    activate A
+    Note over A: 独立工作...
+    S-->>P: wait_agent("searcher")
+    deactivate S
+    A-->>P: wait_agent("analyst")
+    deactivate A
+    P->>S: close_agent("searcher")
+    P->>A: close_agent("analyst")
 ```
 
 ## 配置

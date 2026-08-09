@@ -170,3 +170,16 @@ async fn main() -> anyhow::Result<()> {
 
 和方式一的区别：没有 `rustyline`，没有 REPL 循环，直接调用一次 `run_turn`。
 [自定义工具](../tools/custom-tool.md) 里有更多示例。
+
+## 示例
+
+仓库包含 17 个可运行示例，其中 3 个无需 API Key：
+
+```bash
+# 无需 API Key — 使用 Mock LLM
+cargo run --example custom_policy    # ToolPolicy + Middleware + 事件钩子
+cargo run --example session_persist  # 会话生命周期与文件锁
+cargo run --example event_log        # 每轮事件 JSONL 持久化
+```
+
+→ [完整示例列表](https://github.com/hibuka-labs/phi-agent#examples)（含全部 17 个示例及 API Key 要求）。

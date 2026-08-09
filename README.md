@@ -101,7 +101,7 @@ These are **not** tools in the LangChain sense — no web search, no database co
 
 **Lightweight, Runs Anywhere.** A single Rust binary with zero runtime dependencies — from embedded Linux and edge gateways to cloud containers and desktop applications, `cargo install` gets you started in seconds, deploy anywhere.
 
-**Zero Built-in Tools, Fully Customizable.** No pre-packaged tools, no platform lock-in — a tool is just 3 methods: `name()`, `definition()`, `call()`, you register what you need, the Agent uses what you register, only bring what your scenario truly needs, LLM freedom, precise and clean.
+**Zero Application Tools, Fully Customizable.** Kernel primitives (file I/O, shell, sub-agents) are opt-in infrastructure — no pre-packaged application tools, no platform lock-in. A tool is just 3 methods: `name()`, `definition()`, `call()`. You register what you need, the Agent uses what you register. Only bring what your scenario truly needs — LLM freedom, precise and clean.
 
 **Fully Observable, Every Step Explainable.** Every decision is logged, every step is traceable, with built-in session logging, structured tracing, and session metrics at a glance — compliance and audit trails without the stress.
 
@@ -163,14 +163,29 @@ async fn main() -> anyhow::Result<()> {
 }
 ```
 
-See [examples/](examples/) for more complete examples, organized by category:
-- [minimal/](examples/minimal/) — hello agent
-- [tools/](examples/tools/) — custom tools and policies
-- [mcp/](examples/mcp/) — MCP client and dynamic attach/detach
-- [multi-agent/](examples/multi-agent/) — sub-agent spawning and orchestration
-- [session/](examples/session/) — session persistence and lifecycle
-- [observability/](examples/observability/) — event log, middleware hooks
-- [advanced/](examples/advanced/) — window memory, summary memory, focus
+See [examples/](examples/) for runnable examples. No-API-key examples are great for quick exploration:
+
+| Example | Description | API Key |
+|---------|-------------|:-------:|
+| [`custom_policy`](examples/tools/custom_policy.rs) | ToolPolicy + Middleware + event hooks with mock LLM | ❌ |
+| [`session_persist`](examples/session/session_persist.rs) | Session creation, resume, locking, cleanup | ❌ |
+| [`event_log`](examples/observability/event_log.rs) | Per-turn JSONL event persistence | ❌ |
+| [`hello_agent`](examples/minimal/hello_agent.rs) | Minimal agent setup with LLM | ✅ |
+| [`custom_tool`](examples/tools/custom_tool.rs) | Implement a custom Tool | ✅ |
+| [`multi_tool`](examples/tools/multi_tool.rs) | Register multiple tools | ✅ |
+| [`file_ops`](examples/tools/file_ops.rs) | File system operations | ✅ |
+| [`focus_demo`](examples/advanced/focus_demo.rs) | Focus feature | ✅ |
+| [`multi_agent`](examples/multi-agent/multi_agent.rs) | Sub-agent spawning and orchestration | ✅ |
+| [`middleware_hooks`](examples/observability/middleware_hooks.rs) | Middleware lifecycle hooks | ✅ |
+| [`html_renderer`](examples/observability/html_renderer.rs) | HTML event stream renderer | ✅ |
+| [`window_memory`](examples/advanced/window_memory.rs) | Sliding window memory | ✅ |
+| [`summary_memory`](examples/advanced/summary_memory.rs) | Summary-based memory | ✅ |
+| [`mcp_client`](examples/mcp/mcp_client.rs) | MCP client connection | ✅ |
+| [`mcp_server`](examples/mcp/mcp_server.rs) | MCP server bridge | ✅ |
+| [`mcp_dynamic_attach`](examples/mcp/mcp_dynamic_attach.rs) | Dynamic MCP attach/detach | ✅ |
+| [`hybrid_langgraph`](examples/advanced/hybrid_langgraph.rs) | Hybrid LangGraph integration | ✅ |
+
+Run with `cargo run --example <name>`.
 
 ## CLI
 

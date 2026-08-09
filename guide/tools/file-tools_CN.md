@@ -38,18 +38,16 @@ phi-agent = { version = "0.9", default-features = false, features = ["shell"] }
 
 ## 为什么文件工具很重要
 
-文件工具是 Skills 和 Memory 的架构基座：
+文件工具是 Skills 和 Memory 的架构基座：一组通用文件操作替代多个专用工具，Agent 直接读写文件系统，框架退居 OS 角色。
 
-```
-没有文件工具                          有文件工具
-┌──────────────────┐                 ┌──────────────────┐
-│ Agent 想读 SKILL.md │              │ Agent 想读 SKILL.md │
-│     ↓            │                 │     ↓            │
-│ 调 get_skill_detail │  ──变成──▶    │ 调 read_file        │
-│     ↓            │                 │     ↓            │
-│ 框架喂给它        │                 │ 框架就是 OS         │
-│ (3 个专用工具)    │                 │ (1 组通用工具)       │
-└──────────────────┘                 └──────────────────┘
+```mermaid
+graph TD
+    FT["📁 read_file / write_file / list_files<br/><i>文件工具（内核层）</i>"]
+
+    FT --> SKILLS["Skills<br/>读取 SKILL.md 获取领域知识"]
+    FT --> MEMORY["Memory<br/>读写 .phi/memory/ 持久化上下文"]
+    FT --> RULES["规则注入<br/>读取 CLAUDE.md 等项目规则"]
+    FT --> CONFIG["配置 / Session<br/>读取项目级配置与会话状态"]
 ```
 
-一组通用文件工具替代多个专用工具。这与 Claude Code 和 Codex 的模式一致。
+这与 Claude Code 和 Codex 的模式一致：Agent 通过标准文件操作与项目交互，不需要为每种资源类型定义专用工具。

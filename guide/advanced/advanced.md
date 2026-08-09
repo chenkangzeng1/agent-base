@@ -118,9 +118,7 @@ builder = builder.tool_policy(Arc::new(RiskAwarePolicy));
 
 The execution pipeline runs: `evaluate_approval` → (wait for user if needed) → `before_call` → `tool.call()` → `after_call`. If `before_call` returns `Err`, the tool is aborted and `after_call` is skipped.
 
-> 💡 See [`examples/custom-policy.rs`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/custom-policy.rs)
-> for a complete runnable demo covering both custom Middleware and ToolPolicy.
-> Run with `cargo run --example custom-policy` — no API key required.
+> 💡 Runnable demo: [`examples/tools/custom_policy.rs`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/tools/custom_policy.rs) covers both custom Middleware and ToolPolicy. Run with `cargo run --example custom_policy` — no API key required.
 
 ## Approval Handlers
 
@@ -262,17 +260,12 @@ builder = builder.error_recovery(Arc::new(
 
 ## Further Reading
 
-Runnable examples in the repository:
+No-API-key examples — run immediately:
 
-| Example | Description | API Key |
-|---------|-------------|:-------:|
-| [`custom-policy`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/custom-policy.rs) | Custom Middleware + ToolPolicy, event hooks | ❌ |
-| [`hello-agent`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/hello-agent.rs) | Minimal agent setup | ✅ |
-| [`custom-tool`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/custom-tool.rs) | Implement a custom Tool | ✅ |
-| [`multi-tool`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/multi-tool.rs) | Register multiple tools | ✅ |
-| [`focus-demo`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/focus-demo.rs) | Focus feature | ✅ |
-
-Run any example with `cargo run --example <name>`, e.g.:
 ```bash
-cargo run --example custom-policy
+cargo run --example custom_policy    # ToolPolicy + Middleware + event hooks
+cargo run --example session_persist  # Session lifecycle and file locking
+cargo run --example event_log        # Per-turn JSONL event persistence
 ```
+
+→ [Full examples table](https://github.com/hibuka-labs/phi-agent#examples) — all 17 examples with API key requirements.

@@ -31,12 +31,13 @@ CLI 参数 > 环境变量 > .env 文件 > 默认值
 | `thinking_budget` | `Option<u64>` | 思维过程 token 预算 | `None`（使用提供商默认） |
 | `thinking_effort` | `ReasoningEffort` | Low / Medium / High / XHigh | `Medium` |
 | `safety` | `SafetyConfig` | 工具调用限制 | 见下方 |
+| `max_turns` | `Option<u32>` | 单次运行的最大 react-loop 迭代数 | `None`（使用 builder 默认值：200） |
 
 ## Safety 配置
 
 ```rust
 SafetyConfig {
-    max_tool_calls_per_turn: 30,   // 每轮最大工具调用次数
+    max_tool_calls_per_turn: 128,  // 每轮最大工具调用次数
     max_consecutive_failures: 3,   // 连续失败 N 次后停止
 }
 ```

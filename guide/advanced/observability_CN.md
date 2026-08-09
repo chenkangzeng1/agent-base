@@ -99,20 +99,24 @@ save_metrics(&session, &session_dir)?;
 
 观测代码运行在**独立的 tokio task** 中，通过 mpsc channel 与 agent 通信：
 
-```
-agent task (runtime)              observer task (tokio::spawn)
-      │                                    │
-      ├─ tx.send(msg) ──→ mpsc ──→         rx.recv()
-      │                    channel          │
-      │   observer panic:                   │
-      │   tx.send → Err                    │   💥
-      │   → warn 日志                       │
-      │   → agent 继续运行                   │
+```mermaid
+sequenceDiagram
+    participant A as Agent Task<br/>(runtime)
+    participant O as Observer Task<br/>(tokio::spawn)
+
+    Note over A,O: 正常运行
+    A->>O: on_turn_end hook → tx.send(TurnEnd)
+    O->>O: build metrics, accumulate in memory
+
+    Note over A,O: Observer panic
+    A->>O: tx.send(msg)
+    O--xA: channel closed
+    Note over A: let _ = send, 继续运行不受影响
 ```
 
-- Observer panic **永远不会影响 agent**
-- Channel 满了就丢弃旧数据，绝不阻塞 agent
-- 文件 I/O 通过 `spawn_blocking` 执行，不占用 async 线程池
+- Observer panic **永远不会影响 agent** — hook 静默丢弃失败的发送
+- 会话期间 metrics 在内存中累积，`save_metrics()` 在 `shutdown()` 后写入磁盘
+- Channel 是 unbounded 的 — 绝不阻塞 agent 热路径
 
 ## 文件布局
 

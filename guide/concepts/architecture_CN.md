@@ -11,6 +11,7 @@ phi-agent 与依赖 crate 之间的关系，以及关键设计决策。
 | `agent-base` | [hibuka-labs/agent-base](https://github.com/hibuka-labs/agent-base) | ✅ |
 | `agent-works` | [hibuka-labs/agent-works](https://github.com/hibuka-labs/agent-works) | ✅ |
 | `phi-agent` | [hibuka-labs/phi-agent](https://github.com/hibuka-labs/phi-agent)（本仓库） | ✅ |
+| `phi-kernel-tools` | [hibuka-labs/phi-kernel-tools](https://github.com/hibuka-labs/phi-kernel-tools) | ✅ |
 | `phi-tools` | [hibuka-labs/phi-tools](https://github.com/hibuka-labs/phi-tools) | ✅ |
 | `phi-telemetry` | [hibuka-labs/phi-telemetry](https://github.com/hibuka-labs/phi-telemetry) | ✅ |
 | `log-core` | [hibuka-labs/log-core](https://github.com/hibuka-labs/log-core) | ✅ |
@@ -56,6 +57,12 @@ graph TB
 - **Skills** — 插件/技能系统
 - **Focus** — 带类型的结构化 LLM 调用
 - **Multi-Agent** — 子 Agent 调度与编排
+
+### phi-kernel-tools
+内核原语，按需启用 — `cargo add phi-kernel-tools` 可独立使用：
+- **文件工具** — `read_file`、`write_file`、`list_files`（由 `file` feature 控制）
+- **Shell 工具** — 执行 Shell 命令（由 `shell` feature 控制）
+- **多 Agent** — `spawn_agent`、`send_message`、`followup_task`、`wait_agent`、`list_agents`、`close_agent`（由 `multi-agent` feature 控制）
 
 ### phi-agent
 框架层 — `cargo add phi-agent` 获取完整功能：

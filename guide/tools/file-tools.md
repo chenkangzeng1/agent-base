@@ -46,19 +46,16 @@ use phi_agent::base_agent_builder;
 
 ## Why file tools matter
 
-File tools are the architectural foundation for Skills and Memory:
+File tools are the architectural foundation for Skills and Memory: one set of generic file operations replaces multiple dedicated tools. The agent reads and writes the filesystem directly — the framework is the OS.
 
-```
-Without file tools                    With file tools
-┌──────────────────┐                 ┌──────────────────┐
-│ Agent wants SKILL.md │             │ Agent wants SKILL.md │
-│     ↓            │                 │     ↓            │
-│ calls get_skill_detail │  ──becomes──▶ │ calls read_file     │
-│     ↓            │                 │     ↓            │
-│ framework feeds it │               │ framework IS the OS   │
-│ (3 dedicated tools) │              │ (1 set of generic     │
-└──────────────────┘                 │  tools)              │
-                                     └──────────────────┘
+```mermaid
+graph TD
+    FT["📁 read_file / write_file / list_files<br/><i>File Tools (kernel layer)</i>"]
+
+    FT --> SKILLS["Skills<br/>Reads SKILL.md for domain knowledge"]
+    FT --> MEMORY["Memory<br/>Reads/writes .phi/memory/ for persistent context"]
+    FT --> RULES["Rule Injection<br/>Reads CLAUDE.md and project rules"]
+    FT --> CONFIG["Config / Session<br/>Reads project config and session state"]
 ```
 
-One set of generic file tools replaces multiple dedicated tools. This is the same pattern used by Claude Code and Codex.
+This is the same pattern used by Claude Code and Codex: the agent interacts with the project through standard file operations — no dedicated tools for each resource type.

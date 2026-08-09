@@ -118,9 +118,7 @@ builder = builder.tool_policy(Arc::new(RiskAwarePolicy));
 
 执行流程：`evaluate_approval` → （如需审批则等待用户）→ `before_call` → `tool.call()` → `after_call`。`before_call` 返回 `Err` 时工具被中断，`after_call` 不会执行。
 
-> 💡 完整可运行示例：[`examples/custom-policy.rs`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/custom-policy.rs)，
-> 同时演示了自定义 Middleware 和 ToolPolicy。
-> 执行 `cargo run --example custom-policy` 即可运行，无需 API key。
+> 💡 完整可运行示例：[`examples/tools/custom_policy.rs`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/tools/custom_policy.rs)，同时演示了自定义 Middleware 和 ToolPolicy。执行 `cargo run --example custom_policy` 即可运行，无需 API key。
 
 ## 审批处理器
 
@@ -262,17 +260,12 @@ builder = builder.error_recovery(Arc::new(
 
 ## 延伸阅读
 
-仓库中的可运行示例：
+无需 API Key 的示例 — 可直接运行：
 
-| 示例 | 说明 | API Key |
-|---------|-------------|:-------:|
-| [`custom-policy`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/custom-policy.rs) | 自定义 Middleware + ToolPolicy，事件流演示 | ❌ |
-| [`hello-agent`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/hello-agent.rs) | 最小化 Agent 启动 | ✅ |
-| [`custom-tool`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/custom-tool.rs) | 实现自定义 Tool | ✅ |
-| [`multi-tool`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/multi-tool.rs) | 注册多个工具 | ✅ |
-| [`focus-demo`](https://github.com/hibuka-labs/phi-agent/blob/master/examples/focus-demo.rs) | Focus 功能 | ✅ |
-
-执行 `cargo run --example <名称>` 即可运行，例如：
 ```bash
-cargo run --example custom-policy
+cargo run --example custom_policy    # ToolPolicy + Middleware + 事件钩子
+cargo run --example session_persist  # 会话生命周期与文件锁
+cargo run --example event_log        # 每轮事件 JSONL 持久化
 ```
+
+→ [完整示例列表](https://github.com/hibuka-labs/phi-agent#examples) — 全部 17 个示例及 API Key 要求。

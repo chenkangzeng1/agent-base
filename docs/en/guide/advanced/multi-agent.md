@@ -11,6 +11,14 @@ Multi-agent allows the main agent to spawn child agents that work independently 
 - Communicates via messages (not shared state)
 - Is tracked by name/path for observability
 
+**Enabling multi-agent doesn't mean the agent spawns sub-agents indiscriminately.** The agent decides based on task complexity: simple questions get direct answers, while tasks with independent dimensions (e.g., searching and reviewing simultaneously) may trigger parallel spawning. This is an LLM-driven decision based on the 6 tool definitions — not a hardcoded rule.
+
+You can guide this behavior through the system prompt, for example:
+
+- Encourage parallelism: *"Use sub-agents to search multiple independent sources in parallel"*
+- Restrict usage: *"Don't use multi-agent for analysis tasks — handle them directly"*
+- Define roles: *"Delegate research tasks to searcher, synthesis tasks to analyst"*
+
 ## Enabling
 
 ```toml
@@ -39,21 +47,26 @@ When `multi-agent` is enabled, 6 tools are registered:
 
 ## Agent lifecycle
 
-```
-spawn_agent("searcher", "Search the web for...")
-     │
-     ├──▶ followup_task("searcher", "Find X")
-     │         │
-     │         └──▶ (searcher works independently)
-     │                    │
-     ├──▶ spawn_agent("analyst", "Analyze search results")
-     │         │
-     │         └──▶ followup_task("analyst", "Review findings")
-     │
-     └──▶ wait_agent("searcher")   ←─ parent collects results
-           wait_agent("analyst")
-           close_agent("searcher")
-           close_agent("analyst")
+```mermaid
+sequenceDiagram
+    participant P as Parent Agent
+    participant S as searcher
+    participant A as analyst
+
+    P->>S: spawn_agent("searcher")
+    P->>S: followup_task("Find X")
+    activate S
+    Note over S: works independently
+    P->>A: spawn_agent("analyst")
+    P->>A: followup_task("Review findings")
+    activate A
+    Note over A: works independently
+    S-->>P: wait_agent("searcher")
+    deactivate S
+    A-->>P: wait_agent("analyst")
+    deactivate A
+    P->>S: close_agent("searcher")
+    P->>A: close_agent("analyst")
 ```
 
 ## Configuration

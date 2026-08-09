@@ -167,4 +167,19 @@ async fn main() -> anyhow::Result<()> {
 ```
 
 Difference from Option 1: no `rustyline`, no REPL loop, just a single `run_turn()` call.
+
+See [Custom Tools](../tools/custom-tool.md) for more tool examples.
+
+## Examples
+
+The repo includes 17 runnable examples — 3 of them don't even need an API key:
+
+```bash
+# No API key needed — uses mock LLM
+cargo run --example custom_policy    # ToolPolicy + Middleware + event hooks
+cargo run --example session_persist  # Session lifecycle and file locking
+cargo run --example event_log        # Per-turn JSONL event persistence
+```
+
+→ [Full examples table](https://github.com/hibuka-labs/phi-agent#examples) with all 17 examples and API key requirements.
 See [Custom Tools](../tools/custom-tool.md) for more examples.

@@ -61,20 +61,15 @@ phi serve --transport http --port 8080
 
 服务器暴露单个 `run` 工具：
 
-```
-外部编排器
-       │
-       │  MCP tools/list → ["run"]
-       │  MCP tools/call run { "prompt": "..." }
-       │
-       ▼
-   phi-agent (Rust 运行时)
-       │
-       │  工具调用、推理、多步执行
-       │  通过 MCP progress 推送进度通知
-       │
-       ▼
-   结果返回编排器
+```mermaid
+graph TD
+    EXT["外部编排器"]
+    PHI["phi-agent<br/>Rust 运行时"]
+
+    EXT -->|"MCP tools/list → ['run']"| PHI
+    EXT -->|"MCP tools/call run { prompt }"| PHI
+    PHI -->|"工具调用、推理、多步执行<br/>通过 MCP progress 推送进度通知"| EXT
+    PHI -->|"结果"| EXT
 ```
 
 此设计遵循与 Claude Code 的 `claude_code()` 函数和 Codex 相同的模式 — 暴露 Agent，而非暴露工具列表。

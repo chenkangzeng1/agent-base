@@ -99,20 +99,24 @@ Result in `session_metrics.json`:
 
 Observability runs in an **independent tokio task**, communicating with the agent via an mpsc channel:
 
-```
-agent task (runtime)              observer task (tokio::spawn)
-      │                                    │
-      ├─ tx.send(msg) ──→ mpsc ──→         rx.recv()
-      │                    channel          │
-      │   observer panic:                   │
-      │   tx.send → Err                    │   💥
-      │   → warn log                        │
-      │   → agent continues                 │
+```mermaid
+sequenceDiagram
+    participant A as Agent Task<br/>(runtime)
+    participant O as Observer Task<br/>(tokio::spawn)
+
+    Note over A,O: Normal operation
+    A->>O: on_turn_end hook → tx.send(TurnEnd)
+    O->>O: build metrics, accumulate in memory
+
+    Note over A,O: Observer panic
+    A->>O: tx.send(msg)
+    O--xA: channel closed
+    Note over A: let _ = send, continues unaffected
 ```
 
-- Observer panics **never crash the agent**
-- Channel buffer drops old messages if full — never blocks the agent
-- File I/O runs via `spawn_blocking`, keeping the async pool free
+- Observer panics **never crash the agent** — hook silently drops failed sends
+- Metrics accumulate in memory during the session; `save_metrics()` writes to disk after `shutdown()`
+- Channel is unbounded — never blocks the agent's hot path
 
 ## File Layout
 
