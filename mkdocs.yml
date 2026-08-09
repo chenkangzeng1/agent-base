@@ -56,7 +56,7 @@ plugins:
           nav:
             - Home: index.md
             - Getting Started:
-                - Quick Start: guide/getting-started/getting-started.md
+                - Quick Start: guide/getting-started/index.md
                 - Configuration: guide/getting-started/configuration.md
             - Concepts:
                 - Architecture: guide/concepts/architecture.md
@@ -85,7 +85,7 @@ plugins:
           nav:
             - 首页: index.md
             - 入门:
-                - 快速开始: guide/getting-started/getting-started.md
+                - 快速开始: guide/getting-started/index.md
                 - 配置详解: guide/getting-started/configuration.md
             - 概念:
                 - 架构设计: guide/concepts/architecture.md
