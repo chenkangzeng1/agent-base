@@ -318,13 +318,21 @@ impl Tool for HelloTool {
 | 文档 | 说明 |
 |------|------|
 | [快速开始](https://docs.phi-agent.dev/zh/guide/getting-started/) | 5 分钟上手 |
-| [自定义工具](https://docs.phi-agent.dev/zh/guide/custom-tool/) | 如何编写 Tool |
-| [CLI 使用](https://docs.phi-agent.dev/zh/guide/cli/) | CLI 参数、REPL、one-shot |
 | [配置详解](https://docs.phi-agent.dev/zh/guide/configuration/) | 配置参考 |
+| [自定义工具](https://docs.phi-agent.dev/zh/guide/custom-tool/) | 如何编写 Tool |
+| [文件工具](https://docs.phi-agent.dev/zh/guide/file-tools/) | read_file / write_file / list_files |
+| [浏览器](https://docs.phi-agent.dev/zh/guide/browser/) | 21 个 CDP 网页自动化工具 |
+| [多 Agent](https://docs.phi-agent.dev/zh/guide/multi-agent/) | 子 Agent 调度与编排 |
+| [MCP](https://docs.phi-agent.dev/zh/guide/mcp/) | 客户端 + 服务器 (Model Context Protocol) |
+| [Skills](https://docs.phi-agent.dev/zh/guide/skills/) | 可复用 Agent 行为 (agentskills.io) |
+| [记忆](https://docs.phi-agent.dev/zh/guide/memory/) | 基于文件系统的跨轮次持久化 |
+| [会话与快照](https://docs.phi-agent.dev/zh/guide/session/) | 会话生命周期、快照、REPL 命令 |
 | [Focus 专注判断](https://docs.phi-agent.dev/zh/guide/focus/) | 结构化单任务 LLM 调用 |
 | [架构设计](https://docs.phi-agent.dev/zh/guide/architecture/) | 设计决策与内部原理 |
+| [CLI 使用](https://docs.phi-agent.dev/zh/guide/cli/) | CLI 参数、REPL、one-shot |
+| [phi serve](https://docs.phi-agent.dev/zh/guide/phi-serve/) | MCP Server / Bridge 协议 |
 | [可观测性](https://docs.phi-agent.dev/zh/guide/observability/) | 日志、追踪、指标 |
-| [高级用法](https://docs.phi-agent.dev/zh/guide/advanced/) | 中间件、会话、事件日志 |
+| [高级用法](https://docs.phi-agent.dev/zh/guide/advanced/) | 中间件、审批策略 |
 | [API 参考](https://docs.rs/phi-agent) | docs.rs 上的 Rustdoc |
 
 源文件也可在 [guide/](guide/) 目录下离线阅读。

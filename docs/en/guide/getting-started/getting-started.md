@@ -98,7 +98,7 @@ let agent = PhiAgent::build(
 
 **3. REPL** — the Agent decides when to call your tool.
 
-Model your own tool after `ClockTool`. See [Custom Tools](custom-tool.md) for more examples.
+Model your own tool after `ClockTool`. See [Custom Tools](../tools/custom-tool.md) for more examples.
 
 ## Option 2: Library integration
 
@@ -167,4 +167,4 @@ async fn main() -> anyhow::Result<()> {
 ```
 
 Difference from Option 1: no `rustyline`, no REPL loop, just a single `run_turn()` call.
-See [Custom Tools](custom-tool.md) for more examples.
+See [Custom Tools](../tools/custom-tool.md) for more examples.

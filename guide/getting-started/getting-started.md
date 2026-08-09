@@ -1,34 +1,34 @@
-# 快速开始
+# Getting Started
 
-5 分钟跑起你的第一个 phi-agent。
+5 minutes to your first phi-agent.
 
-## 前置条件
+## Prerequisites
 
-- [Rust](https://rustup.rs)（stable，edition 2024）
-- 一个 LLM API Key（兼容 OpenAI 接口）
+- [Rust](https://rustup.rs) (stable, edition 2024)
+- An LLM API key (OpenAI-compatible endpoint)
 
-## 安装
+## Install
 
 ```bash
 cargo install phi-agent
 ```
 
-## 方式一：REPL 交互（推荐）
+## Option 1: REPL (recommended)
 
-**1. 创建项目**
+**1. Create project**
 
 ```bash
 phi init my-agent
 ```
 
-**2. 配置 API Key**
+**2. Configure API key**
 
 ```bash
 cd my-agent
 cp .env.example .env
 ```
 
-编辑 `.env`，改成你的 Key：
+Edit `.env` with your key:
 
 ```
 LLM_API_KEY=sk-your-key-here
@@ -36,25 +36,25 @@ LLM_BASE_URL=https://api.openai.com/v1
 LLM_MODEL=gpt-4o
 ```
 
-**3. 运行**
+**3. Run**
 
 ```bash
 cargo run
 ```
 
 ```
-phi> 现在几点了？
+phi> What time is it?
 🔧 get_time
-当前时间：2025-07-30 19:30:00
+Current time: 2025-07-30 19:30:00
 
 phi> /exit
 ```
 
-### 源码解读
+### Code walkthrough
 
-打开 `src/main.rs`，你会看到三部分：
+Open `src/main.rs` — you'll see three parts:
 
-**1. 定义工具** — 实现 `Tool` trait，告诉 Agent 这个工具叫什么、能干什么：
+**1. Define a tool** — implement the `Tool` trait:
 
 ```rust
 struct ClockTool;
@@ -68,7 +68,7 @@ impl Tool for ClockTool {
             "type": "function",
             "function": {
                 "name": "get_time",
-                "description": "获取当前日期和时间",
+                "description": "Get the current date and time",
                 "parameters": { "type": "object", "properties": {} }
             }
         })
@@ -77,7 +77,7 @@ impl Tool for ClockTool {
     async fn call(&self, _args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
         let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
         Ok(ToolOutput {
-            summary: format!("当前时间：{}", now),
+            summary: format!("Current time: {}", now),
             control_flow: ToolControlFlow::Continue,
             raw: None, truncation: None,
         })
@@ -85,39 +85,37 @@ impl Tool for ClockTool {
 }
 ```
 
-**2. 注册工具** — 把工具挂到 Agent 上：
+**2. Register the tool** — attach it to the Agent:
 
 ```rust
 let agent = PhiAgent::build(
     base_agent_builder(llm)
         .system_prompt(build_system_prompt())
-        .register_tool(ClockTool),      // ← 这里注册
+        .register_tool(ClockTool),      // ← register here
     PhiAgentConfig { ... },
 )?;
 ```
 
-**3. REPL** — 交互对话，Agent 自动决定何时调用工具。
+**3. REPL** — the Agent decides when to call your tool.
 
-照着 `ClockTool` 写你自己的工具就行。[自定义工具](custom-tool.md) 里有更多示例。
+Model your own tool after `ClockTool`. See [Custom Tools](../tools/custom-tool.md) for more examples.
 
-## 方式二：库集成
+## Option 2: Library integration
 
-生成单次调用版本（不含 REPL），适合嵌入已有项目。
-
-**1. 创建项目**
+**1. Create project**
 
 ```bash
 phi init --lib my-agent
 ```
 
-**2. 配置 API Key**
+**2. Configure API key**
 
 ```bash
 cd my-agent
 cp .env.example .env
 ```
 
-编辑 `.env`：
+Edit `.env`:
 
 ```
 LLM_API_KEY=sk-your-key-here
@@ -125,18 +123,18 @@ LLM_BASE_URL=https://api.openai.com/v1
 LLM_MODEL=gpt-4o
 ```
 
-**3. 运行**
+**3. Run**
 
 ```bash
 cargo run
 ```
 
-### 源码区别
+### Code walkthrough
 
-打开 `src/main.rs`，同样的 ClockTool，运行时变成单次调用：
+Open `src/main.rs` — same ClockTool, but runs as a single call instead of a REPL:
 
 ```rust
-// ClockTool 定义（同方式一）
+// ClockTool definition (same as Option 1)
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -163,10 +161,10 @@ async fn main() -> anyhow::Result<()> {
     let mut renderer = create_stdout_renderer(&OutputFormat::Terminal {
         show_thinking: true, show_tool_args: true, color: true,
     });
-    agent.run_turn(session, "现在几点了？", |event| renderer.render(event)).await?;
+    agent.run_turn(session, "What time is it?", |event| renderer.render(event)).await?;
     Ok(())
 }
 ```
 
-和方式一的区别：没有 `rustyline`，没有 REPL 循环，直接调用一次 `run_turn`。
-[自定义工具](custom-tool.md) 里有更多示例。
+Difference from Option 1: no `rustyline`, no REPL loop, just a single `run_turn()` call.
+See [Custom Tools](../tools/custom-tool.md) for more examples.

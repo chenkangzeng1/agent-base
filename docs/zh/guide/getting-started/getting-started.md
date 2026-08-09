@@ -98,7 +98,7 @@ let agent = PhiAgent::build(
 
 **3. REPL** — 交互对话，Agent 自动决定何时调用工具。
 
-照着 `ClockTool` 写你自己的工具就行。[自定义工具](custom-tool.md) 里有更多示例。
+照着 `ClockTool` 写你自己的工具就行。[自定义工具](../tools/custom-tool.md) 里有更多示例。
 
 ## 方式二：库集成
 
@@ -131,7 +131,7 @@ LLM_MODEL=gpt-4o
 cargo run
 ```
 
-### 源码解读
+### 源码区别
 
 打开 `src/main.rs`，同样的 ClockTool，运行时变成单次调用：
 
@@ -169,4 +169,4 @@ async fn main() -> anyhow::Result<()> {
 ```
 
 和方式一的区别：没有 `rustyline`，没有 REPL 循环，直接调用一次 `run_turn`。
-[自定义工具](custom-tool.md) 里有更多示例。
+[自定义工具](../tools/custom-tool.md) 里有更多示例。

@@ -25,13 +25,13 @@ graph TB
     AB[agent-base<br/>运行时内核<br/>Tool trait · LLM 客户端 · Events]
 
     AB --> AW[agent-works<br/>MCP · Skills · Focus]
-    AB --> PT[phi-tools<br/>LocalShellTool]
+    AB --> PKT[phi-kernel-tools<br/>内核工具]
     AB --> YT[your-tools<br/>自定义工具实现]
     AB --> PTEL[phi-telemetry<br/>指标采集 · 成本追踪]
     AB --> LOG[log-core<br/>结构化日志]
 
     AW --> PA
-    PT --> PA
+    PKT --> PA
     YT --> PA
     PTEL -.-> PA
     LOG -.-> PA
@@ -55,7 +55,7 @@ graph TB
 - **MCP** — Model Context Protocol 支持
 - **Skills** — 插件/技能系统
 - **Focus** — 带类型的结构化 LLM 调用
-- **内置工具** — 文件操作（读取、写入、列表等）
+- **Multi-Agent** — 子 Agent 调度与编排
 
 ### phi-agent
 框架层 — `cargo add phi-agent` 获取完整功能：
@@ -108,14 +108,14 @@ phi metrics last               # 最新会话
 
 ## 关键设计决策
 
-### 不内置工具
-phi-agent 不了解任何具体工具。工具通过 `AgentBuilder::register_tool()` 外部注册。框架保持精简，消费者完全可控。
+### 内核工具，非应用工具
+phi-agent 提供内核工具（文件读写、Shell、子 Agent 调度）作为可选基础设施，但不预设任何应用工具（无网页搜索、数据库连接器）。工具通过 `AgentBuilder::register_tool()` 外部注册。
 
-### 不内置记忆
-没有向量数据库、嵌入存储、隐藏状态。每一个决策都可追溯到 prompt。
+### 文件记忆，无向量库
+phi-agent 内置基于文件系统的记忆功能（`.phi/memory/`），但没有向量数据库、embedding、语义搜索。每个决策都可追溯到 prompt。
 
 ### 可观测性默认开启
-每个 session 自动写入 `session_metrics.json`。Token 消耗、延迟分布、工具调用统计全部记录。`phi metrics` 查看。详见 [可观测性](observability.md)。
+每个 session 自动写入 `session_metrics.json`。Token 消耗、延迟分布、工具调用统计全部记录。`phi metrics` 查看。详见 [可观测性](../advanced/observability.md)。
 
 ### 会话隔离
-每个会话有独立目录和文件锁，防止多进程并发访问。详见 [高级用法](advanced.md)。
+每个会话有独立目录和文件锁，防止多进程并发访问。详见 [高级用法](../advanced/advanced.md)。

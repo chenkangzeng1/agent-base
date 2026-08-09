@@ -25,13 +25,13 @@ graph TB
     AB[agent-base<br/>Runtime kernel<br/>Tool trait · LLM clients · Events]
 
     AB --> AW[agent-works<br/>MCP · Skills · Focus]
-    AB --> PT[phi-tools<br/>LocalShellTool]
+    AB --> PKT[phi-kernel-tools<br/>Kernel tools]
     AB --> YT[your-tools<br/>Custom Tool impls]
     AB --> PTEL[phi-telemetry<br/>Metrics · Cost tracking]
     AB --> LOG[log-core<br/>Structured logging]
 
     AW --> PA
-    PT --> PA
+    PKT --> PA
     YT --> PA
     PTEL -.-> PA
     LOG -.-> PA
@@ -68,7 +68,7 @@ Built on agent-base — `cargo add agent-works` for the toolbox:
 - **MCP** — Model Context Protocol support
 - **Skills** — plugin/skill system
 - **Focus** — structured LLM calls with typed input/output
-- **Built-in tools** — file operations (read, write, list, etc.)
+- **Multi-Agent** — sub-agent spawning and orchestration
 
 ### phi-agent (this crate)
 Framework layer — `cargo add phi-agent` for the full thing:
@@ -127,14 +127,14 @@ for the complete specification, phi-dash plans, and analysis workflows.
 
 ## Key Design Decisions
 
-### No Built-in Tools
-phi-agent knows nothing about specific tools. Tools are registered externally via `AgentBuilder::register_tool()`. Keeps the framework lean and the consumer in full control.
+### Kernel Tools, Not Application Tools
+phi-agent provides kernel tools (file I/O, shell, sub-agents) as opt-in infrastructure, but ships with zero application tools (no web search, no database connector). Tools are registered externally via `AgentBuilder::register_tool()`.
 
-### No Built-in Memory
-No vector DB, no embeddings storage, no hidden state. Every decision is traceable to the prompt.
+### File-Based Memory, No Vector DB
+phi-agent includes file-based memory (`.phi/memory/`) for persistence across turns, but has no vector database, no embeddings, no semantic search. Every decision is traceable to the prompt.
 
 ### Observability by Default
-Every session writes `session_metrics.json` automatically. Token usage, latency distribution, tool call stats are all recorded. Use `phi metrics` to view. See [Observability](observability.md).
+Every session writes `session_metrics.json` automatically. Token usage, latency distribution, tool call stats are all recorded. Use `phi metrics` to view. See [Observability](../advanced/observability.md).
 
 ### Session Isolation
-Each session has its own directory and file lock, preventing concurrent access from multiple processes. See [Advanced Usage](advanced.md).
+Each session has its own directory and file lock, preventing concurrent access from multiple processes. See [Advanced Usage](../advanced/advanced.md).

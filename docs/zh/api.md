@@ -26,7 +26,7 @@ phi-agent 重导出了 [`agent-works`](https://docs.rs/agent-works) 的关键类
 
 `Focus`、`FocusContext`、`FocusInput`、`FocusOutput`、`FocusError`。
 
-→ 使用示例请参见 [Focus 指南](guide/focus.md)。
+→ 使用示例请参见 [Focus 指南](guide/concepts/focus.md)。
 
 ---
 

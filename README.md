@@ -312,13 +312,21 @@ Full guide: [guide/custom-tool.md](guide/custom-tool.md)
 | Resource | Description |
 |----------|-------------|
 | [Getting Started](https://docs.phi-agent.dev/guide/getting-started/) | 5-minute quick start |
-| [Custom Tools](https://docs.phi-agent.dev/guide/custom-tool/) | How to write a Tool |
-| [CLI Usage](https://docs.phi-agent.dev/guide/cli/) | CLI flags, REPL, one-shot |
 | [Configuration](https://docs.phi-agent.dev/guide/configuration/) | Config reference |
+| [Custom Tools](https://docs.phi-agent.dev/guide/custom-tool/) | How to write a Tool |
+| [File Tools](https://docs.phi-agent.dev/guide/file-tools/) | read_file / write_file / list_files |
+| [Browser](https://docs.phi-agent.dev/guide/browser/) | 21 CDP tools for web automation |
+| [Multi-Agent](https://docs.phi-agent.dev/guide/multi-agent/) | Sub-agent spawning and orchestration |
+| [MCP](https://docs.phi-agent.dev/guide/mcp/) | Client + Server (Model Context Protocol) |
+| [Skills](https://docs.phi-agent.dev/guide/skills/) | Reusable agent behaviors (agentskills.io) |
+| [Memory](https://docs.phi-agent.dev/guide/memory/) | File-based persistence across turns |
+| [Session & Snapshots](https://docs.phi-agent.dev/guide/session/) | Session lifecycle, snapshots, REPL commands |
 | [Focus](https://docs.phi-agent.dev/guide/focus/) | Structured single-purpose LLM calls |
 | [Architecture](https://docs.phi-agent.dev/guide/architecture/) | Design decisions and internals |
+| [CLI Usage](https://docs.phi-agent.dev/guide/cli/) | CLI flags, REPL, one-shot |
+| [phi serve](https://docs.phi-agent.dev/guide/phi-serve/) | MCP Server / Bridge protocol |
 | [Observability](https://docs.phi-agent.dev/guide/observability/) | Logging, tracing, metrics |
-| [Advanced](https://docs.phi-agent.dev/guide/advanced/) | Middleware, sessions, event log |
+| [Advanced](https://docs.phi-agent.dev/guide/advanced/) | Middleware, policies |
 | [API Reference](https://docs.rs/phi-agent) | Rustdoc on docs.rs |
 
 Source files are also available in [guide/](guide/) for offline reading.
