@@ -78,7 +78,9 @@ async fn main() -> AgentResult<()> {
         StreamChunk::Text("Data analysis results：".to_string()),
         StreamChunk::Text("Monthly sales 120 10K，MoM growth 15%，".to_string()),
         StreamChunk::Text("Online channel share 60%，Offline channel share 40%。".to_string()),
-        StreamChunk::Stop,
+        StreamChunk::Stop {
+            finish_reason: Some("stop".to_string()),
+        },
     ]]));
 
     let sub_runtime = AgentBuilder::new(sub_llm)
@@ -110,14 +112,14 @@ async fn main() -> AgentResult<()> {
                         }]
                     }
                 })),
-                StreamChunk::Stop,
+                StreamChunk::Stop { finish_reason: Some("stop".to_string()) },
             ],
             vec![
                 StreamChunk::Text(
                     "Based on sub-agent analysis results, this month's sales performance is good.".to_string(),
                 ),
                 StreamChunk::Text("Conclusion：Recommend increasing online channel investment，while optimizing offline store layout。".to_string()),
-                StreamChunk::Stop,
+                StreamChunk::Stop { finish_reason: Some("stop".to_string()) },
             ],
         ],
     ));

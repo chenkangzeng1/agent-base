@@ -400,7 +400,9 @@ impl LlmClient for OpenAiClient {
             .map(|event| match event {
                 Ok(event) => {
                     if event.data == "[DONE]" {
-                        return Ok(StreamChunk::Stop);
+                        return Ok(StreamChunk::Stop {
+                            finish_reason: None,
+                        });
                     }
 
                     let data: Value = serde_json::from_str(&event.data)
@@ -448,8 +450,10 @@ impl LlmClient for OpenAiClient {
                         return Ok(StreamChunk::Text(text.to_string()));
                     }
 
-                    if finish_reason == "stop" {
-                        return Ok(StreamChunk::Stop);
+                    if finish_reason == "stop" || finish_reason == "length" {
+                        return Ok(StreamChunk::Stop {
+                            finish_reason: Some(finish_reason.to_string()),
+                        });
                     }
 
                     Ok(StreamChunk::Text(String::new()))

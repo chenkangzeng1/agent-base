@@ -331,7 +331,14 @@ impl AnthropicClient {
                     total_tokens: None,
                 }))
             }
-            "message_stop" => Ok(StreamChunk::Stop),
+            "message_stop" => {
+                let finish_reason = data
+                    .get("message")
+                    .and_then(|m| m.get("stop_reason"))
+                    .and_then(Value::as_str)
+                    .map(String::from);
+                Ok(StreamChunk::Stop { finish_reason })
+            }
             "ping" => Ok(StreamChunk::Text(String::new())),
             _ => Ok(StreamChunk::Text(String::new())),
         }

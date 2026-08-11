@@ -100,7 +100,7 @@ async fn probe_model(
             StreamChunk::ToolCall(_) => {
                 tool_calls += 1;
             }
-            StreamChunk::Stop => {
+            StreamChunk::Stop { .. } => {
                 has_stop = true;
             }
             StreamChunk::Usage(u) => {

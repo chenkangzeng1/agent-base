@@ -26,7 +26,7 @@ pub mod prelude {
 // ---------------------------------------------------------------------------
 pub use engine::{
     AgentBuilder, AgentRuntime, AgentSession, CircuitBreaker, CircuitState, DefaultPipeline,
-    InMemorySessionStore, SessionId, SessionStore, ToolExecutionPipeline,
+    InMemorySessionStore, QueueMode, SessionId, SessionStore, ToolExecutionPipeline,
 };
 
 // ---------------------------------------------------------------------------

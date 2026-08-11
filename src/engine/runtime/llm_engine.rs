@@ -196,7 +196,15 @@ impl LlmEngine {
                         Ok(StreamChunk::Usage(usage)) => {
                             aggregator.usage = Some(usage);
                         }
-                        Ok(StreamChunk::Stop) => {}
+                        Ok(StreamChunk::Stop { finish_reason }) => {
+                            // Only capture the first non-None finish_reason.
+                            // OpenAI emits [DONE] after the final chunk, which
+                            // would overwrite a "length" finish_reason with None,
+                            // silently disabling the truncation guard.
+                            if finish_reason.is_some() {
+                                aggregator.finish_reason = finish_reason;
+                            }
+                        }
                         Err(e) => {
                             tracing::error!(session_id = session_id.id, error = %e, "LLM stream error");
                             return Err(e);
@@ -263,6 +271,7 @@ impl LlmEngine {
             is_tool_call: aggregator.is_tool_call,
             tool_calls,
             usage: aggregator.usage,
+            finish_reason: aggregator.finish_reason,
             ttft_ms: aggregator.ttft_ms,
             llm_duration_ms: total_elapsed.as_millis() as u64,
         })
@@ -286,6 +295,9 @@ pub struct LlmTurnResult {
     pub is_tool_call: bool,
     pub tool_calls: Vec<Value>,
     pub usage: Option<UsageInfo>,
+    /// Provider stop reason (e.g. "stop", "length", "tool_calls", "end_turn").
+    /// `"length"` means the response hit the token limit — tool call arguments may be truncated.
+    pub finish_reason: Option<String>,
     /// Time to first token in milliseconds (user-perceived latency).
     pub ttft_ms: u64,
     /// LLM stream duration in milliseconds (from stream start to end).
@@ -301,6 +313,8 @@ struct StreamAggregator {
     pub is_tool_call: bool,
     pub partials: std::collections::HashMap<usize, (String, String, String)>,
     pub usage: Option<UsageInfo>,
+    /// Provider stop reason captured from StreamChunk::Stop.
+    pub finish_reason: Option<String>,
     /// Time to first token in milliseconds.
     pub ttft_ms: u64,
 }
@@ -313,6 +327,7 @@ impl StreamAggregator {
             is_tool_call: false,
             partials: std::collections::HashMap::new(),
             usage: None,
+            finish_reason: None,
             ttft_ms: 0,
         }
     }

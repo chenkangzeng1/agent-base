@@ -500,6 +500,19 @@ async fn main() -> AgentResult<()> {
                         UserEvent::Progress { text } => {
                             println!("  ⏳ [Progress] {}", text);
                         }
+                        UserEvent::ToolPartialResult {
+                            tool_call_id,
+                            content,
+                            is_partial,
+                        } => {
+                            let marker = if is_partial { "⏳" } else { "✅" };
+                            println!(
+                                "  {} [Partial:{}] {}",
+                                marker,
+                                tool_call_id,
+                                &content[..content.len().min(100)]
+                            );
+                        }
                         UserEvent::Structured { event_type, data } => {
                             println!(
                                 "  📦 [Structured] type={} data={}",

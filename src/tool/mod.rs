@@ -67,6 +67,21 @@ impl ToolContext {
     pub fn emit_progress(&self, text: impl Into<String>) {
         self.emit_user_event(UserEvent::Progress { text: text.into() });
     }
+
+    /// Convenience: emit a partial result during long-running tool execution.
+    /// `is_partial: true` means more output is coming; `false` means final.
+    pub fn emit_partial_result(
+        &self,
+        tool_call_id: &str,
+        content: impl Into<String>,
+        is_partial: bool,
+    ) {
+        self.emit_user_event(UserEvent::ToolPartialResult {
+            tool_call_id: tool_call_id.to_string(),
+            content: content.into(),
+            is_partial,
+        });
+    }
 }
 
 /// Machine-readable metadata for a registered tool — origin, version, and

@@ -26,6 +26,8 @@ pub use recovery::{
     ConsecutiveFailureRecovery, RetryOnError, StopOnError, ToolErrorAction, ToolErrorRecovery,
 };
 pub use runtime::AgentRuntime;
+pub use runtime::QueueMode;
+pub use runtime::SessionManager;
 pub use safety::TurnToolLimitMiddleware;
 pub use session::AgentSession;
 pub use session_store::{InMemorySessionStore, SessionStore};

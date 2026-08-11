@@ -14,6 +14,7 @@ use super::approval::ApprovalHandler;
 mod event_bus;
 pub(crate) use event_bus::EventBus;
 mod llm_engine;
+mod message_queue;
 mod plan_runner;
 mod react_loop;
 mod session_manager;
@@ -22,6 +23,7 @@ mod tool_engine;
 pub(super) const DEFAULT_MAX_TURNS: u32 = 50;
 
 pub use llm_engine::LlmEngine;
+pub use message_queue::QueueMode;
 pub(crate) use plan_runner::RuntimeCore;
 pub use session_manager::SessionManager;
 pub(crate) use tool_engine::ToolEngine;
@@ -308,5 +310,46 @@ impl AgentRuntime {
     /// Check if cancellation has been requested
     pub fn is_cancelled(&self) -> bool {
         self.runner.is_cancelled()
+    }
+
+    // ── Message Queue (P2) ──
+
+    /// Push a steering message — will be processed at the start of the next turn
+    /// in the current `run_managed()` loop.
+    pub fn steer(&self, message: String) {
+        self.runner.message_queue.steer(message);
+    }
+
+    /// Push a follow-up message — will be processed after the inner turn loop
+    /// stops naturally (no tool calls or max turns).
+    pub fn follow_up(&self, message: String) {
+        self.runner.message_queue.follow_up(message);
+    }
+
+    /// Run the agent in managed mode with message queue support.
+    ///
+    /// This wraps `run_turn()` (or `run()`) in an outer loop: after the inner
+    /// turn loop completes, any follow-up messages are drained and a new inner
+    /// loop is started. Steering messages are drained automatically at each
+    /// iteration of the inner turn loop.
+    ///
+    /// The `on_event` callback receives all events from every inner run.
+    pub async fn run_managed<F>(
+        &self,
+        session_id: SessionId,
+        user_input: &str,
+        on_event: F,
+    ) -> AgentResult<RunOutcome>
+    where
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
+    {
+        self.runner
+            .run_managed(session_id, user_input, on_event)
+            .await
+    }
+
+    /// Set the drain mode for the message queues.
+    pub fn set_queue_mode(&self, mode: crate::engine::runtime::message_queue::QueueMode) {
+        self.runner.message_queue.set_mode(mode);
     }
 }

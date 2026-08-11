@@ -65,7 +65,7 @@ async fn run_test(
                 text_len += text.len();
                 print!("{}", text);
             }
-            StreamChunk::Stop => {
+            StreamChunk::Stop { .. } => {
                 println!("\n\n--- 流结束 ---");
             }
             StreamChunk::ToolCall(_) => {

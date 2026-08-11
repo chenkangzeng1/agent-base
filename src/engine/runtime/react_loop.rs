@@ -648,6 +648,25 @@ impl RuntimeCore {
                 return Ok((RunOutcome::Cancelled, turn_count));
             }
 
+            // Drain steering messages (P2) — injected mid-run by steer().
+            // These are pushed as user messages and processed in this iteration.
+            {
+                let steering_msgs = self.message_queue.drain_steering();
+                if !steering_msgs.is_empty() {
+                    tracing::info!(
+                        session_id = session_id.id,
+                        count = steering_msgs.len(),
+                        "drained steering messages"
+                    );
+                    for msg in steering_msgs {
+                        self.with_session_mut(session_id, |session| {
+                            session.push_message(MessageRole::User, &msg);
+                        })
+                        .await?;
+                    }
+                }
+            }
+
             if turn_count > max_turns {
                 tracing::warn!(
                     session_id = session_id.id,
@@ -797,6 +816,7 @@ impl RuntimeCore {
                     is_tool_call,
                     tool_calls,
                     usage,
+                    finish_reason,
                     ttft_ms,
                     llm_duration_ms,
                 }) => {
@@ -889,6 +909,41 @@ impl RuntimeCore {
                     }
 
                     if result.is_tool_call && !result.tool_calls.is_empty() {
+                        // P5: Truncation guard — when the LLM response hit the token limit,
+                        // tool call arguments may be incomplete. Fail all tool calls
+                        // without executing them, so the LLM can retry with complete args.
+                        if finish_reason.as_deref() == Some("length") {
+                            tracing::warn!(
+                                session_id = session_id.id,
+                                turn = turn_count,
+                                tool_count = tool_calls.len(),
+                                "LLM response truncated (finish_reason=length) — tool calls may have incomplete arguments, marking as errors"
+                            );
+                            for tc in &tool_calls {
+                                let tc_id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                                let tc_name = tc
+                                    .get("function")
+                                    .and_then(|f| f.get("name"))
+                                    .and_then(|n| n.as_str())
+                                    .unwrap_or("unknown");
+                                self.with_session_mut(session_id, |session| {
+                                    session.push_message(
+                                        MessageRole::Assistant,
+                                        format!("[would call tool: {}]", tc_name),
+                                    );
+                                    session.push_tool_result(
+                                        tc_id,
+                                        "Tool call was not executed: the response hit the output token limit, \
+                                         so its arguments may be truncated. Re-issue the tool call with complete arguments.",
+                                    );
+                                })
+                                .await?;
+                            }
+                            // Skip tool execution entirely — the error results above will
+                            // cause the LLM to regenerate the tool calls in the next turn.
+                            continue;
+                        }
+
                         tracing::info!(
                             session_id = session_id.id,
                             turn = turn_count,
@@ -1241,6 +1296,172 @@ impl RuntimeCore {
         Ok(())
     }
 
+    /// Managed run with follow-up queue support (P2).
+    ///
+    /// After the inner turn loop completes naturally (text response, no tool calls),
+    /// follow-up messages are drained and a new inner loop is started. This repeats
+    /// until no more follow-up messages are queued.
+    pub(super) async fn run_managed<F>(
+        &self,
+        session_id: SessionId,
+        user_input: &str,
+        mut on_event: F,
+    ) -> AgentResult<RunOutcome>
+    where
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
+    {
+        // Reset cancel token for this managed run
+        self.reset_cancel();
+
+        let span = tracing::info_span!("agent_managed_run", session_id = session_id.id);
+        let _enter = span.enter();
+
+        let mut event_rx = self.event_bus.subscribe();
+
+        if let Err(e) = self.validate_session(&session_id).await {
+            tracing::warn!(session_id = session_id.id, error = %e, "session validation failed");
+            self.event_bus.emit(RuntimeEvent::RunFinished {
+                session_id: session_id.clone(),
+                agent_id: None,
+                trace_id: None,
+            });
+            EventBus::drain_async_events(&mut event_rx, &mut on_event)?;
+            return Err(e);
+        }
+
+        let tool_definitions = self.tool_engine.definitions().await;
+        tracing::debug!(
+            session_id = session_id.id,
+            tool_count = tool_definitions.len(),
+            "managed run start"
+        );
+
+        // Push initial user message
+        self.with_session_mut(&session_id, |session| {
+            session.push_message(MessageRole::User, user_input);
+        })
+        .await?;
+
+        // Apply user message middleware
+        let user_input_owned = self
+            .apply_user_message_mw(&session_id, user_input.to_string())
+            .await?;
+
+        // Reset nudge_count and turn_tool_calls
+        self.with_session_mut(&session_id, |session| {
+            session.nudge_count = 0;
+            session.turn_tool_calls = 0;
+        })
+        .await?;
+
+        // Outer follow-up loop
+        let mut current_input = user_input_owned;
+        let mut final_outcome;
+        let mut total_turns = 0u32;
+
+        let config = self.config_snapshot_async().await;
+        let max_turns = config
+            .execution
+            .max_turns
+            .unwrap_or(crate::engine::runtime::DEFAULT_MAX_TURNS);
+
+        loop {
+            // Guard against unbounded execution: if follow-up messages
+            // keep arriving, break out when the cumulative turn budget is
+            // exhausted.
+            if total_turns >= max_turns {
+                tracing::warn!(
+                    session_id = session_id.id,
+                    total_turns,
+                    max_turns,
+                    "managed run: global turn cap reached"
+                );
+                final_outcome = RunOutcome::MaxTurnsExceeded { turns: total_turns };
+                break;
+            }
+
+            // Run inner turn loop (steering drained at each iteration inside)
+            let result = self
+                .run_turn_loop(
+                    &session_id,
+                    &current_input,
+                    &tool_definitions,
+                    total_turns,
+                    &mut event_rx,
+                    &mut on_event,
+                )
+                .await;
+
+            // Emit RunCancelled if cancelled
+            let is_cancelled = matches!(&result, Err(e) if e.is_cancelled());
+            if is_cancelled {
+                on_event(RuntimeEvent::RunCancelled {
+                    session_id: session_id.clone(),
+                    agent_id: None,
+                    trace_id: None,
+                })?;
+                // Safe: we just checked it's Err and cancelled
+                return Err(result.unwrap_err());
+            }
+
+            // Emit RunCancelled for Ok(Cancelled) outcome
+            if let Ok((RunOutcome::Cancelled, _)) = &result {
+                on_event(RuntimeEvent::RunCancelled {
+                    session_id: session_id.clone(),
+                    agent_id: None,
+                    trace_id: None,
+                })?;
+                return Ok(RunOutcome::Cancelled);
+            }
+
+            let (outcome, turns) = result?;
+            total_turns += turns;
+            final_outcome = outcome;
+
+            // Check for follow-up messages
+            let follow_up_msgs = self.message_queue.drain_follow_up();
+            if follow_up_msgs.is_empty() {
+                break;
+            }
+
+            tracing::info!(
+                session_id = session_id.id,
+                count = follow_up_msgs.len(),
+                "drained follow-up messages, starting new inner loop"
+            );
+
+            for msg in follow_up_msgs {
+                self.with_session_mut(&session_id, |session| {
+                    session.push_message(MessageRole::User, &msg);
+                })
+                .await?;
+            }
+
+            // Use an empty input for follow-up continuation (messages are already in session)
+            current_input = String::new();
+        }
+
+        // Emit RunFinished
+        self.event_bus.emit(RuntimeEvent::RunFinished {
+            session_id: session_id.clone(),
+            agent_id: None,
+            trace_id: None,
+        });
+        EventBus::drain_async_events(&mut event_rx, &mut on_event)?;
+
+        // Clean up ephemeral messages
+        if let Err(e) = self
+            .with_session_mut(&session_id, |session| {
+                session.remove_ephemeral_messages();
+            })
+            .await
+        {
+            tracing::warn!(error = %e, "failed to clean up ephemeral messages");
+        }
+
+        Ok(final_outcome)
+    }
+
     pub async fn with_session_mut<F, R>(&self, session_id: &SessionId, f: F) -> AgentResult<R>
     where
         F: FnOnce(&mut crate::engine::AgentSession) -> R,
@@ -1329,6 +1550,7 @@ mod tests {
     use serde_json::Value;
     use std::pin::Pin;
     use std::sync::Arc;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::task::{Context, Poll};
 
@@ -1512,5 +1734,138 @@ mod tests {
         // Note: the react loop may retry LLM errors, so the result might be Ok (retry succeeded
         // via retry logic) or Err.  Either is fine — the key assertion is that RunFinished fires.
         let _ = result;
+    }
+
+    /// Mock LLM that returns scripted responses — one Vec<StreamChunk> per call.
+    struct ScriptedClient {
+        script: Mutex<std::vec::IntoIter<Vec<StreamChunk>>>,
+    }
+
+    impl ScriptedClient {
+        fn new(script: Vec<Vec<StreamChunk>>) -> Self {
+            Self {
+                script: Mutex::new(script.into_iter()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LlmClient for ScriptedClient {
+        async fn chat(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[Value],
+            _reasoning: Option<&crate::ReasoningConfig>,
+            _response_format: Option<&ResponseFormat>,
+        ) -> AgentResult<Value> {
+            Ok(Value::Null)
+        }
+
+        async fn chat_stream(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[Value],
+            _reasoning: Option<&crate::ReasoningConfig>,
+            _response_format: Option<&ResponseFormat>,
+        ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
+            let chunks: Vec<AgentResult<StreamChunk>> = self
+                .script
+                .lock()
+                .unwrap()
+                .next()
+                .unwrap_or_default()
+                .into_iter()
+                .map(Ok)
+                .collect();
+            Ok(Box::pin(futures_util::stream::iter(chunks)))
+        }
+
+        fn capabilities(&self) -> LlmCapabilities {
+            LlmCapabilities {
+                supports_streaming: true,
+                supports_tools: true,
+                supports_vision: false,
+                supports_thinking: false,
+                max_context_tokens: None,
+                max_output_tokens: None,
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn truncation_guard_blocks_tool_calls_on_length_finish_reason() {
+        // First call: tool call with finish_reason="length" — should be blocked by guard.
+        // Second call: model retries with corrected approach (text response).
+        let client = Arc::new(ScriptedClient::new(vec![
+            // Turn 1: truncated tool call
+            vec![
+                StreamChunk::ToolCall(serde_json::json!({
+                    "delta": {
+                        "tool_calls": [{
+                            "id": "call_trunc",
+                            "function": {
+                                "name": "shell",
+                                "arguments": "{\"cmd\": \"rm -rf /inco"
+                            }
+                        }]
+                    }
+                })),
+                StreamChunk::Stop {
+                    finish_reason: Some("length".to_string()),
+                },
+            ],
+            // Turn 2: model sees the error and retries
+            vec![
+                StreamChunk::Text(
+                    "I see the previous call was truncated. Let me re-issue it.".to_string(),
+                ),
+                StreamChunk::Stop {
+                    finish_reason: Some("stop".to_string()),
+                },
+            ],
+        ]));
+
+        let runtime = AgentBuilder::new(client)
+            .system_prompt("You are a careful assistant.")
+            .build()
+            .expect("build runtime");
+
+        let sid = runtime.create_session().await;
+
+        let mut events = Vec::new();
+        let result = runtime
+            .run_turn(sid.clone(), "run a command", |event| {
+                events.push(event);
+                Ok(())
+            })
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "run_turn should complete: {:?}",
+            result.err()
+        );
+
+        // Verify the session messages contain the truncation error, not the
+        // partial argument that would have been executed.
+        let session = runtime.session(&sid).await.expect("session exists");
+        let messages = session.chat_messages().to_vec();
+
+        let has_truncation_error = messages.iter().any(|m| {
+            if let ChatMessage::Tool { content, .. } = m {
+                content.contains("Tool call was not executed")
+                    && content.contains("output token limit")
+            } else {
+                false
+            }
+        });
+        assert!(
+            has_truncation_error,
+            "session should contain truncation error tool result. Messages: {:#?}",
+            messages
+                .iter()
+                .map(|m| format!("{:?}", m))
+                .collect::<Vec<_>>()
+        );
     }
 }

@@ -6,6 +6,7 @@ use crate::engine::context::ContextWindowManager;
 use crate::engine::middleware::MiddlewareRef;
 use crate::engine::runtime::event_bus::EventBus;
 use crate::engine::runtime::llm_engine::LlmEngine;
+use crate::engine::runtime::message_queue::MessageQueue;
 use crate::engine::runtime::session_manager::SessionManager;
 use crate::engine::runtime::tool_engine::ToolEngine;
 use crate::types::{AgentConfig, TurnContext};
@@ -25,6 +26,8 @@ pub(crate) struct RuntimeCore {
     /// Turn-end callbacks registered by consumers.
     /// Uses std::sync::RwLock — registration is cold-path and read-lock is brief.
     pub(crate) turn_end_callbacks: StdRwLock<Vec<TurnEndCallback>>,
+    /// Dual-queue message system (steering + follow-up).
+    pub(crate) message_queue: MessageQueue,
 }
 
 impl RuntimeCore {
@@ -47,6 +50,7 @@ impl RuntimeCore {
             middlewares,
             cancel_token: Mutex::new(CancellationToken::new()),
             turn_end_callbacks: StdRwLock::new(Vec::new()),
+            message_queue: MessageQueue::new(),
         }
     }
 

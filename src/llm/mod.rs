@@ -19,7 +19,14 @@ pub enum StreamChunk {
     Thought(String),
     ToolCall(Value),
     Usage(UsageInfo),
-    Stop,
+    /// Stream termination. `finish_reason` is the provider's stop reason:
+    /// - `"stop"`: natural completion
+    /// - `"length"`: hit token limit (tool call args may be truncated)
+    /// - `"tool_calls"`: model requested tool calls
+    /// - `None`: synthetic stop (e.g. `[DONE]` sentinel, stream closed)
+    Stop {
+        finish_reason: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, Default)]

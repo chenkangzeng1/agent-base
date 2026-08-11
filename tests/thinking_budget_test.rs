@@ -67,7 +67,9 @@ impl LlmClient for CaptureLlmClient {
         self.captured_bodies.lock().unwrap().push(body);
 
         // 返回一个空的流
-        let stream = futures_util::stream::iter(vec![Ok(StreamChunk::Stop)]);
+        let stream = futures_util::stream::iter(vec![Ok(StreamChunk::Stop {
+            finish_reason: Some("stop".to_string()),
+        })]);
         Ok(Box::pin(stream))
     }
 

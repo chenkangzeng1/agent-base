@@ -65,7 +65,7 @@ async fn test_summarize(
             StreamChunk::ToolCall(_) => {
                 tool_calls += 1;
             }
-            StreamChunk::Stop => {
+            StreamChunk::Stop { .. } => {
                 has_stop = true;
             }
             StreamChunk::Usage(u) => {

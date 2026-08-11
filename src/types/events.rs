@@ -27,6 +27,13 @@ pub enum UserEvent {
     },
     /// User-defined structured event for custom business semantics.
     Structured { event_type: String, data: Value },
+    /// Tool partial result — emitted during long-running tool execution.
+    /// `is_partial: true` means more output is coming; `false` means this is the final chunk.
+    ToolPartialResult {
+        tool_call_id: String,
+        content: String,
+        is_partial: bool,
+    },
 }
 
 // ---------------------------------------------------------------------------
