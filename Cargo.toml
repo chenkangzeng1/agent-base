@@ -27,11 +27,13 @@ chrono = { version = "0.4", features = ["serde"] }
 opentelemetry = { version = "0.30", optional = true }
 tracing-opentelemetry = { version = "0.30", optional = true }
 uuid = { version = "1", features = ["v4"] }
+rusqlite = { version = "0.32", optional = true, features = ["bundled"] }
 
 [features]
 default = []
 typed-tools = ["schemars"]
 telemetry = ["opentelemetry", "tracing-opentelemetry"]
+sqlite-session = ["dep:rusqlite"]
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

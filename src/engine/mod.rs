@@ -31,5 +31,8 @@ pub use runtime::SessionManager;
 pub use safety::TurnToolLimitMiddleware;
 pub use session::AgentSession;
 pub use session_store::{InMemorySessionStore, SessionStore};
+
+#[cfg(feature = "sqlite-session")]
+pub use session_store::SqliteSessionStore;
 pub use tool_enforcement::{ToolEnforcementConfig, ToolEnforcementMiddleware};
 pub use turn_facts::TurnFactMiddleware;
