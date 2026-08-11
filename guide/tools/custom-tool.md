@@ -24,7 +24,7 @@ Three things to implement:
 ## Example: Weather Tool
 
 ```rust
-use agent_base::{AgentResult, Tool, ToolContext, ToolOutput};
+use agent_base::{AgentResult, Tool, ToolContext, ToolControlFlow, ToolOutput};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
@@ -82,11 +82,10 @@ let agent = PhiAgent::build(builder, config)?;
 
 ```rust
 ToolOutput {
-    id: None,                    // auto-generated
-    summary: Some("Done".into()), // shown to user
-    raw: json!({"temp": 22}),    // full data (can be large)
+    summary: "Done".into(),       // shown to user
+    raw: json!({"temp": 22}),     // full data (can be large)
     control_flow: ToolControlFlow::Continue,  // Continue or Break
-    truncation: None,             // set if output was truncated
+    truncation: None,              // set if output was truncated
 }
 ```
 

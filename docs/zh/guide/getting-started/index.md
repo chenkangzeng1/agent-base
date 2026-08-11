@@ -184,3 +184,4 @@ cargo run --example event_log        # 每轮事件 JSONL 持久化
 ```
 
 → [完整示例列表](https://github.com/hibuka-labs/phi-agent#examples)（含全部 17 个示例及 API Key 要求）。
+更多示例参见 [自定义工具](../tools/custom-tool.md)。

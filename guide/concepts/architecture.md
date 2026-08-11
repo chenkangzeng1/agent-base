@@ -26,7 +26,7 @@ graph TB
     AB[agent-base<br/>Runtime kernel<br/>Tool trait · LLM clients · Events]
 
     AB --> AW[agent-works<br/>MCP · Skills · Focus]
-    AB --> PKT[phi-kernel-tools<br/>Kernel tools]
+    AB --> PKT[phi-kernel-tools<br/>Kernel tools<br/><i>(off by default)</i>]
     AB --> YT[your-tools<br/>Custom Tool impls]
     AB --> PTEL[phi-telemetry<br/>Metrics · Cost tracking]
     AB --> LOG[log-core<br/>Structured logging]

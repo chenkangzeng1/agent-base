@@ -82,11 +82,10 @@ let agent = PhiAgent::build(builder, config)?;
 
 ```rust
 ToolOutput {
-    id: None,                          // 自动生成
-    summary: "Done".into(),            // 展示给用户的摘要
-    raw: json!({"temp": 22}),          // 完整数据（可以很大）
+    summary: "Done".into(),                // 展示给用户的摘要
+    raw: json!({"temp": 22}),              // 完整数据（可以很大）
     control_flow: ToolControlFlow::Continue,  // Continue 或 Break
-    truncation: None,                  // 如果输出被截断，在此标记
+    truncation: None,                      // 如果输出被截断，在此标记
 }
 ```
 

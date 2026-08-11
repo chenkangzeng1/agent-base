@@ -3,3 +3,10 @@
   padding: 0.2rem 0.8rem;
   font-size: 0.65rem;
 }
+
+/* 三列卡片（首页） */
+@media screen and (min-width: 960px) {
+  .grid.cards.col-3 {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}

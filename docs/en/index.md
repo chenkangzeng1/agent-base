@@ -9,7 +9,7 @@ hide:
   phi-agent
 </h1>
 
-Not another AI Agent, but an open application framework for building Agents — built for embedded, edge, and vertical industries, equally suited for highly customizable, high-performance cloud and desktop AI applications. Simple, pure, predictable.
+Rust AI Agent framework. Agent loop, session management, streaming — handled. You write three things: your tools, your prompts, your domain knowledge.
 
 <a href="guide/getting-started/" class="md-button md-button--primary" style="margin-right: 0.5rem">
   :octicons-arrow-right-24: &nbsp; Get Started
@@ -20,35 +20,25 @@ Not another AI Agent, but an open application framework for building Agents — 
 
 ---
 
-<div class="grid cards" markdown>
+<div class="grid cards col-3" markdown>
 
--   :material-target:{ .lg .middle } **Your Domain, Your Rules**
-
-    ---
-
-    Not a generic chatbot, but an open foundation for custom scenarios. No preset business logic, no bundled tools, no decisions made for your domain — it's all yours. You define the capabilities. You write the rules.
-
--   :material-rocket-launch-outline:{ .lg .middle } **Lightweight, Runs Anywhere**
+-   :material-target:{ .lg .middle } **Your domain, your rules**
 
     ---
 
-    A single Rust binary with zero runtime dependencies — from embedded Linux and edge gateways to cloud containers and desktop applications, `cargo install` gets you started in seconds, deploy anywhere.
+    Agent scheduling, session management, streaming events, tool routing, approval hooks — the framework handles it. No glue code. No state management boilerplate. Focus on your domain logic.
 
-</div>
-
-<div class="grid cards" markdown>
-
--   :material-puzzle-outline:{ .lg .middle } **Pure Interface, Easy to Use**
+-   :material-rocket-launch-outline:{ .lg .middle } **Single binary, zero deps**
 
     ---
 
-    A tool is just <code>name()</code> · <code>definition()</code> · <code>call()</code> — three methods, three primitives, the complete expression of agent capability. No new syntax, no new concepts — pure code, complete power.
+    No Node.js. No Python. Compile to a single binary, drop it in, run it. `cargo install` gets you going in seconds.
 
--   :material-chart-line:{ .lg .middle } **Fully Observable, Every Step Explainable**
+-   :material-chart-line:{ .lg .middle } **Every step auditable**
 
     ---
 
-    Every decision is logged, every step is traceable, with built-in session logging, structured tracing, and session metrics at a glance — compliance and audit trails without the stress.
+    Every LLM call, every tool execution — logged to JSONL. Snapshottable sessions, traceable behavior, locatable issues.
 
 </div>
 
@@ -61,7 +51,7 @@ graph TB
     AB[agent-base<br/>Runtime kernel<br/>Tool trait · LLM clients]
 
     AB --> AW[agent-works<br/>MCP · Skills · Focus]
-    AB --> PKT[phi-kernel-tools<br/>Kernel tools<br/><i>(off by default)</i>]
+    AB --> PKT["phi-kernel-tools<br/>Kernel tools<br/>(off by default)"]
     AB --> YT[your-tools<br/>Custom Tool impls]
 
     AW --> PA

@@ -47,7 +47,20 @@ graph TB
 - `AgentRuntime` — 核心事件循环（LLM 对话 → 工具调用 → 循环）
 - `Tool` trait — 所有工具实现的接口
 - `LlmClient` trait — LLM 提供商的抽象层
-- `RuntimeEvent` — 每轮对话中发出的所有事件
+- `RuntimeEvent` — 每轮对话中发出的所有事件：
+
+| 变体 | 触发条件 | 关键字段 |
+|------|---------|---------|
+| `TextDelta` | LLM 文本流式输出 | `text` |
+| `ThoughtDelta` | LLM 思考 / 推理 | `text` |
+| `ToolCallStarted` | 工具开始执行 | `tool_name`、`args_json` |
+| `ToolCallFinished` | 工具执行结束（成功 / 失败） | `tool_name`、`summary` |
+| `AwaitingApproval` | 工具需要用户审批 | `request`（risk_level、action_key） |
+| `PlanUpdated` | 任务计划创建或更新 | `objective`、`plan[]` |
+| `UserEvent` | 工具执行期间发出的自定义事件 | `event`（Progress / Structured / SubAgentEvent） |
+| `RunFinished` | 回合结束 | — |
+| `RunCancelled` | 回合取消 | — |
+| `Checkpoint` | 状态检查点（预留） | `checkpoint` |
 - `AgentBuilder` — 组装 Agent 的构建器模式
 - `TurnContext` + `on_turn_end` hook — 可观测性接口
 
@@ -71,10 +84,8 @@ graph TB
 - `EventRenderer` — 终端 / JSON / 静默输出
 - 配置解析、会话管理、系统提示词
 - `phi` CLI — `cargo install phi-agent`
-- `phi init` / `phi init --lib` — 项目脚手架
-- `phi metrics` — 会话观测数据查看
 
-## 可观测性
+### 可观测性
 
 phi-agent 自动采集结构化指标。每个 session 写入 `session_metrics.json`：
 
@@ -112,6 +123,10 @@ phi metrics last               # 最新会话
 |------|--------|------|
 | `PHI_METRICS_ENABLED` | `true` | 设为 `false` 关闭指标采集 |
 | `PHI_NODE_ID` | `""` | 多节点部署时的节点标识 |
+| `PHI_COST_PER_1K_TOKENS` | 内置 | 自定义模型定价（每千 token 的 `input_cost,output_cost`） |
+
+完整规范、phi-dash 计划和数据分析工作流详见
+[可观测性设计文档](https://github.com/hibuka-labs/phi-agent/blob/master/docs/observability-design.md)。
 
 ## 关键设计决策
 
