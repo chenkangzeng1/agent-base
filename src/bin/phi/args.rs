@@ -152,11 +152,17 @@ pub enum SubCommand {
     },
     /// Start the MCP server (stdio or HTTP JSON-RPC 2.0).
     /// External orchestrators can call the `run` tool to delegate tasks.
+    /// Use --bridge for the legacy NDJSON protocol (Python/Node.js SDKs).
     Serve {
         /// Use HTTP transport (SSE streaming) on the given port.
         /// Without this flag, stdio mode is used by default.
         #[arg(long, value_name = "PORT")]
         http: Option<u16>,
+
+        /// Use the legacy bridge protocol (NDJSON) instead of JSON-RPC 2.0 / MCP.
+        /// This is needed for the Python and Node.js SDKs.
+        #[arg(long, default_value = "false")]
+        bridge: bool,
     },
 }
 

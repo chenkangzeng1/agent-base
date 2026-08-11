@@ -1,5 +1,6 @@
 mod approval;
 mod args;
+mod bridge_serve;
 mod init;
 mod metrics;
 mod run;
@@ -34,7 +35,12 @@ async fn main() -> Result<()> {
         match cmd {
             SubCommand::Init { name, lib } => return init::run(name, *lib),
             SubCommand::Metrics { cmd } => return metrics::handle_metrics(cmd, &args),
-            SubCommand::Serve { http } => return serve::run(*http).await,
+            SubCommand::Serve { http, bridge } => {
+                if *bridge {
+                    return bridge_serve::run().await;
+                }
+                return serve::run(*http).await;
+            },
         }
     }
 
