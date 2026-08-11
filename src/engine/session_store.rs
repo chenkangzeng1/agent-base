@@ -155,7 +155,7 @@ impl SessionStore for SqliteSessionStore {
             .ok_or_else(|| AgentError::internal("session has no id"))?;
         let key = Self::session_key(&session_id);
         let data = serde_json::to_string(session).map_err(|e| AgentError::json(e.to_string()))?;
-        let db = self.db.lock().unwrap();
+        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
         db.execute(
             "INSERT OR REPLACE INTO sessions (id, data) VALUES (?1, ?2)",
             rusqlite::params![key, data],
@@ -166,7 +166,7 @@ impl SessionStore for SqliteSessionStore {
 
     async fn load(&self, session_id: &SessionId) -> AgentResult<Option<AgentSession>> {
         let key = Self::session_key(session_id);
-        let db = self.db.lock().unwrap();
+        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
         let mut stmt = db
             .prepare("SELECT data FROM sessions WHERE id = ?1")
             .map_err(|e| AgentError::internal(format!("sqlite prepare: {e}")))?;
@@ -184,7 +184,7 @@ impl SessionStore for SqliteSessionStore {
     }
 
     async fn list(&self) -> AgentResult<Vec<SessionId>> {
-        let db = self.db.lock().unwrap();
+        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
         let mut stmt = db
             .prepare("SELECT id FROM sessions ORDER BY id")
             .map_err(|e| AgentError::internal(format!("sqlite prepare: {e}")))?;
@@ -207,7 +207,7 @@ impl SessionStore for SqliteSessionStore {
 
     async fn delete(&self, session_id: &SessionId) -> AgentResult<()> {
         let key = Self::session_key(session_id);
-        let db = self.db.lock().unwrap();
+        let db = self.db.lock().unwrap_or_else(|e| e.into_inner());
         db.execute("DELETE FROM sessions WHERE id = ?1", rusqlite::params![key])
             .map_err(|e| AgentError::internal(format!("sqlite delete: {e}")))?;
         Ok(())
