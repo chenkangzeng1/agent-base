@@ -74,7 +74,7 @@ async fn main() -> AgentResult<()> {
 
     println!("[1] Creating sub-agent:  Agent (Data Analysis Expert) ...");
 
-    let sub_llm = Arc::new(MockLlmClient::new(vec![vec![
+    let sub_mock = Arc::new(MockLlmClient::new(vec![vec![
         StreamChunk::Text("Data analysis results：".to_string()),
         StreamChunk::Text("Monthly sales 120 10K，MoM growth 15%，".to_string()),
         StreamChunk::Text("Online channel share 60%，Offline channel share 40%。".to_string()),
@@ -82,6 +82,7 @@ async fn main() -> AgentResult<()> {
             finish_reason: Some("stop".to_string()),
         },
     ]]));
+    let sub_llm = agent_base::llm::adapt(sub_mock);
 
     let sub_runtime = AgentBuilder::new(sub_llm)
         .system_prompt("You are a Data Analysis Expert. Analyze based on the task description provided. Return detailed results.")
@@ -99,7 +100,7 @@ async fn main() -> AgentResult<()> {
 
     println!("[3] Creating parent agent and registering sub-agent tool ...");
 
-    let parent_llm = Arc::new(MockLlmClient::new(vec![
+    let parent_mock = Arc::new(MockLlmClient::new(vec![
             vec![
                 StreamChunk::ToolCall(serde_json::json!({
                     "delta": {
@@ -123,6 +124,7 @@ async fn main() -> AgentResult<()> {
             ],
         ],
     ));
+    let parent_llm = agent_base::llm::adapt(parent_mock);
 
     let parent_runtime = AgentBuilder::new(parent_llm)
         .system_prompt("You are a sales manager. Responsible for compiling analysis reports. You can delegate specific analysis tasks to the sub-agent.agent Agent。")

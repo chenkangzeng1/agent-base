@@ -89,13 +89,13 @@ impl AgentRuntime {
         &self.runner.llm_engine
     }
 
-    pub fn client(&self) -> Arc<dyn crate::llm::LlmClient> {
+    pub fn client(&self) -> Arc<dyn crate::llm::StreamClient> {
         self.runner.llm_engine.get_client()
     }
 
     /// Replace the LLM client at runtime (e.g., model switch).
     /// Requires `&mut self` — obtain via `runtime.lock().await`.
-    pub fn set_client(&mut self, client: Arc<dyn crate::llm::LlmClient>) {
+    pub fn set_client(&mut self, client: Arc<dyn crate::llm::StreamClient>) {
         self.runner.llm_engine.set_client(client);
     }
 

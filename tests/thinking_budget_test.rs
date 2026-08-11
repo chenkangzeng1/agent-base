@@ -87,7 +87,8 @@ impl LlmClient for CaptureLlmClient {
 
 #[tokio::test]
 async fn test_thinking_budget_parameter_passed() {
-    let llm = Arc::new(CaptureLlmClient::new());
+    let capture = Arc::new(CaptureLlmClient::new());
+    let llm = agent_base::llm::adapt(capture.clone());
 
     let runtime = AgentBuilder::new(llm.clone())
         .system_prompt("test")
@@ -99,7 +100,7 @@ async fn test_thinking_budget_parameter_passed() {
     let session_id = runtime.create_session().await;
     let _ = runtime.run_turn_collect(session_id, "test").await;
 
-    let bodies = llm.captured_bodies();
+    let bodies = capture.captured_bodies();
     assert!(
         !bodies.is_empty(),
         "Should have captured at least one request body"
@@ -129,7 +130,8 @@ async fn test_extra_body_format_for_thinking() {
     // 这个测试验证 OpenAiClient 实际生成的请求 body 格式
     // 由于 OpenAiClient 的方法不好直接测试，我们通过 AgentBuilder 来间接验证
 
-    let llm = Arc::new(CaptureLlmClient::new());
+    let capture = Arc::new(CaptureLlmClient::new());
+    let llm = agent_base::llm::adapt(capture.clone());
 
     let runtime = AgentBuilder::new(llm.clone())
         .system_prompt("test")
@@ -141,7 +143,7 @@ async fn test_extra_body_format_for_thinking() {
     let session_id = runtime.create_session().await;
     let _ = runtime.run_turn_collect(session_id, "test").await;
 
-    let bodies = llm.captured_bodies();
+    let bodies = capture.captured_bodies();
     assert!(
         !bodies.is_empty(),
         "Should have captured at least one request body"

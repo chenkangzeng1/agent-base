@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::llm::{LlmClient, ReasoningConfig};
+use crate::llm::{ReasoningConfig, StreamClient};
 use crate::tool::{Tool, ToolPolicy, ToolRegistry};
 use crate::types::{
     AgentConfig, AtomicU64SessionIdGenerator, ResponseFormat, RetryConfig, SessionIdGenerator,
@@ -14,7 +14,7 @@ use super::recovery::{StopOnError, ToolErrorRecovery};
 use super::session_store::{InMemorySessionStore, SessionStore};
 
 pub struct AgentBuilder {
-    client: Arc<dyn LlmClient>,
+    client: Arc<dyn StreamClient>,
     config: AgentConfig,
     tools: ToolRegistry,
     approval_handler: Option<Arc<dyn ApprovalHandler>>,
@@ -28,7 +28,7 @@ pub struct AgentBuilder {
 }
 
 impl AgentBuilder {
-    pub fn new(client: Arc<dyn LlmClient>) -> Self {
+    pub fn new(client: Arc<dyn StreamClient>) -> Self {
         Self {
             client,
             config: AgentConfig::default(),
@@ -263,6 +263,7 @@ impl AgentBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::llm::LlmClient;
     use crate::llm::StreamChunk;
     use crate::types::{AgentResult, ChatMessage, ResponseFormat};
     use async_trait::async_trait;
@@ -301,7 +302,7 @@ mod tests {
 
     #[test]
     fn execution_max_turns_writes_per_run_config() {
-        let client: Arc<dyn LlmClient> = Arc::new(DummyClient);
+        let client = crate::llm::adapt(Arc::new(DummyClient));
         let builder = AgentBuilder::new(client).execution_max_turns(200);
         // The `config` field is private to this module, so the test can assert directly.
         assert_eq!(builder.config.execution.max_turns, Some(200));
@@ -309,7 +310,7 @@ mod tests {
 
     #[test]
     fn execution_max_turns_defaults_to_none() {
-        let client: Arc<dyn LlmClient> = Arc::new(DummyClient);
+        let client = crate::llm::adapt(Arc::new(DummyClient));
         let builder = AgentBuilder::new(client);
         assert_eq!(builder.config.execution.max_turns, None);
     }

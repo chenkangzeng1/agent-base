@@ -1586,7 +1586,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_turn_emits_run_finished_on_session_not_found() {
-        let client: Arc<dyn LlmClient> = Arc::new(DummyClient);
+        let client = crate::llm::adapt(Arc::new(DummyClient));
         let runtime = AgentBuilder::new(client)
             .system_prompt("test")
             .build()
@@ -1631,7 +1631,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_turn_emits_run_finished_on_middleware_failure() {
-        let client: Arc<dyn LlmClient> = Arc::new(DummyClient);
+        let client = crate::llm::adapt(Arc::new(DummyClient));
         let runtime = AgentBuilder::new(client)
             .system_prompt("test")
             .middleware(FailingMiddleware)
@@ -1706,7 +1706,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_turn_emits_run_finished_on_llm_error() {
-        let client: Arc<dyn LlmClient> = Arc::new(ErrorStreamClient);
+        let client = crate::llm::adapt(Arc::new(ErrorStreamClient));
         let runtime = AgentBuilder::new(client)
             .system_prompt("test")
             .build()
@@ -1796,7 +1796,7 @@ mod tests {
     async fn truncation_guard_blocks_tool_calls_on_length_finish_reason() {
         // First call: tool call with finish_reason="length" — should be blocked by guard.
         // Second call: model retries with corrected approach (text response).
-        let client = Arc::new(ScriptedClient::new(vec![
+        let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![
             // Turn 1: truncated tool call
             vec![
                 StreamChunk::ToolCall(serde_json::json!({
@@ -1823,7 +1823,7 @@ mod tests {
                     finish_reason: Some("stop".to_string()),
                 },
             ],
-        ]));
+        ])));
 
         let runtime = AgentBuilder::new(client)
             .system_prompt("You are a careful assistant.")

@@ -469,3 +469,32 @@ impl LlmClient for AnthropicClient {
         &self.model
     }
 }
+
+#[async_trait]
+impl super::StreamClient for AnthropicClient {
+    async fn stream(
+        &self,
+        messages: &[crate::types::ChatMessage],
+        tools: &[serde_json::Value],
+        reasoning: Option<&super::ReasoningConfig>,
+        response_format: Option<&crate::types::ResponseFormat>,
+    ) -> crate::types::AgentResult<
+        std::pin::Pin<
+            Box<
+                dyn futures_core::Stream<Item = crate::types::AgentResult<super::StreamChunk>>
+                    + Send,
+            >,
+        >,
+    > {
+        <Self as super::LlmClient>::chat_stream(self, messages, tools, reasoning, response_format)
+            .await
+    }
+
+    fn capabilities(&self) -> super::LlmCapabilities {
+        <Self as super::LlmClient>::capabilities(self)
+    }
+
+    fn model_name(&self) -> &str {
+        <Self as super::LlmClient>::model_name(self)
+    }
+}

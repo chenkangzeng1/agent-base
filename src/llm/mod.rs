@@ -8,10 +8,12 @@ use crate::types::{AgentResult, ChatMessage, ResponseFormat};
 mod anthropic;
 mod openai;
 mod registry;
+mod stream_client;
 
 pub use anthropic::AnthropicClient;
 pub use openai::{LlmClientConfig, OpenAiClient};
 pub use registry::{LlmClientBuilder, LlmProvider};
+pub use stream_client::{LlmClientAdapter, StreamClient, adapt};
 
 #[derive(Clone, Debug)]
 pub enum StreamChunk {

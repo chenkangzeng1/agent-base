@@ -271,15 +271,8 @@ impl Tool for SummarizeTool {
 
         let raw = llm.chat(&messages, &[], None, None).await?;
 
-        // Extract the assistant text from the raw OpenAI-compatible response.
-        let summary = raw
-            .get("choices")
-            .and_then(|c| c.get(0))
-            .and_then(|c| c.get("message"))
-            .and_then(|m| m.get("content"))
-            .and_then(|c| c.as_str())
-            .unwrap_or("(no summary)")
-            .to_string();
+        // StreamClient::chat() returns the collected text content.
+        let summary = if raw.is_empty() { "(no summary)" } else { &raw };
 
         ctx.emit_progress("Summarize: done!");
 

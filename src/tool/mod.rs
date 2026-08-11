@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc;
 
 use crate::engine::SessionStore;
-use crate::llm::LlmClient;
+use crate::llm::StreamClient;
 use crate::types::{AgentError, AgentResult, SessionId, UserEvent};
 
 pub mod auto_continue;
@@ -48,7 +48,7 @@ pub struct ToolContext {
     /// Channel for sending user-space events (progress, sub-agent, structured).
     /// Tools should use `emit_user_event()` or `emit_progress()`.
     pub user_event_tx: mpsc::UnboundedSender<UserEvent>,
-    pub llm_client: Option<Arc<dyn LlmClient>>,
+    pub llm_client: Option<Arc<dyn StreamClient>>,
     pub session_store: Option<Arc<dyn SessionStore>>,
     /// Language preference for tool output.
     /// Defaults to `Language::En` if not set.
