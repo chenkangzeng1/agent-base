@@ -56,7 +56,7 @@ impl PhiAgent {
     /// Equivalent to `base_agent_builder(llm_client).system_prompt(system_prompt)`,
     /// after which you register tools, middleware, and approval handlers,
     /// then call `Self::build`.
-    pub fn builder(llm_client: Arc<dyn agent_base::LlmClient>, system_prompt: String) -> AgentBuilder {
+    pub fn builder(llm_client: Arc<dyn agent_base::StreamClient>, system_prompt: String) -> AgentBuilder {
         base_agent_builder(llm_client).system_prompt(system_prompt)
     }
 

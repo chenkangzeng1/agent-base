@@ -35,7 +35,7 @@ use crate::agent::compression::SummarizingMiddleware;
 /// To enable browser (CDP): `--features browser`.
 /// To enable everything: `--features full`.
 #[allow(unused_mut)]
-pub fn base_agent_builder(llm_client: Arc<dyn agent_base::LlmClient>) -> agent_works::AgentBuilder {
+pub fn base_agent_builder(llm_client: Arc<dyn agent_base::StreamClient>) -> agent_works::AgentBuilder {
     // Tool-output cap (default 4000 chars). Tune via PHI_MAX_TOOL_OUTPUT_CHARS for large
     // outputs (HTML, base64 images, long lists). Truncated results carry an explicit
     // "...(truncated)" suffix plus structured TruncationInfo from agent-base.
@@ -191,14 +191,14 @@ mod tests {
     #[test]
     fn test_max_tool_output_chars_default() {
         unsafe { std::env::remove_var("PHI_MAX_TOOL_OUTPUT_CHARS") };
-        let builder = base_agent_builder(Arc::new(StubClient));
+        let builder = base_agent_builder(agent_base::llm::adapt(Arc::new(StubClient)));
         let _ = builder;
     }
 
     #[test]
     fn test_max_tool_output_chars_custom() {
         unsafe { std::env::set_var("PHI_MAX_TOOL_OUTPUT_CHARS", "8000") };
-        let builder = base_agent_builder(Arc::new(StubClient));
+        let builder = base_agent_builder(agent_base::llm::adapt(Arc::new(StubClient)));
         let _ = builder;
         unsafe { std::env::remove_var("PHI_MAX_TOOL_OUTPUT_CHARS") };
     }
@@ -206,7 +206,7 @@ mod tests {
     #[test]
     fn test_max_tool_output_chars_invalid_fallback() {
         unsafe { std::env::set_var("PHI_MAX_TOOL_OUTPUT_CHARS", "not-a-number") };
-        let builder = base_agent_builder(Arc::new(StubClient));
+        let builder = base_agent_builder(agent_base::llm::adapt(Arc::new(StubClient)));
         let _ = builder;
         unsafe { std::env::remove_var("PHI_MAX_TOOL_OUTPUT_CHARS") };
     }
@@ -215,7 +215,7 @@ mod tests {
     #[cfg(feature = "multi-agent")]
     #[tokio::test(flavor = "multi_thread")]
     async fn test_base_agent_builder_registers_multi_agent_tools() {
-        let builder = base_agent_builder(Arc::new(StubClient)).system_prompt("test");
+        let builder = base_agent_builder(agent_base::llm::adapt(Arc::new(StubClient))).system_prompt("test");
 
         let runtime = builder.build().unwrap();
 
@@ -237,7 +237,9 @@ mod tests {
     #[cfg(feature = "multi-agent")]
     #[tokio::test(flavor = "multi_thread")]
     async fn test_base_agent_builder_without_multi_agent() {
-        let builder = base_agent_builder(Arc::new(StubClient)).system_prompt("test").without_multi_agent();
+        let builder = base_agent_builder(agent_base::llm::adapt(Arc::new(StubClient)))
+            .system_prompt("test")
+            .without_multi_agent();
 
         let runtime = builder.build().unwrap();
 

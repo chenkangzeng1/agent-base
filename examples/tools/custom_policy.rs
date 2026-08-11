@@ -116,7 +116,7 @@ impl LlmClient for MockLlmClient {
             // Second call: emit text
             items.push_back(Ok(StreamChunk::Text("All hooks and events demonstrated!".to_string())));
         }
-        items.push_back(Ok(StreamChunk::Stop));
+        items.push_back(Ok(StreamChunk::Stop { finish_reason: Some("stop".to_string()) }));
         Ok(Box::pin(QueueStream { items }))
     }
 
@@ -233,7 +233,7 @@ async fn main() -> anyhow::Result<()> {
     println!("=== Custom Policy Demo ===\n");
     println!("This example demonstrates ToolPolicy, Middleware, and RuntimeEvent hooks.\n");
 
-    let llm_client = Arc::new(MockLlmClient::new());
+    let llm_client = agent_base::llm::adapt(Arc::new(MockLlmClient::new()));
     let policy = Arc::new(DemoPolicy::new());
 
     let runtime = base_agent_builder(llm_client)

@@ -96,7 +96,7 @@ impl LlmClient for BenchLlmClient {
 }
 
 fn bench_build_empty(c: &mut Criterion) {
-    let client: Arc<dyn LlmClient> = Arc::new(BenchLlmClient);
+    let client = agent_base::llm::adapt(Arc::new(BenchLlmClient));
     let prompt = build_system_prompt();
     let config = PhiAgentConfig::default();
 
@@ -110,7 +110,7 @@ fn bench_build_empty(c: &mut Criterion) {
 }
 
 fn bench_build_with_tools(c: &mut Criterion) {
-    let client: Arc<dyn LlmClient> = Arc::new(BenchLlmClient);
+    let client = agent_base::llm::adapt(Arc::new(BenchLlmClient));
     let prompt = build_system_prompt();
     let config = PhiAgentConfig::default();
 

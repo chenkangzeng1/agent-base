@@ -66,7 +66,7 @@ impl LlmClient for SimpleMockLlmClient {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_base_agent_builder_constructs() {
-    let client = Arc::new(SimpleMockLlmClient);
+    let client = agent_base::llm::adapt(Arc::new(SimpleMockLlmClient));
     let builder = base_agent_builder(client)
         .system_prompt("You are a helpful assistant.")
         .register_tool(agent_base::UpdatePlanTool::new());
@@ -170,7 +170,7 @@ impl Tool for CustomTool {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_list_tools_returns_metadata() {
-    let client = Arc::new(SimpleMockLlmClient);
+    let client = agent_base::llm::adapt(Arc::new(SimpleMockLlmClient));
     let builder = base_agent_builder(client)
         .system_prompt("You are a helpful assistant.")
         .register_tool(agent_base::UpdatePlanTool::new())
@@ -204,7 +204,7 @@ async fn test_list_tools_returns_metadata() {
 // ── PhiAgent lifecycle ──
 
 fn build_test_agent() -> phi_agent::PhiAgent {
-    let client = Arc::new(SimpleMockLlmClient);
+    let client = agent_base::llm::adapt(Arc::new(SimpleMockLlmClient));
     let builder = base_agent_builder(client).system_prompt("You are a helpful assistant.");
     let config = PhiAgentConfig {
         model: "test-model".into(),
@@ -239,7 +239,7 @@ async fn test_phi_agent_set_reasoning_effort() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_phi_agent_list_tools_sorted() {
-    let client = Arc::new(SimpleMockLlmClient);
+    let client = agent_base::llm::adapt(Arc::new(SimpleMockLlmClient));
     let builder = base_agent_builder(client)
         .system_prompt("You are a helpful assistant.")
         .register_tool(agent_base::UpdatePlanTool::new())
@@ -308,7 +308,7 @@ fn test_system_prompt_cn_also_has_memory_instructions() {
 #[cfg(feature = "file")]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_base_agent_builder_registers_file_tools() {
-    let client = Arc::new(SimpleMockLlmClient);
+    let client = agent_base::llm::adapt(Arc::new(SimpleMockLlmClient));
     let builder = base_agent_builder(client).system_prompt("test");
 
     let config = PhiAgentConfig {
@@ -332,7 +332,7 @@ async fn test_base_agent_builder_registers_file_tools() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn test_no_skill_specific_tools_registered() {
-    let client = Arc::new(SimpleMockLlmClient);
+    let client = agent_base::llm::adapt(Arc::new(SimpleMockLlmClient));
     let builder = base_agent_builder(client).system_prompt("test");
 
     let config = PhiAgentConfig {

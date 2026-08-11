@@ -102,7 +102,7 @@ impl LlmClient for MockLlmClient {
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
-pub fn build_server(mock: Arc<MockLlmClient>) -> ProtocolServer {
+pub fn build_server(mock: Arc<dyn agent_base::StreamClient>) -> ProtocolServer {
     let builder = base_agent_builder(mock)
         .system_prompt(build_system_prompt())
         .approval_handler(Arc::new(AutoApprovalHandler::new(ApprovalMode::Auto)))

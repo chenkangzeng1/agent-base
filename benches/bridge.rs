@@ -50,7 +50,7 @@ impl LlmClient for BenchLlmClient {
 }
 
 fn bench_build_server(c: &mut Criterion) {
-    let client: Arc<dyn LlmClient> = Arc::new(BenchLlmClient);
+    let client = agent_base::llm::adapt(Arc::new(BenchLlmClient));
     let prompt = build_system_prompt();
 
     c.bench_function("bridge/build_from_builder", |b| {
@@ -64,7 +64,7 @@ fn bench_build_server(c: &mut Criterion) {
 
 fn bench_create_session(c: &mut Criterion) {
     let rt = tokio::runtime::Runtime::new().unwrap();
-    let client: Arc<dyn LlmClient> = Arc::new(BenchLlmClient);
+    let client = agent_base::llm::adapt(Arc::new(BenchLlmClient));
     let builder = base_agent_builder(client).system_prompt(build_system_prompt());
     let server = ProtocolServer::from_builder(builder).unwrap();
     let mut counter = 0u64;

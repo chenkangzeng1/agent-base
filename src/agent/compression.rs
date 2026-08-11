@@ -21,9 +21,8 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use agent_base::{ChatMessage, ContextWindowManager, LlmClient, Middleware, PreLlmCtx};
+use agent_base::{ChatMessage, ContextWindowManager, Middleware, PreLlmCtx};
 use async_trait::async_trait;
-use serde_json::Value;
 
 /// Tuning knobs for [`SummarizingMiddleware`].
 #[derive(Clone, Debug)]
@@ -54,7 +53,7 @@ impl Default for CompressionConfig {
 
 /// Compresses the earlier part of a long conversation via LLM summarization.
 pub struct SummarizingMiddleware {
-    client: Arc<dyn LlmClient>,
+    client: Arc<dyn agent_base::StreamClient>,
     config: CompressionConfig,
     /// `(session_id, prefix_hash) -> (transcript_len, summary)` cache. Keyed on a hash of a
     /// *stable prefix* of the old-block transcript: the oldest messages never change, so the
@@ -66,7 +65,7 @@ pub struct SummarizingMiddleware {
 
 #[allow(missing_docs)]
 impl SummarizingMiddleware {
-    pub fn new(client: Arc<dyn LlmClient>) -> Self {
+    pub fn new(client: Arc<dyn agent_base::StreamClient>) -> Self {
         Self { client, config: CompressionConfig::default(), cache: Mutex::new(HashMap::new()) }
     }
 
@@ -272,7 +271,11 @@ fn transcript_hash(s: &str) -> u64 {
 }
 
 /// One-shot summarization call. Returns the model's text, or an error.
-async fn summarize(client: &dyn LlmClient, transcript: &str, max_chars: usize) -> agent_base::AgentResult<String> {
+async fn summarize(
+    client: &dyn agent_base::StreamClient,
+    transcript: &str,
+    max_chars: usize,
+) -> agent_base::AgentResult<String> {
     let system = ChatMessage::system(
         "You are a conversation summarizer for an AI agent that can call tools \
          (browser, shell, search, etc.).",
@@ -288,29 +291,15 @@ async fn summarize(client: &dyn LlmClient, transcript: &str, max_chars: usize) -
          === CONVERSATION ===\n{transcript}",
     ));
 
-    let response = client.chat(&[system, user], &[], None, None).await?;
-    Ok(extract_content(&response).unwrap_or_default())
-}
-
-fn extract_content(response: &Value) -> Option<String> {
-    // OpenAI-compatible shape: `{"choices":[{"message":{"content":"..."}}]}`.
-    if let Some(s) = response
-        .get("choices")
-        .and_then(Value::as_array)
-        .and_then(|arr| arr.first())
-        .and_then(|ch| ch.get("message"))
-        .and_then(|m| m.get("content"))
-        .and_then(Value::as_str)
-    {
-        return Some(s.to_string());
-    }
-    // Fallback for providers that return `{"content": "..."}` directly.
-    response.get("content").and_then(Value::as_str).map(str::to_string)
+    let summary = client.chat(&[system, user], &[], None, None).await?;
+    if summary.is_empty() { Ok(String::new()) } else { Ok(summary) }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agent_base::LlmClient;
+    use serde_json::Value;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     struct MockClient {
@@ -413,22 +402,10 @@ mod tests {
         assert!(!out.contains(&long), "full payload must not leak through");
     }
 
-    #[test]
-    fn test_extract_content_shapes() {
-        let openai = serde_json::json!({
-            "choices": [{ "message": { "content": "SUMMARY" } }]
-        });
-        assert_eq!(extract_content(&openai).as_deref(), Some("SUMMARY"));
-
-        let flat = serde_json::json!({ "content": "FLAT" });
-        assert_eq!(extract_content(&flat).as_deref(), Some("FLAT"));
-
-        assert_eq!(extract_content(&serde_json::json!({ "nope": 1 })), None);
-    }
-
     #[tokio::test]
     async fn test_on_pre_llm_noop_when_under_threshold() {
-        let client = Arc::new(MockClient { summary: "S".to_string(), calls: AtomicUsize::new(0) });
+        let client =
+            agent_base::llm::adapt(Arc::new(MockClient { summary: "S".to_string(), calls: AtomicUsize::new(0) }));
         let mw = SummarizingMiddleware::new(client);
         let mut ctx = PreLlmCtx {
             session_id: agent_base::SessionId { id: 1, external_id: None },
@@ -441,10 +418,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_on_pre_llm_compresses_and_caches() {
-        let client = Arc::new(MockClient {
+        let mock_client = Arc::new(MockClient {
             summary: "The user wanted to scrape articles.".to_string(),
             calls: AtomicUsize::new(0),
         });
+        let client = agent_base::llm::adapt(mock_client.clone());
         let mw = SummarizingMiddleware::new(client.clone())
             .with_trigger_tokens(1) // always compress
             .with_keep_last_messages(2);
@@ -458,7 +436,7 @@ mod tests {
         let mut ctx = make_ctx();
         mw.on_pre_llm(&mut ctx).await.unwrap();
         assert!(ctx.messages.len() < 7, "should have compressed, got {}", ctx.messages.len());
-        assert_eq!(client.calls.load(Ordering::SeqCst), 1, "summarizer called once");
+        assert_eq!(mock_client.calls.load(Ordering::SeqCst), 1, "summarizer called once");
         // Summary injected as a User message right after the system prompt.
         assert!(matches!(ctx.messages[1], ChatMessage::User { .. }));
         // No orphaned tool message anywhere in the result.
@@ -469,7 +447,7 @@ mod tests {
         // Same original old block again → cache hit, no new LLM call.
         let mut ctx2 = make_ctx();
         mw.on_pre_llm(&mut ctx2).await.unwrap();
-        assert_eq!(client.calls.load(Ordering::SeqCst), 1, "cache reused");
+        assert_eq!(mock_client.calls.load(Ordering::SeqCst), 1, "cache reused");
         assert_eq!(ctx.messages.len(), ctx2.messages.len());
     }
 
@@ -477,7 +455,7 @@ mod tests {
     async fn test_summarization_failure_drops_old_block() {
         // A client that always errors on chat() → middleware must fall back to dropping
         // the old block instead of failing the turn.
-        let failing = Arc::new(FailingClient);
+        let failing = agent_base::llm::adapt(Arc::new(FailingClient));
         let mw = SummarizingMiddleware::new(failing).with_trigger_tokens(1).with_keep_last_messages(2);
 
         let mut ctx = PreLlmCtx {
@@ -499,8 +477,9 @@ mod tests {
     async fn test_default_threshold_fires_on_long_conversation() {
         // Guards against the "wired but never fires" regression: the default
         // trigger_tokens must compress a realistic long tool-heavy conversation.
-        let client =
+        let mock_client =
             Arc::new(MockClient { summary: "Earlier context summarised.".to_string(), calls: AtomicUsize::new(0) });
+        let client = agent_base::llm::adapt(mock_client.clone());
         let mw = SummarizingMiddleware::new(client.clone()); // default config
 
         let mut messages = vec![ChatMessage::system("sys")];
@@ -523,7 +502,7 @@ mod tests {
         );
         // Compression must have actually invoked the summarizer LLM (not just passed
         // the message-count gate while the token estimate stayed at/below the threshold).
-        assert!(client.calls.load(Ordering::SeqCst) >= 1, "summarizer must be invoked for a long conversation");
+        assert!(mock_client.calls.load(Ordering::SeqCst) >= 1, "summarizer must be invoked for a long conversation");
         // Summary injected as the first message after the system prompt.
         assert!(matches!(ctx.messages[1], ChatMessage::User { .. }));
     }
