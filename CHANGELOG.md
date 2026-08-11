@@ -5,6 +5,14 @@ All notable changes to phi-agent will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.1] - 2026-08-11
+
+### Added
+- **`phi serve --bridge`** — re-enables the legacy NDJSON bridge protocol for SDK consumption (Python, Node.js). The default `phi serve` still uses JSON-RPC 2.0 / MCP; use `--bridge` for backward compatibility with phi-agent-python >= 0.9.1. (317 lines in `bridge_serve.rs`)
+
+### Changed
+- Bump version to 0.9.1
+
 ## [0.9.0] - 2026-08-08
 
 ### Added
@@ -159,6 +167,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - LLM config resolution (CLI > env > .env > default)
 - `LocalShellTool` (via phi-tools)
 
+[0.9.1]: https://github.com/hibuka-labs/phi-agent/compare/v0.9.0...HEAD
 [0.9.0]: https://github.com/hibuka-labs/phi-agent/compare/v0.3.0...HEAD
 [0.3.0]: https://github.com/hibuka-labs/phi-agent/compare/v0.2.9...v0.3.0
 [0.2.9]: https://github.com/hibuka-labs/phi-agent/compare/v0.2.8...v0.2.9
