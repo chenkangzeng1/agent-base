@@ -141,7 +141,8 @@ impl SqliteSessionStore {
     }
 
     fn session_key(id: &SessionId) -> String {
-        id.to_string()
+        // Use serde_json for robust round-tripping — never depend on Display format.
+        serde_json::to_string(id).unwrap_or_else(|_| id.to_string())
     }
 }
 
@@ -193,16 +194,12 @@ impl SessionStore for SqliteSessionStore {
         let mut ids = Vec::new();
         for row in rows {
             let id_str = row.map_err(|e| AgentError::internal(format!("sqlite list row: {e}")))?;
-            // SessionId Display format: "123" or "123(ext-id)"
-            // Parse back: split on '(' to get the numeric id
-            if let Some(open_paren) = id_str.find('(') {
-                let num_part = &id_str[..open_paren];
-                let ext_part = &id_str[open_paren + 1..id_str.len() - 1]; // strip trailing ')'
-                if let Ok(num) = num_part.parse::<u64>() {
-                    ids.push(SessionId::with_external_id(num, ext_part));
+            // Keys are serialized with serde_json — deserialize for robust round-tripping.
+            match serde_json::from_str::<SessionId>(&id_str) {
+                Ok(sid) => ids.push(sid),
+                Err(e) => {
+                    tracing::warn!(key = id_str, error = %e, "failed to deserialize session key, skipping");
                 }
-            } else if let Ok(num) = id_str.parse::<u64>() {
-                ids.push(SessionId::new(num));
             }
         }
         Ok(ids)

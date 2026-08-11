@@ -1876,4 +1876,64 @@ mod tests {
                 .collect::<Vec<_>>()
         );
     }
+
+    #[tokio::test]
+    async fn run_managed_processes_follow_up_messages() {
+        // ScriptedClient: first call returns text "done", second call (triggered
+        // by follow-up) returns "follow-up done". run_managed should process both.
+        let scripted = Arc::new(ScriptedClient::new(vec![
+            // Turn 1: initial user input → text response
+            vec![
+                StreamChunk::Text("done".to_string()),
+                StreamChunk::Stop {
+                    finish_reason: Some("stop".to_string()),
+                },
+            ],
+            // Turn 2: follow-up → another text response
+            vec![
+                StreamChunk::Text("follow-up done".to_string()),
+                StreamChunk::Stop {
+                    finish_reason: Some("stop".to_string()),
+                },
+            ],
+        ]));
+        let client = crate::llm::adapt(scripted);
+        let runtime = AgentBuilder::new(client.clone())
+            .system_prompt("You are a helpful assistant.")
+            .build()
+            .expect("build runtime");
+
+        let sid = runtime.create_session().await;
+
+        // Pre-seed a follow-up message — it will be drained after the first
+        // inner loop completes and trigger a second inner loop.
+        runtime.follow_up("continue working on the task".to_string());
+
+        let mut events = Vec::new();
+        let result = runtime
+            .run_managed(sid.clone(), "do something", |event| {
+                events.push(event);
+                Ok(())
+            })
+            .await;
+
+        assert!(
+            result.is_ok(),
+            "run_managed should complete: {:?}",
+            result.err()
+        );
+
+        // Verify session contains both turns
+        let session = runtime.session(&sid).await.expect("session exists");
+        let messages = session.chat_messages().to_vec();
+
+        let text_count = messages
+            .iter()
+            .filter(|m| matches!(m, ChatMessage::Assistant { content: Some(c), .. } if c == "done" || c == "follow-up done"))
+            .count();
+        assert_eq!(
+            text_count, 2,
+            "both initial and follow-up turns should produce assistant responses"
+        );
+    }
 }
