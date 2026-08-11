@@ -406,6 +406,25 @@ mod tests {
         assert!(!out.contains(&long), "full payload must not leak through");
     }
 
+    #[test]
+    fn test_serialize_block_custom_message() {
+        let msgs = vec![ChatMessage::Custom {
+            role: "artifact".to_string(),
+            data: serde_json::json!({"id": "art-1", "content": "generated image"}),
+        }];
+        let out = serialize_block(&msgs, 500);
+        assert!(out.contains("[custom:artifact]"), "custom message should be serialized with role label");
+        assert!(out.contains("art-1"), "custom message data should appear in output");
+    }
+
+    #[test]
+    fn test_estimate_message_tokens_custom() {
+        let custom =
+            ChatMessage::Custom { role: "notification".to_string(), data: serde_json::json!({"msg": "hello"}) };
+        let tokens = estimate_message_tokens(&custom);
+        assert!(tokens > 0, "custom message should have non-zero token estimate");
+    }
+
     #[tokio::test]
     async fn test_on_pre_llm_noop_when_under_threshold() {
         let client =
