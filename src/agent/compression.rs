@@ -229,6 +229,9 @@ fn estimate_message_tokens(msg: &ChatMessage) -> usize {
         ChatMessage::Tool { tool_call_id, content } => {
             ContextWindowManager::estimate_tokens(tool_call_id) + ContextWindowManager::estimate_tokens(content)
         },
+        ChatMessage::Custom { role, data } => {
+            ContextWindowManager::estimate_tokens(role) + ContextWindowManager::estimate_tokens(&data.to_string())
+        },
     }
 }
 
@@ -248,6 +251,7 @@ fn serialize_block(messages: &[ChatMessage], max_chars: usize) -> String {
                 _ => format!("[assistant] {}", content.as_deref().map(|c| truncate(c, 400)).unwrap_or_default()),
             },
             ChatMessage::Tool { tool_call_id, content } => format!("[tool:{tool_call_id}] {}", truncate(content, 300)),
+            ChatMessage::Custom { role, data } => format!("[custom:{role}] {}", truncate(&data.to_string(), 400)),
         };
         parts.push(line);
     }
