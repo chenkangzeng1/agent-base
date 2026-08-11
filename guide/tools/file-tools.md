@@ -1,6 +1,6 @@
 # File Tools
 
-phi-agent gives the agent read/write/list access to the filesystem through kernel tools. These are enabled by default (behind the `file` feature flag).
+phi-agent gives the agent read/write/list access to the filesystem through kernel tools. These are opt-in — enable via the `file` feature flag.
 
 ## Available tools
 
@@ -20,12 +20,17 @@ phi-agent gives the agent read/write/list access to the filesystem through kerne
 
 ## Usage
 
-The file tools are registered automatically by `base_agent_builder()`. No additional setup needed:
+The file tools are registered automatically by `base_agent_builder()` when the `file` feature is enabled. To use them, enable the feature in your `Cargo.toml`:
+
+```toml
+[dependencies]
+phi-agent = { version = "0.9", features = ["file"] }
+```
 
 ```rust
 let builder = base_agent_builder(llm_client)
     .system_prompt(build_system_prompt());
-// read_file, write_file, list_files are already registered
+// read_file, write_file, list_files are registered
 ```
 
 To disable file tools:
@@ -34,14 +39,6 @@ To disable file tools:
 # Cargo.toml
 [dependencies]
 phi-agent = { version = "0.9", default-features = false, features = ["shell"] }
-```
-
-Or at runtime:
-
-```rust
-use phi_agent::base_agent_builder;
-// Build with --no-default-features equivalent:
-// file tools won't be registered if the `file` feature is off
 ```
 
 ## Why file tools matter

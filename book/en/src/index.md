@@ -6,7 +6,7 @@
 
 ## What is phi-agent?
 
-phi-agent is a Rust framework for building AI agents. It provides the infrastructure — builder factory, renderers, configuration, session management — but **does not bundle any tools**. You bring your own tools, and keep full control.
+phi-agent is a Rust framework for building AI agents. It provides the infrastructure — builder factory, renderers, configuration, session management. Kernel tools (file I/O, shell, multi-agent) are available via `phi-kernel-tools` behind feature flags — all off by default. Application tools are injected by consumers.
 
 ## Why phi-agent?
 

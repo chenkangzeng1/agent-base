@@ -6,7 +6,7 @@
 
 ## 什么是 phi-agent？
 
-phi-agent 是一个用 Rust 构建 AI Agent 的框架。它提供基础设施 — Builder 工厂、渲染器、配置、会话管理 — 但**不捆绑任何工具**。你自带工具，完全掌控。
+phi-agent 是一个用 Rust 构建 AI Agent 的框架。它提供基础设施 — Builder 工厂、渲染器、配置、会话管理。内核工具（文件读写、Shell、多 Agent）通过 `phi-kernel-tools` 以 feature flag 形式提供 — 全部默认关闭。应用工具由消费者自行注册。
 
 ## 为什么选择 phi-agent？
 

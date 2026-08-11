@@ -4,6 +4,7 @@
 //! Returns a pre-configured [`agent_works::AgentBuilder`]; callers then register
 //! tools and approval handlers on top.
 
+#[cfg(feature = "file")]
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -19,18 +20,20 @@ use crate::agent::compression::SummarizingMiddleware;
 /// - Session limits (50 sessions / 100 turns per session / 50k per-message cap)
 /// - Per-run react-loop cap (200 iterations for one user input)
 /// - LLM-based context compression for long tool-heavy conversations
-/// - File tools (read_file / write_file / list_files) enabled by default
-/// - Skills injected into system prompt (not as tools — LLM uses read_file)
+/// - File tools (read_file / write_file / list_files) — opt-in via `file` feature
+/// - Skills injected into system prompt (not as tools — LLM uses read_file;
+///   requires `file` feature)
 /// - Multi-agent support (opt-in via `multi-agent` feature)
 ///
 /// Callers are responsible for: registering additional tools, setting the approval
 /// handler, setting the system prompt, then calling `.build()`.
 ///
+/// To enable file tools: `--features file`.
+/// To enable shell: `--features shell`.
 /// To enable multi-agent: `--features multi-agent` or `.with_multi_agent(...)`.
 /// To enable MCP: `--features mcp`.
 /// To enable browser (CDP): `--features browser`.
 /// To enable everything: `--features full`.
-/// To disable telemetry/logging: `--no-default-features`.
 #[allow(unused_mut)]
 pub fn base_agent_builder(llm_client: Arc<dyn agent_base::LlmClient>) -> agent_works::AgentBuilder {
     // Tool-output cap (default 4000 chars). Tune via PHI_MAX_TOOL_OUTPUT_CHARS for large
@@ -50,6 +53,7 @@ pub fn base_agent_builder(llm_client: Arc<dyn agent_base::LlmClient>) -> agent_w
         Err(_) => 4000,
     };
 
+    #[cfg(feature = "file")]
     let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
     let mut builder = agent_works::AgentBuilder::new(llm_client.clone())
@@ -68,7 +72,7 @@ pub fn base_agent_builder(llm_client: Arc<dyn agent_base::LlmClient>) -> agent_w
         // build your own AgentBuilder to opt out.
         .middleware(SummarizingMiddleware::new(llm_client));
 
-    // ── File tools (enabled by default) ──
+    // ── File tools (opt-in via `file` feature) ──
     #[cfg(feature = "file")]
     {
         use phi_kernel_tools::file::{ListFilesTool, ReadFileTool, WriteFileTool};

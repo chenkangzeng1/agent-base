@@ -2,7 +2,9 @@
 //!
 //! Built on agent-base and agent-works, providing builder factory, renderer,
 //! config resolution, session management, and other infrastructure.
-//! **Does not bundle any tools** — tools are injected by consumers.
+//! **Ships with zero application tools.** Kernel tools (file I/O, shell,
+//! multi-agent) are available via `phi-kernel-tools` behind feature flags —
+//! all off by default. Application tools are injected by consumers.
 
 #![warn(missing_docs)]
 

@@ -22,11 +22,11 @@ Not another AI Agent, but an open application framework for building Agents — 
 
 <div class="grid cards" markdown>
 
--   :material-target:{ .lg .middle } **Built for Vertical Scenarios**
+-   :material-target:{ .lg .middle } **Your Domain, Your Rules**
 
     ---
 
-    Not a generic chatbot, but an Agent framework for embedded, industrial, IoT, and other vertical domains — plus desktop and cloud applications that demand deep customization. Your scenario, your tools, your full control.
+    Not a generic chatbot, but an open foundation for custom scenarios. No preset business logic, no bundled tools, no decisions made for your domain — it's all yours. You define the capabilities. You write the rules.
 
 -   :material-rocket-launch-outline:{ .lg .middle } **Lightweight, Runs Anywhere**
 
@@ -38,11 +38,11 @@ Not another AI Agent, but an open application framework for building Agents — 
 
 <div class="grid cards" markdown>
 
--   :material-puzzle-outline:{ .lg .middle } **Your Tools, Your Control**
+-   :material-puzzle-outline:{ .lg .middle } **Pure Interface, Easy to Use**
 
     ---
 
-    Kernel primitives (file I/O, shell, sub-agents) provide the foundation — everything else you define. A tool is just 3 methods: `name()`, `definition()`, `call()`. Register what you need, the Agent uses what you register. No platform lock-in, no hidden behavior.
+    A tool is just <code>name()</code> · <code>definition()</code> · <code>call()</code> — three methods, three primitives, the complete expression of agent capability. No new syntax, no new concepts — pure code, complete power.
 
 -   :material-chart-line:{ .lg .middle } **Fully Observable, Every Step Explainable**
 
@@ -61,7 +61,7 @@ graph TB
     AB[agent-base<br/>Runtime kernel<br/>Tool trait · LLM clients]
 
     AB --> AW[agent-works<br/>MCP · Skills · Focus]
-    AB --> PKT[phi-kernel-tools<br/>Kernel tools]
+    AB --> PKT[phi-kernel-tools<br/>Kernel tools<br/><i>(off by default)</i>]
     AB --> YT[your-tools<br/>Custom Tool impls]
 
     AW --> PA
@@ -71,7 +71,7 @@ graph TB
     PA[phi-agent<br/>Builder factory · Renderers<br/>Config · Session · CLI]
 ```
 
-Each crate is a separate repository under [hibuka-labs](https://github.com/hibuka-labs). All built on Rust's async runtime with `Arc<dyn LlmClient>` for provider abstraction.
+Each crate is a separate repository under [hibuka-labs](https://github.com/hibuka-labs). All built on Rust's async runtime with `Arc<dyn LlmClient>` for provider abstraction. Kernel tools via `phi-kernel-tools` are **off by default** — see [Kernel Tools](guide/tools/file-tools/) for how to enable them.
 
 ## Links
 

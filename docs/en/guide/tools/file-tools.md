@@ -1,16 +1,54 @@
-# File Tools
+# Kernel Tools
 
-phi-agent gives the agent read/write/list access to the filesystem through kernel tools. These are enabled by default (behind the `file` feature flag).
+> ⚠️ **Kernel tools are off by default.** Enable them explicitly via feature flags.
 
-## Available tools
+phi-agent provides three categories of kernel primitives, all opt-in and unregistered by default:
 
-| Tool | Description |
-|------|-------------|
-| `read_file` | Read a file, with optional offset/limit for paging large files |
-| `write_file` | Create or overwrite a file |
-| `list_files` | List directory contents, supports glob patterns |
+| Category | Feature | Tools | Description |
+|----------|---------|-------|-------------|
+| File | `file` | `read_file`, `write_file`, `list_files` | Filesystem read/write and directory browsing |
+| Shell | `shell` | `execute_command` | Execute shell commands (CLI binary only) |
+| Multi-Agent | `multi-agent` | `spawn_agent`, `send_message`, `followup_task`, `wait_agent`, `list_agents`, `close_agent` | Sub-agent spawning and orchestration |
 
-## Design principles
+## Enabling
+
+Three ways to enable kernel tools:
+
+### cargo add
+
+```bash
+cargo add phi-agent --features file,shell
+```
+
+### Cargo.toml
+
+```toml
+[dependencies]
+phi-agent = { version = "0.9", features = ["file", "shell"] }
+```
+
+### Command line
+
+```bash
+cargo build --features file,shell
+cargo run --features file,shell
+```
+
+Once enabled, `base_agent_builder()` automatically registers the corresponding tools:
+
+```rust
+let builder = base_agent_builder(llm_client)
+    .system_prompt(build_system_prompt());
+// Kernel tools registered based on enabled features
+```
+
+---
+
+## File Tools (`file`)
+
+Provides `read_file`, `write_file`, `list_files` — the architectural foundation for Skills and Memory.
+
+### Design principles
 
 **Path safety**. All paths are resolved relative to the working directory. Parent directory traversal (`..`) is rejected.
 
@@ -18,35 +56,7 @@ phi-agent gives the agent read/write/list access to the filesystem through kerne
 
 **Explicit truncation**. When `write_file` truncates output, the result carries a `... (truncated)` marker so the agent knows the content is incomplete.
 
-## Usage
-
-The file tools are registered automatically by `base_agent_builder()`. No additional setup needed:
-
-```rust
-let builder = base_agent_builder(llm_client)
-    .system_prompt(build_system_prompt());
-// read_file, write_file, list_files are already registered
-```
-
-To disable file tools:
-
-```toml
-# Cargo.toml
-[dependencies]
-phi-agent = { version = "0.9", default-features = false, features = ["shell"] }
-```
-
-Or at runtime:
-
-```rust
-use phi_agent::base_agent_builder;
-// Build with --no-default-features equivalent:
-// file tools won't be registered if the `file` feature is off
-```
-
-## Why file tools matter
-
-File tools are the architectural foundation for Skills and Memory: one set of generic file operations replaces multiple dedicated tools. The agent reads and writes the filesystem directly — the framework is the OS.
+### Why file tools matter
 
 ```mermaid
 graph TD
@@ -58,4 +68,30 @@ graph TD
     FT --> CONFIG["Config / Session<br/>Reads project config and session state"]
 ```
 
-This is the same pattern used by Claude Code and Codex: the agent interacts with the project through standard file operations — no dedicated tools for each resource type.
+---
+
+## Shell Tool (`shell`)
+
+Execute shell commands. **CLI binary only** (`required-features = ["shell", ...]`) — in library mode, consumers decide whether to register it.
+
+```bash
+# Enable shell when installing the CLI
+cargo install phi-agent --features shell,mcp,telemetry,logging
+```
+
+---
+
+## Multi-Agent (`multi-agent`)
+
+6 sub-agent orchestration tools. See [Multi-Agent](../advanced/multi-agent.md) for details.
+
+```toml
+[dependencies]
+phi-agent = { version = "0.9", features = ["multi-agent"] }
+```
+
+---
+
+## Custom Kernel Tools
+
+The built-in kernel tools are just a starting point. Implement your own the same way. See [Custom Tools](custom-tool.md).

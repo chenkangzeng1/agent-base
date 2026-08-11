@@ -1,5 +1,23 @@
 # Browser Automation
 
+> ⚠️ **Note: Browser tools are extension tools (not kernel tools), off by default.** Enable the `browser` feature explicitly to use them.
+
+## Enabling
+
+```bash
+# cargo add
+cargo add phi-agent --features browser
+
+# Or in Cargo.toml
+[dependencies]
+phi-agent = { version = "0.9", features = ["browser"] }
+
+# Command line
+cargo run --features browser
+```
+
+---
+
 phi-agent includes optional browser automation via Chrome DevTools Protocol (CDP). 21 tools cover navigation, interaction, content extraction, and tab management — all gated behind the `browser` Cargo feature.
 
 ## Quick start

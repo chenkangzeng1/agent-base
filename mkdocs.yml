@@ -65,8 +65,8 @@ plugins:
                 - Skills: guide/concepts/skills.md
             - Tools:
                 - Custom Tools: guide/tools/custom-tool.md
-                - File Tools: guide/tools/file-tools.md
-                - Browser: guide/tools/browser.md
+                - Kernel Tools: guide/tools/file-tools.md
+                - Browser (Extension): guide/tools/browser.md
             - Advanced:
                 - Multi-Agent: guide/advanced/multi-agent.md
                 - MCP: guide/advanced/mcp.md
@@ -94,8 +94,8 @@ plugins:
                 - Skills 技能: guide/concepts/skills.md
             - 工具:
                 - 自定义工具: guide/tools/custom-tool.md
-                - 文件工具: guide/tools/file-tools.md
-                - 浏览器: guide/tools/browser.md
+                - 内核工具: guide/tools/file-tools.md
+                - 浏览器（扩展）: guide/tools/browser.md
             - 进阶:
                 - 多 Agent: guide/advanced/multi-agent.md
                 - MCP: guide/advanced/mcp.md

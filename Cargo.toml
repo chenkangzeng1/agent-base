@@ -39,7 +39,7 @@ uuid = { version = "1", features = ["v4"] }
 rustyline = "15"
 
 [features]
-default = ["telemetry", "logging", "file", "shell"]
+default = ["telemetry", "logging"]
 full = ["file", "shell", "multi-agent", "browser", "mcp", "telemetry", "logging"]
 file = ["phi-kernel-tools/file", "agent-works/skill", "agent-works/prompt_skill"]
 shell = ["phi-kernel-tools/shell"]

@@ -1,5 +1,23 @@
 # 浏览器自动化
 
+> ⚠️ **注意：浏览器工具是扩展工具（非内核工具），默认关闭。** 需要显式启用 `browser` feature 才能使用。
+
+## 启用方式
+
+```bash
+# cargo add
+cargo add phi-agent --features browser
+
+# 或配置 Cargo.toml
+[dependencies]
+phi-agent = { version = "0.9", features = ["browser"] }
+
+# 命令行编译
+cargo run --features browser
+```
+
+---
+
 phi-agent 提供可选的浏览器自动化能力，基于 Chrome DevTools Protocol (CDP)。21 个工具覆盖导航、交互、内容提取和标签页管理 — 全部由 `browser` Cargo feature 控制。
 
 ## 快速开始

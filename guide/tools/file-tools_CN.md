@@ -1,6 +1,6 @@
 # 文件工具
 
-phi-agent 通过内核工具为 Agent 提供文件系统的读写/列表访问能力。默认开启（由 `file` feature flag 控制）。
+phi-agent 通过内核工具为 Agent 提供文件系统的读写/列表访问能力。需通过 `file` feature flag 主动开启，默认关闭。
 
 ## 可用工具
 
@@ -20,12 +20,17 @@ phi-agent 通过内核工具为 Agent 提供文件系统的读写/列表访问�
 
 ## 使用方式
 
-文件工具由 `base_agent_builder()` 自动注册，无需额外配置：
+文件工具在启用 `file` feature 后由 `base_agent_builder()` 自动注册。使用前需在 `Cargo.toml` 中启用：
+
+```toml
+[dependencies]
+phi-agent = { version = "0.9", features = ["file"] }
+```
 
 ```rust
 let builder = base_agent_builder(llm_client)
     .system_prompt(build_system_prompt());
-// read_file, write_file, list_files 已自动注册
+// read_file, write_file, list_files 已注册
 ```
 
 禁用文件工具：

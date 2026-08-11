@@ -22,11 +22,11 @@ hide:
 
 <div class="grid cards" markdown>
 
--   :material-target:{ .lg .middle } **为垂直场景而生**
+-   :material-target:{ .lg .middle } **你的领域，你做主**
 
     ---
 
-    不是通用 chatbot，而是面向嵌入式、工业、IoT 等垂直领域，以及桌面、云端等高定制场景的 Agent 构建框架 — 你的场景，你定义工具，你掌控行为。
+    不是通用 Chatbot，而是面向定制场景的开放基座。不预设任何业务，不绑定任何工具，不替你做领域内的决定。一切交给你——能力由你定义，规则由你书写。
 
 -   :material-rocket-launch-outline:{ .lg .middle } **极致轻量，哪里都能跑**
 
@@ -38,11 +38,11 @@ hide:
 
 <div class="grid cards" markdown>
 
--   :material-puzzle-outline:{ .lg .middle } **你的工具，你掌控**
+-   :material-puzzle-outline:{ .lg .middle } **接口纯粹，上手易用**
 
     ---
 
-    内核原语（文件读写、Shell、子 Agent 调度）提供基础能力 — 其余全部由你定义。一个工具只需 3 个方法：`name()`、`definition()`、`call()`。你注册什么，Agent 就用什么。不绑定平台，没有隐藏行为。
+    工具定义只需 <code>name()</code> · <code>definition()</code> · <code>call()</code> —— 三个方法，三个原语，构成 Agent 能力的全部表达。不发明新语法，不引入新概念，用最纯粹的代码完成最完整的能力定义。
 
 -   :material-chart-line:{ .lg .middle } **全程可观测，每一步可解释**
 
@@ -61,7 +61,7 @@ graph TB
     AB[agent-base<br/>运行时内核<br/>Tool trait · LLM 客户端]
 
     AB --> AW[agent-works<br/>MCP · Skills · Focus]
-    AB --> PKT[phi-kernel-tools<br/>内核工具]
+    AB --> PKT[phi-kernel-tools<br/>内核工具<br/><i>（默认关闭）</i>]
     AB --> YT[your-tools<br/>自定义工具实现]
 
     AW --> PA
@@ -71,7 +71,7 @@ graph TB
     PA[phi-agent<br/>Builder 工厂 · 渲染器<br/>配置 · 会话 · CLI]
 ```
 
-每个 crate 都是 [hibuka-labs](https://github.com/hibuka-labs) 下的独立仓库。基于 Rust 异步运行时，通过 `Arc<dyn LlmClient>` 实现 LLM 提供商抽象。
+每个 crate 都是 [hibuka-labs](https://github.com/hibuka-labs) 下的独立仓库。基于 Rust 异步运行时，通过 `Arc<dyn LlmClient>` 实现 LLM 提供商抽象。`phi-kernel-tools`（内核工具）**默认关闭** — 详见[内核工具](guide/tools/file-tools/)了解如何启用。
 
 ## 链接
 

@@ -26,7 +26,7 @@ phi-agent 是一组独立 crate 的成员：
 | `agent-works` | [![Crates.io](https://img.shields.io/crates/v/agent-works.svg)](https://crates.io/crates/agent-works) | 功能工具箱 — MCP、Skills、Focus |
 | `phi-agent` | [![Crates.io](https://img.shields.io/crates/v/phi-agent.svg)](https://crates.io/crates/phi-agent) | 完整框架 — builder 工厂、渲染器、配置、CLI 二进制 |
 
-**只需要运行时？** `cargo add agent-base`。**需要完整框架？** `cargo add phi-agent`。
+**只需要运行时？** `cargo add agent-base`。**需要完整框架？** `cargo add phi-agent`（默认仅含 telemetry + logging；需手动启用 `file`、`shell` 等内核工具 feature）。
 
 ## SDK
 
@@ -90,15 +90,15 @@ phi-agent 通过 `phi-kernel-tools` 内置了**内核工具** — 为 Agent 提�
 
 | Feature | 能力 | 默认 |
 |---------|------|------|
-| `file` | 文件读写与目录浏览 | ✅ 开 |
-| `shell` | 执行 Shell 命令 | ✅ 开 |
+| `file` | 文件读写与目录浏览 | 关 |
+| `shell` | 执行 Shell 命令 | 关 |
 | `multi-agent` | 子 Agent 调度 | 关 |
 
 这些**不是** LangChain 意义上的"工具" — 没有网页搜索、没有数据库连接器、没有预设 Agent 模板。内核工具是基础设施，**应用工具仍然 100% 由你负责。**
 
 ## 为什么选择 phi-agent
 
-**为垂直场景而生。** 不是通用 chatbot，而是面向嵌入式、工业、IoT 等垂直领域，以及桌面、云端等高定制场景的 Agent 构建框架 — 你的场景，你定义工具，你掌控行为。
+**你的领域，你做主。** 不是通用 Chatbot，而是开放自由的 Agent 构建框架——不预设、不绑定、不替你做决定。你的场景你定义，你的规则你说了算。
 
 **极致轻量，哪里都能跑。** Rust 单二进制，无运行时依赖，从嵌入式 Linux、边缘网关到云端容器、桌面应用，`cargo install` 即用，随地部署。
 
@@ -116,6 +116,11 @@ phi-agent 通过 `phi-kernel-tools` 内置了**内核工具** — 为 Agent 提�
 - **可扩展** — 中间件、审批处理器、自定义渲染器
 
 ## 快速开始
+
+> **注意：** 默认仅含 telemetry + logging。通过 features 启用内核工具：
+> ```bash
+> cargo add phi-agent --features file,shell
+> ```
 
 ```rust
 use phi_agent::{
@@ -191,7 +196,8 @@ async fn main() -> anyhow::Result<()> {
 ## CLI
 
 ```bash
-cargo install phi-agent
+# 安装 CLI 二进制（需显式启用所需 features）
+cargo install phi-agent --features shell,mcp,telemetry,logging
 phi "这个目录下有什么文件？"
 ```
 
@@ -229,7 +235,7 @@ cargo run --features shell,mcp,telemetry,logging
 
 phi-agent **框架本身**刻意保持精简。以下功能**明确不内建到框架中**（但部分可能以独立可选 crate 形式在生态中提供）：
 
-- **预设应用工具** — 不绑定网页搜索、数据库连接器、代码执行器模板、平台集成。phi-agent 提供**内核工具**（文件读写、Shell、子 Agent 调度）作为可选基础设施，**浏览器工具**（21 个 CDP 工具）作为可选扩展 — 均通过 feature flag 控制。所有应用级工具由你自行定义。
+- **预设应用工具** — 不绑定网页搜索、数据库连接器、代码执行器模板、平台集成。phi-agent 提供**内核工具**（文件读写、Shell、子 Agent 调度）作为可选基础设施 — 均通过 feature flag 控制。所有应用级工具由你自行定义。
 - **向量数据库 / embedding** — phi-agent 内置了基于文件系统的记忆功能（`.phi/memory/`，prompt-injection 模式）用于跨轮次持久化，但不集成 Pinecone/Chroma/Weaviate，不自动做 embedding，不提供语义搜索。需要 RAG 或长期语义记忆时，自行接入向量数据库。
 - **预设 Agent 类型** — 不提供"研究 Agent""编程 Agent""客服 Agent"等模板。你自行组合。
 - **工作流引擎** — 不提供 DAG 执行、条件分支引擎、LangGraph 式图编译器。Agent 行为由 LLM tool-choice 驱动。
@@ -267,23 +273,6 @@ phi-agent 和 **LangGraph** 解决不同层面的问题，可以很好地协同�
 **生产环境建议**：遵循最小权限原则 — 只注册 Agent 真正需要的工具，并以最小必要的操作系统权限运行 Agent 进程。
 
 安全漏洞请报告至 **[phiagent@hibuka.com](mailto:phiagent@hibuka.com)**。详见 [SECURITY.md](SECURITY.md)。
-
-## 浏览器自动化
-
-phi-agent 提供可选的浏览器自动化能力（通过 `browser` Cargo feature 按需引入，基于 Chrome DevTools Protocol）。21 个工具覆盖导航、交互、内容提取和标签页管理。
-
-```bash
-# 编译并启用浏览器功能
-cargo run --features browser -- --enable-browser "上网查今天天气"
-
-# Headed 模式（可见浏览器窗口，便于调试）
-cargo run --features browser -- --enable-browser --headed "打开淘宝搜索机械键盘"
-
-# 连接已有的 Chrome 实例
-cargo run --features browser -- --connect-ws ws://localhost:9222 "在当前页面查找..."
-```
-
-📖 [完整浏览器指南 →](https://docs.phiagent.dev)
 
 ## 自定义工具示例
 
@@ -335,8 +324,7 @@ impl Tool for HelloTool {
 | [快速开始](https://docs.phiagent.dev/zh/guide/getting-started/) | 5 分钟上手 |
 | [配置详解](https://docs.phiagent.dev/zh/guide/getting-started/configuration/) | 配置参考 |
 | [自定义工具](https://docs.phiagent.dev/zh/guide/tools/custom-tool/) | 如何编写 Tool |
-| [文件工具](https://docs.phiagent.dev/zh/guide/tools/file-tools/) | read_file / write_file / list_files |
-| [浏览器](https://docs.phiagent.dev/zh/guide/tools/browser/) | 21 个 CDP 网页自动化工具 |
+| [内核工具](https://docs.phiagent.dev/zh/guide/tools/file-tools/) | read_file / write_file / list_files / shell / multi-agent |
 | [多 Agent](https://docs.phiagent.dev/zh/guide/advanced/multi-agent/) | 子 Agent 调度与编排 |
 | [MCP](https://docs.phiagent.dev/zh/guide/advanced/mcp/) | 客户端 + 服务器 (Model Context Protocol) |
 | [Skills](https://docs.phiagent.dev/zh/guide/concepts/skills/) | 可复用 Agent 行为 (agentskills.io) |

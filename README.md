@@ -26,7 +26,7 @@ phi-agent is part of a family of independent crates:
 | `agent-works` | [![Crates.io](https://img.shields.io/crates/v/agent-works.svg)](https://crates.io/crates/agent-works) | Batteries-included toolbox — MCP, Skills, Focus |
 | `phi-agent` | [![Crates.io](https://img.shields.io/crates/v/phi-agent.svg)](https://crates.io/crates/phi-agent) | Full framework — builder factory, renderers, config, CLI binary |
 
-**Just need the runtime?** `cargo add agent-base`. **Need the full framework?** `cargo add phi-agent`.
+**Just need the runtime?** `cargo add agent-base`. **Need the full framework?** `cargo add phi-agent` (telemetry + logging only by default; enable `file`, `shell`, etc. for kernel tools).
 
 ## SDKs
 
@@ -89,15 +89,15 @@ phi-agent bundles **kernel tools** via `phi-kernel-tools` — low-level primitiv
 
 | Feature | Capability | Default |
 |---------|-----------|---------|
-| `file` | Read / write / list files | ✅ on |
-| `shell` | Execute shell commands | ✅ on |
+| `file` | Read / write / list files | off |
+| `shell` | Execute shell commands | off |
 | `multi-agent` | Spawn sub-agents | off |
 
 These are **not** tools in the LangChain sense — no web search, no database connector, no pre-built agent templates. Kernel tools are infrastructure. **Application tools are still 100% your responsibility.**
 
 ## Why phi-agent
 
-**Built for Vertical Scenarios.** Not a generic chatbot, but an Agent framework for embedded systems, industrial, IoT, and other vertical domains, as well as desktop and cloud applications that demand deep customization — your scenario, your tools, your full control.
+**Your Domain, Your Rules.** Not a generic chatbot. An open framework where you call the shots — no presets, no lock-in, no decisions made for you. You define the scenario. You write the rules.
 
 **Lightweight, Runs Anywhere.** A single Rust binary with zero runtime dependencies — from embedded Linux and edge gateways to cloud containers and desktop applications, `cargo install` gets you started in seconds, deploy anywhere.
 
@@ -115,6 +115,11 @@ These are **not** tools in the LangChain sense — no web search, no database co
 - **Extensible** — middleware, approval handlers, custom renderers
 
 ## Quick Start
+
+> **Note:** By default, phi-agent includes only telemetry + logging. Enable kernel tools via features:
+> ```bash
+> cargo add phi-agent --features file,shell
+> ```
 
 ```rust
 use phi_agent::{
@@ -190,7 +195,8 @@ Run with `cargo run --example <name>`.
 ## CLI
 
 ```bash
-cargo install phi-agent
+# Install with required features for the CLI binary
+cargo install phi-agent --features shell,mcp,telemetry,logging
 phi "What's in this directory?"
 ```
 
@@ -228,7 +234,7 @@ cargo run --features shell,mcp,telemetry,logging
 
 phi-agent the **framework** is intentionally lean. The following are **explicitly out of scope** and will not be built into the framework itself (but some may be available as separate opt-in crates in the ecosystem):
 
-- **Pre-packaged application tools** — no web search, no database connector, no code executor template, no platform-specific integrations. phi-agent provides **kernel tools** (file I/O, shell, sub-agents) as opt-in infrastructure and **browser tools** (21 CDP tools) as an optional extension — both gated behind feature flags. You define all application-level tools yourself.
+- **Pre-packaged application tools** — no web search, no database connector, no code executor template, no platform-specific integrations. phi-agent provides **kernel tools** (file I/O, shell, sub-agents) as opt-in infrastructure — all gated behind feature flags. You define all application-level tools yourself.
 - **Vector database / embeddings** — phi-agent includes file-based memory (`.phi/memory/`, prompt-injection mode) for persistence across turns, but there is no Pinecone/Chroma/Weaviate integration, no automatic embedding, no semantic search. For RAG or long-term semantic memory, bring your own vector DB.
 - **Pre-built agent types** — no "research agent," "coding agent," "support agent" templates. You compose your own.
 - **Workflow engine** — no DAG execution, no conditional branching engine, no LangGraph-style graph compiler. Agent behavior is driven by LLM tool-choice.
@@ -266,23 +272,6 @@ phi-agent and **LangGraph** solve different problems and work well together:
 **For production use**, apply the principle of least privilege: only register tools the agent actually needs, and run the agent process with the minimum necessary OS permissions.
 
 Report security vulnerabilities to **[phiagent@hibuka.com](mailto:phiagent@hibuka.com)**. See [SECURITY.md](SECURITY.md) for our full policy.
-
-## Browser Automation
-
-phi-agent includes optional browser automation via Chrome DevTools Protocol (opt-in, behind the `browser` Cargo feature). 21 tools cover navigation, interaction, content extraction, and tab management.
-
-```bash
-# Build and run with browser enabled
-cargo run --features browser -- --enable-browser "search for today's weather"
-
-# Headed mode (visible browser window)
-cargo run --features browser -- --enable-browser --headed "browse example.com"
-
-# Connect to an existing Chrome instance
-cargo run --features browser -- --connect-ws ws://localhost:9222 "find something on the page..."
-```
-
-📖 [Full browser guide →](https://docs.phiagent.dev)
 
 ## Custom Tool Example
 
@@ -329,8 +318,7 @@ Full guide: [guide/custom-tool.md](guide/custom-tool.md)
 | [Getting Started](https://docs.phiagent.dev/guide/getting-started/) | 5-minute quick start |
 | [Configuration](https://docs.phiagent.dev/guide/getting-started/configuration/) | Config reference |
 | [Custom Tools](https://docs.phiagent.dev/guide/tools/custom-tool/) | How to write a Tool |
-| [File Tools](https://docs.phiagent.dev/guide/tools/file-tools/) | read_file / write_file / list_files |
-| [Browser](https://docs.phiagent.dev/guide/tools/browser/) | 21 CDP tools for web automation |
+| [Kernel Tools](https://docs.phiagent.dev/guide/tools/file-tools/) | read_file / write_file / list_files / shell / multi-agent |
 | [Multi-Agent](https://docs.phiagent.dev/guide/advanced/multi-agent/) | Sub-agent spawning and orchestration |
 | [MCP](https://docs.phiagent.dev/guide/advanced/mcp/) | Client + Server (Model Context Protocol) |
 | [Skills](https://docs.phiagent.dev/guide/concepts/skills/) | Reusable agent behaviors (agentskills.io) |

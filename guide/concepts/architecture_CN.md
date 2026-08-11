@@ -59,10 +59,10 @@ graph TB
 - **Multi-Agent** — 子 Agent 调度与编排
 
 ### phi-kernel-tools
-内核原语，按需启用 — `cargo add phi-kernel-tools` 可独立使用：
-- **文件工具** — `read_file`、`write_file`、`list_files`（由 `file` feature 控制）
-- **Shell 工具** — 执行 Shell 命令（由 `shell` feature 控制）
-- **多 Agent** — `spawn_agent`、`send_message`、`followup_task`、`wait_agent`、`list_agents`、`close_agent`（由 `multi-agent` feature 控制）
+内核原语，按需启用 — 全部默认关闭，通过 feature flag 开启：
+- **文件工具** — `read_file`、`write_file`、`list_files`（通过 `file` feature 按需启用）
+- **Shell 工具** — 执行 Shell 命令（通过 `shell` feature 按需启用）
+- **多 Agent** — `spawn_agent`、`send_message`、`followup_task`、`wait_agent`、`list_agents`、`close_agent`（通过 `multi-agent` feature 按需启用）
 
 ### phi-agent
 框架层 — `cargo add phi-agent` 获取完整功能：
@@ -116,7 +116,7 @@ phi metrics last               # 最新会话
 ## 关键设计决策
 
 ### 内核工具，非应用工具
-phi-agent 提供内核工具（文件读写、Shell、子 Agent 调度）作为可选基础设施，但不预设任何应用工具（无网页搜索、数据库连接器）。工具通过 `AgentBuilder::register_tool()` 外部注册。
+phi-agent 提供内核工具（文件读写、Shell、子 Agent 调度）作为可选基础设施 — 全部默认关闭，通过 feature flag 开启。但不预设任何应用工具（无网页搜索、数据库连接器）。工具通过 `AgentBuilder::register_tool()` 外部注册。
 
 ### 文件记忆，无向量库
 phi-agent 内置基于文件系统的记忆功能（`.phi/memory/`），但没有向量数据库、embedding、语义搜索。每个决策都可追溯到 prompt。

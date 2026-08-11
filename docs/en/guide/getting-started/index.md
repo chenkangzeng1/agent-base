@@ -10,7 +10,8 @@
 ## Install
 
 ```bash
-cargo install phi-agent
+# The CLI binary needs shell, mcp, telemetry, logging features
+cargo install phi-agent --features shell,mcp,telemetry,logging
 ```
 
 ## Option 1: REPL (recommended)

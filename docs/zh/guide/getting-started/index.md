@@ -10,7 +10,8 @@
 ## 安装
 
 ```bash
-cargo install phi-agent
+# CLI 二进制需要 shell、mcp、telemetry、logging 四个 feature
+cargo install phi-agent --features shell,mcp,telemetry,logging
 ```
 
 ## 方式一：REPL 交互（推荐）

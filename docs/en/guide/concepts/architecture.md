@@ -26,7 +26,7 @@ graph TB
     AB[agent-base<br/>Runtime kernel<br/>Tool trait · LLM clients · Events]
 
     AB --> AW[agent-works<br/>MCP · Skills · Focus]
-    AB --> PKT[phi-kernel-tools<br/>Kernel tools]
+    AB --> PKT[phi-kernel-tools<br/>Kernel tools<br/><i>(off by default)</i>]
     AB --> YT[your-tools<br/>Custom Tool impls]
     AB --> PTEL[phi-telemetry<br/>Metrics · Cost tracking]
     AB --> LOG[log-core<br/>Structured logging]
@@ -72,10 +72,10 @@ Built on agent-base — `cargo add agent-works` for the toolbox:
 - **Multi-Agent** — sub-agent spawning and orchestration
 
 ### phi-kernel-tools
-Kernel primitives as opt-in infrastructure — `cargo add phi-kernel-tools` for standalone use:
-- **File Tools** — `read_file`, `write_file`, `list_files` (gated by `file` feature)
-- **Shell Tool** — execute shell commands (gated by `shell` feature)
-- **Multi-Agent** — `spawn_agent`, `send_message`, `followup_task`, `wait_agent`, `list_agents`, `close_agent` (gated by `multi-agent` feature)
+Kernel primitives as opt-in infrastructure — all off by default, enable via feature flags:
+- **File Tools** — `read_file`, `write_file`, `list_files` (opt-in via `file` feature)
+- **Shell Tool** — execute shell commands (opt-in via `shell` feature)
+- **Multi-Agent** — `spawn_agent`, `send_message`, `followup_task`, `wait_agent`, `list_agents`, `close_agent` (opt-in via `multi-agent` feature)
 
 ### phi-agent (this crate)
 Framework layer — `cargo add phi-agent` for the full thing:
@@ -135,7 +135,7 @@ for the complete specification, phi-dash plans, and analysis workflows.
 ## Key Design Decisions
 
 ### Kernel Tools, Not Application Tools
-phi-agent provides kernel tools (file I/O, shell, sub-agents) as opt-in infrastructure, but ships with zero application tools (no web search, no database connector). Tools are registered externally via `AgentBuilder::register_tool()`.
+phi-agent provides kernel tools (file I/O, shell, sub-agents) as opt-in infrastructure — all off by default, enable via feature flags. Ships with zero application tools (no web search, no database connector). Tools are registered externally via `AgentBuilder::register_tool()`.
 
 ### File-Based Memory, No Vector DB
 phi-agent includes file-based memory (`.phi/memory/`) for persistence across turns, but has no vector database, no embeddings, no semantic search. Every decision is traceable to the prompt.
