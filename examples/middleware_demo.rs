@@ -262,6 +262,9 @@ async fn print_session_messages(runtime: &agent_base::AgentRuntime, session_id: 
                             println!("[TOOL:{}] {}", tool_call_id, content);
                         }
                     }
+                    ChatMessage::Custom { role, data } => {
+                        println!("[CUSTOM:{}] {}", role, data);
+                    }
                 }
             }
             println!("-------------------------");

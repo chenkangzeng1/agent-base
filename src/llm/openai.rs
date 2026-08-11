@@ -225,6 +225,10 @@ impl OpenAiClient {
                 "tool_call_id": tool_call_id,
                 "content": content,
             }),
+            ChatMessage::Custom { role, data } => json!({
+                "role": role,
+                "content": data.to_string(),
+            }),
         }
     }
 

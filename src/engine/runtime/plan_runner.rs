@@ -9,6 +9,7 @@ use crate::engine::runtime::llm_engine::LlmEngine;
 use crate::engine::runtime::message_queue::MessageQueue;
 use crate::engine::runtime::session_manager::SessionManager;
 use crate::engine::runtime::tool_engine::ToolEngine;
+use crate::types::ConvertToLlmFn;
 use crate::types::{AgentConfig, TurnContext};
 
 /// Turn-end callback type: receives TurnContext, no return value.
@@ -28,9 +29,12 @@ pub(crate) struct RuntimeCore {
     pub(crate) turn_end_callbacks: StdRwLock<Vec<TurnEndCallback>>,
     /// Dual-queue message system (steering + follow-up).
     pub(crate) message_queue: MessageQueue,
+    /// Optional callback to transform messages before sending to LLM.
+    pub(crate) convert_to_llm: Option<ConvertToLlmFn>,
 }
 
 impl RuntimeCore {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: AgentConfig,
         llm_engine: LlmEngine,
@@ -39,6 +43,7 @@ impl RuntimeCore {
         event_bus: EventBus,
         context_manager: Option<ContextWindowManager>,
         middlewares: Vec<MiddlewareRef>,
+        convert_to_llm: Option<ConvertToLlmFn>,
     ) -> Self {
         Self {
             config: Arc::new(RwLock::new(config)),
@@ -51,6 +56,7 @@ impl RuntimeCore {
             cancel_token: Mutex::new(CancellationToken::new()),
             turn_end_callbacks: StdRwLock::new(Vec::new()),
             message_queue: MessageQueue::new(),
+            convert_to_llm,
         }
     }
 

@@ -16,7 +16,8 @@ pub use error::{AgentError, AgentResult, ErrorKind};
 
 pub use events::{RuntimeEvent, UserEvent};
 pub use message::{
-    ChatMessage, ImageAttachment, ImageDetail, Message, MessageRole, ToolCallMessage,
+    ChatMessage, ConvertToLlmFn, ImageAttachment, ImageDetail, Message, MessageRole,
+    ToolCallMessage, default_convert_to_llm,
 };
 pub use outcome::RunOutcome;
 pub use plan_update::{PlanItem, PlanStepStatus, UpdatePlanArgs};

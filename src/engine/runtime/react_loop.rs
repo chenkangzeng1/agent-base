@@ -6,7 +6,7 @@ use crate::engine::runtime::event_bus::EventBus;
 use crate::engine::runtime::llm_engine::LlmTurnResult;
 use crate::types::{
     AgentError, AgentResult, CheckpointData, CheckpointStep, MessageRole, RunOutcome, RuntimeEvent,
-    SessionId,
+    SessionId, default_convert_to_llm,
 };
 
 use super::plan_runner::RuntimeCore;
@@ -714,7 +714,15 @@ impl RuntimeCore {
             let _turn_guard = turn_span.enter();
 
             let session = self.session_manager.session_or_err(session_id).await?;
-            let mut messages: Vec<_> = session.chat_messages().to_vec();
+            let messages: Vec<_> = session.chat_messages().to_vec();
+
+            // Apply message conversion before sending to LLM.
+            // Default: strip Custom messages that providers don't understand.
+            let mut messages = match &self.convert_to_llm {
+                Some(convert) => convert(&messages),
+                None => default_convert_to_llm(&messages),
+            };
+
             let tools_for_turn = tool_definitions.to_vec();
 
             if let Some(ref ctx_mgr) = self.context_manager {

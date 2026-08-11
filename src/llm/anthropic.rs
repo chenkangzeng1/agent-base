@@ -137,6 +137,16 @@ impl AnthropicClient {
                         }]
                     }));
                 }
+                ChatMessage::Custom { role: _, data } => {
+                    // Custom messages are passed as user-role with their data serialized.
+                    result.push(json!({
+                        "role": "user",
+                        "content": [{
+                            "type": "text",
+                            "text": data.to_string(),
+                        }]
+                    }));
+                }
             }
         }
 

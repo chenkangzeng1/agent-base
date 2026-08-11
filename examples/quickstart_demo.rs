@@ -463,6 +463,9 @@ async fn main() -> AgentResult<()> {
                             };
                             println!("[Tool:{}] {}", tool_call_id, display);
                         }
+                        agent_base::ChatMessage::Custom { role, data } => {
+                            println!("[Custom:{}] {}", role, data);
+                        }
                     }
                 }
                 println!("---------------\n");

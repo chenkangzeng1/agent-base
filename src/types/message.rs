@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum MessageRole {
@@ -53,6 +54,16 @@ pub enum ChatMessage {
     Tool {
         tool_call_id: String,
         content: String,
+    },
+    /// Application-defined message type for extensibility.
+    ///
+    /// Consumers can inject custom message types (e.g., artifacts, notifications)
+    /// into the conversation transcript. Custom messages are preserved in the
+    /// transcript but filtered out by the default [`convert_to_llm`] callback
+    /// before being sent to the LLM provider.
+    Custom {
+        role: String,
+        data: serde_json::Value,
     },
 }
 
@@ -198,6 +209,26 @@ impl From<&ChatMessage> for Message {
                 role: MessageRole::Tool,
                 content: content.clone(),
             },
+            ChatMessage::Custom { role: _, data } => Message {
+                role: MessageRole::User,
+                content: data.to_string(),
+            },
         }
     }
+}
+
+/// Callback that transforms the message list before it is sent to the LLM.
+///
+/// The default implementation filters out [`ChatMessage::Custom`] variants because
+/// most providers don't understand application-specific message types. Consumers
+/// can override this to inject custom serialization logic for their message types.
+pub type ConvertToLlmFn = Arc<dyn Fn(&[ChatMessage]) -> Vec<ChatMessage> + Send + Sync>;
+
+/// Default conversion that strips [`ChatMessage::Custom`] messages.
+pub fn default_convert_to_llm(messages: &[ChatMessage]) -> Vec<ChatMessage> {
+    messages
+        .iter()
+        .filter(|m| !matches!(m, ChatMessage::Custom { .. }))
+        .cloned()
+        .collect()
 }

@@ -3,7 +3,8 @@ use std::sync::Arc;
 use crate::llm::{ReasoningConfig, StreamClient};
 use crate::tool::{Tool, ToolPolicy, ToolRegistry};
 use crate::types::{
-    AgentConfig, AtomicU64SessionIdGenerator, ResponseFormat, RetryConfig, SessionIdGenerator,
+    AgentConfig, AtomicU64SessionIdGenerator, ConvertToLlmFn, ResponseFormat, RetryConfig,
+    SessionIdGenerator,
 };
 
 use super::AgentRuntime;
@@ -25,6 +26,7 @@ pub struct AgentBuilder {
     error_recovery: Option<Arc<dyn ToolErrorRecovery>>,
     event_bus_capacity: usize,
     session_id_generator: Option<Arc<dyn SessionIdGenerator>>,
+    convert_to_llm: Option<ConvertToLlmFn>,
 }
 
 impl AgentBuilder {
@@ -41,6 +43,7 @@ impl AgentBuilder {
             error_recovery: None,
             event_bus_capacity: 2048,
             session_id_generator: None,
+            convert_to_llm: None,
         }
     }
 
@@ -51,6 +54,17 @@ impl AgentBuilder {
 
     pub fn session_id_generator(mut self, generator: Arc<dyn SessionIdGenerator>) -> Self {
         self.session_id_generator = Some(generator);
+        self
+    }
+
+    /// Set a callback to transform messages before they are sent to the LLM.
+    ///
+    /// The default behavior (when `None`) is to filter out
+    /// [`ChatMessage::Custom`] variants, which most providers don't understand.
+    /// Override this to inject custom serialization logic for application-specific
+    /// message types.
+    pub fn convert_to_llm(mut self, cb: ConvertToLlmFn) -> Self {
+        self.convert_to_llm = Some(cb);
         self
     }
 
@@ -254,6 +268,7 @@ impl AgentBuilder {
             event_bus,
             self.context_manager,
             self.middlewares,
+            self.convert_to_llm,
         ));
 
         Ok(AgentRuntime { runner })

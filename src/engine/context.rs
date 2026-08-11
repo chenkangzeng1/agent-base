@@ -102,6 +102,9 @@ impl ContextWindowManager {
                 tool_call_id,
                 content,
             } => Self::estimate_tokens(tool_call_id) + Self::estimate_tokens(content),
+            ChatMessage::Custom { role, data } => {
+                Self::estimate_tokens(role) + Self::estimate_tokens(&data.to_string())
+            }
         }
     }
 
