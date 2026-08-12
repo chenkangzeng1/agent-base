@@ -1,6 +1,6 @@
 # 文件工具
 
-phi-agent 通过内核工具为 Agent 提供文件系统的读写/列表访问能力。需通过 `file` feature flag 主动开启，默认关闭。
+phi-agent 通过内核工具为 Agent 提供文件系统的读写/列表访问能力。默认开启，也可通过 `file` feature flag 手动控制。
 
 ## 可用工具
 
@@ -20,9 +20,10 @@ phi-agent 通过内核工具为 Agent 提供文件系统的读写/列表访问�
 
 ## 使用方式
 
-文件工具在启用 `file` feature 后由 `base_agent_builder()` 自动注册。使用前需在 `Cargo.toml` 中启用：
+文件工具默认开启，由 `base_agent_builder()` 自动注册，无需额外配置：
 
 ```toml
+# 默认已包含 file，下面的声明是多余的，但显式声明也没问题
 [dependencies]
 phi-agent = { version = "0.9", features = ["file"] }
 ```

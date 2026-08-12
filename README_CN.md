@@ -10,7 +10,7 @@
 
 Rust AI Agent 框架。Agent 的调度、会话、流式输出——框架搞定。你只写三样东西：你的工具、你的提示词、你的领域知识。
 
-> **phi-agent 不内置任何业务工具。** 没有搜索引擎、没有数据库连接、没有代码执行器——干干净净的 Rust 运行时。Agent 需要什么工具，完全由你决定。内核原语（文件读写、Shell、子 Agent）通过 `phi-kernel-tools` 按需开启，全部 feature gate 控制，默认关闭。
+> **phi-agent 不内置任何业务工具。** 没有搜索引擎、没有数据库连接、没有代码执行器——干干净净的 Rust 运行时。Agent 需要什么工具，完全由你决定。内核原语（文件读写、Shell、子 Agent）通过 `phi-kernel-tools` 按需开启，feature gate 控制。文件工具和 MCP 默认开启，shell 和 multi-agent 按需启用。
 
 基于 [agent-base](https://crates.io/crates/agent-base) 和 [agent-works](https://crates.io/crates/agent-works) 构建。**phi-agent 提供基础设施，你提供工具。**
 
@@ -31,7 +31,7 @@ graph TB
     AB[agent-base<br/>Tool trait · 运行时<br/>LLM 客户端 · 事件]
 
     AB --> AW[agent-works<br/>MCP · Skills · Focus]
-    AB --> PKT["phi-kernel-tools<br/>内核工具<br/>（默认关闭）"]
+    AB --> PKT["phi-kernel-tools<br/>内核工具"]
     AB --> YT[your-tools<br/>自定义工具实现]
 
     AW --> PA
@@ -41,15 +41,28 @@ graph TB
     PA[phi-agent<br/>Builder 工厂<br/>渲染器 · 配置 · 会话<br/>CLI 二进制]
 ```
 
-### 内核工具
+### 内核工具与协议
 
-全部通过 feature flag 按需开启：
+全部通过 feature flag 按需开启。`file` 和 `mcp` 默认开启，`shell` 和 `multi-agent` 默认关闭。
 
 | Feature | 能力 | 默认 |
 |---------|------|------|
-| `file` | 文件读写、列表 | 关闭 |
+| `file` | 文件读写、列表 + 技能系统 | **开启** |
+| `mcp` | Model Context Protocol 协议支持 | **开启** |
 | `shell` | 执行 Shell 命令 | 关闭 |
 | `multi-agent` | 启动子 Agent | 关闭 |
+| `browser` | 浏览器自动化 (CDP) | 关闭 |
+
+**功能分组**（便捷组合）：
+
+| 分组 | 包含 | 在 `full` 内? |
+|------|------|---------------|
+| `protocol` | `mcp` | 是 |
+| `observability` | `telemetry` + `logging` | 是 |
+| `app` | `browser` | **否** |
+| `full` | `file` + `shell` + `mcp` + `telemetry` + `logging` | — |
+
+`telemetry` 和 `logging` 已在默认集中。`app`（浏览器）刻意不纳入 `full`——需要时显式开启。`multi-agent` 始终按需开启，不归入任何分组。
 
 ## 为什么选择 phi-agent
 
@@ -110,8 +123,30 @@ async fn main() -> anyhow::Result<()> {
 ## CLI
 
 ```bash
-cargo install phi-agent --features shell,mcp,telemetry,logging
+# 基础安装（file + MCP + telemetry + logging）
+cargo install phi-agent
+
+# 带 shell 执行（最常用）
+cargo install phi-agent --features shell
+
+# 除浏览器外的全部功能
+cargo install phi-agent --features full
+
+# 含浏览器的全部功能
+cargo install phi-agent --features full,app
+
 phi "这个目录下有什么？"
+```
+
+**开发使用（从源码运行）：**
+
+```bash
+git clone https://github.com/hibuka-labs/phi-agent.git && cd phi-agent
+
+cargo run                              # 默认：file + MCP + telemetry + logging
+cargo run --features shell             # 加 shell 执行
+cargo run --features full              # 全部（不含 browser）
+cargo run --features full,app          # 含 browser
 ```
 
 ```bash

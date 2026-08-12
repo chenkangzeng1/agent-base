@@ -5,7 +5,7 @@
 A general-purpose AI Agent framework in Rust, built on `agent-base` and `agent-works`.
 
 ### Architecture Principle
-**phi-agent itself does NOT bundle application tools.** It provides infrastructure only (builder factory, renderers, config, session management). Kernel tools (file I/O, shell, multi-agent) are available via `phi-kernel-tools` behind feature flags — **all off by default**. Application tools are implemented in `phi-tools` and injected by consumers (CLI, web, etc.).
+**phi-agent itself does NOT bundle application tools.** It provides infrastructure only (builder factory, renderers, config, session management). Kernel tools (file I/O, shell, multi-agent) are available via `phi-kernel-tools` behind feature flags. File tools and MCP are on by default; shell and multi-agent are opt-in. Application tools are implemented in `phi-tools` and injected by consumers (CLI, web, etc.).
 
 ### Current Branch
 `master` — the public open-source branch. Browser automation tools (21 tools via CDP) are included behind the `browser` feature gate. Enable with `cargo build --features browser` or `phi --features browser`.
@@ -147,7 +147,7 @@ phi-agent/
 
 ### Key Design Decisions
 - **No built-in application tools** — framework knows nothing about specific tools (web search, DB, etc.)
-- **Kernel tools off by default** — file I/O, shell, multi-agent are behind feature flags (`file`, `shell`, `multi-agent`), all opt-in
+- **Kernel tools off by default (except file)** — shell, multi-agent are behind feature flags (`shell`, `multi-agent`), all opt-in; file tools are on by default with skills and MCP
 - **No built-in memory** — no vector DB, no hidden state. Predictable and debuggable.
 - **OpenAI-compatible CLI** — CLI uses OpenAiClient; Anthropic requires AnthropicClient (code change)
 - **China-first prompt** — build_system_prompt_cn() for GFW-aware environments

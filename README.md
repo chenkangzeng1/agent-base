@@ -10,7 +10,7 @@
 
 Rust AI Agent framework. Agent orchestration, session management, streaming output — the framework handles it. You write three things: your tools, your prompts, your domain knowledge.
 
-> **phi-agent ships with zero application tools.** No web search, no database connector, no code executor — just a clean Rust runtime. What tools your agent needs is entirely up to you. Kernel primitives (file I/O, shell, sub-agents) are available via `phi-kernel-tools` as opt-in infrastructure, all behind feature flags, all off by default.
+> **phi-agent ships with zero application tools.** No web search, no database connector, no code executor — just a clean Rust runtime. What tools your agent needs is entirely up to you. Kernel primitives (file I/O, shell, sub-agents) are available via `phi-kernel-tools` as opt-in infrastructure behind feature flags. File tools and MCP are on by default; shell and multi-agent are opt-in.
 
 Built on [agent-base](https://crates.io/crates/agent-base) and [agent-works](https://crates.io/crates/agent-works). **phi-agent provides the infrastructure. You bring the tools.**
 
@@ -31,7 +31,7 @@ graph TB
     AB[agent-base<br/>Tool trait · Runtime<br/>LLM clients · Events]
 
     AB --> AW[agent-works<br/>MCP · Skills · Focus]
-    AB --> PKT["phi-kernel-tools<br/>Kernel tools<br/>(off by default)"]
+    AB --> PKT["phi-kernel-tools<br/>Kernel tools"]
     AB --> YT[your-tools<br/>Custom Tool impls]
 
     AW --> PA
@@ -41,15 +41,28 @@ graph TB
     PA[phi-agent<br/>Builder factory<br/>Renderers · Config · Session<br/>CLI binary]
 ```
 
-### Kernel Tools
+### Kernel Tools & Protocols
 
-All opt-in via feature flags:
+All opt-in via feature flags. `file` and `mcp` are enabled by default; `shell` and `multi-agent` are off.
 
 | Feature | Capability | Default |
 |---------|------------|---------|
-| `file` | Read, write, list files | Off |
+| `file` | Read, write, list files + skills | **On** |
+| `mcp` | Model Context Protocol support | **On** |
 | `shell` | Execute shell commands | Off |
 | `multi-agent` | Spawn sub-agents | Off |
+| `browser` | Browser automation via CDP | Off |
+
+**Feature groups** (convenience bundles):
+
+| Group | Includes | In `full`? |
+|-------|----------|------------|
+| `protocol` | `mcp` | Yes |
+| `observability` | `telemetry` + `logging` | Yes |
+| `app` | `browser` | **No** |
+| `full` | `file` + `shell` + `mcp` + `telemetry` + `logging` | — |
+
+`telemetry` and `logging` are in the default set. `app` (browser) is intentionally excluded from `full` — add it explicitly when needed. `multi-agent` is always opt-in, not included in any group.
 
 ## Why phi-agent
 
@@ -110,8 +123,30 @@ More examples in [examples/](examples/).
 ## CLI
 
 ```bash
-cargo install phi-agent --features shell,mcp,telemetry,logging
+# Basic install (file + MCP + telemetry + logging)
+cargo install phi-agent
+
+# With shell execution (most common)
+cargo install phi-agent --features shell
+
+# Everything except browser
+cargo install phi-agent --features full
+
+# Everything including browser
+cargo install phi-agent --features full,app
+
 phi "What's in this directory?"
+```
+
+**Development (from source):**
+
+```bash
+git clone https://github.com/hibuka-labs/phi-agent.git && cd phi-agent
+
+cargo run                              # default: file + MCP + telemetry + logging
+cargo run --features shell             # + shell execution
+cargo run --features full              # everything except browser
+cargo run --features full,app          # everything including browser
 ```
 
 ```bash

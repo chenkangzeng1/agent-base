@@ -1,37 +1,34 @@
 # Kernel Tools
 
-> ⚠️ **Kernel tools are off by default.** Enable them explicitly via feature flags.
+phi-agent provides kernel primitives via feature flags. `file` is on by default; `shell` and `multi-agent` are opt-in:
 
-phi-agent provides three categories of kernel primitives, all opt-in and unregistered by default:
-
-| Category | Feature | Tools | Description |
-|----------|---------|-------|-------------|
-| File | `file` | `read_file`, `write_file`, `list_files` | Filesystem read/write and directory browsing |
-| Shell | `shell` | `execute_command` | Execute shell commands (CLI binary only) |
-| Multi-Agent | `multi-agent` | `spawn_agent`, `send_message`, `followup_task`, `wait_agent`, `list_agents`, `close_agent` | Sub-agent spawning and orchestration |
+| Category | Feature | Tools | Default |
+|----------|---------|-------|---------|
+| File | `file` | `read_file`, `write_file`, `list_files` | **On** |
+| Shell | `shell` | `execute_command` | Off |
+| Multi-Agent | `multi-agent` | `spawn_agent`, `send_message`, `followup_task`, `wait_agent`, `list_agents`, `close_agent` | Off |
 
 ## Enabling
 
-Three ways to enable kernel tools:
+File tools are enabled by default — no action needed. For shell and multi-agent:
 
 ### cargo add
 
 ```bash
-cargo add phi-agent --features file,shell
+cargo add phi-agent --features shell,multi-agent
 ```
 
 ### Cargo.toml
 
 ```toml
 [dependencies]
-phi-agent = { version = "0.9", features = ["file", "shell"] }
+phi-agent = { version = "0.9", features = ["shell", "multi-agent"] }
 ```
 
 ### Command line
 
 ```bash
-cargo build --features file,shell
-cargo run --features file,shell
+cargo run --features shell,multi-agent
 ```
 
 Once enabled, `base_agent_builder()` automatically registers the corresponding tools:
@@ -72,11 +69,10 @@ graph TD
 
 ## Shell Tool (`shell`)
 
-Execute shell commands. **CLI binary only** (`required-features = ["shell", ...]`) — in library mode, consumers decide whether to register it.
+Execute shell commands. Opt-in via `--features shell`:
 
 ```bash
-# Enable shell when installing the CLI
-cargo install phi-agent --features shell,mcp,telemetry,logging
+cargo install phi-agent --features shell
 ```
 
 ---

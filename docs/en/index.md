@@ -51,7 +51,7 @@ graph TB
     AB[agent-base<br/>Runtime kernel<br/>Tool trait · LLM clients]
 
     AB --> AW[agent-works<br/>MCP · Skills · Focus]
-    AB --> PKT["phi-kernel-tools<br/>Kernel tools<br/>(off by default)"]
+    AB --> PKT["phi-kernel-tools<br/>Kernel tools"]
     AB --> YT[your-tools<br/>Custom Tool impls]
 
     AW --> PA
@@ -61,7 +61,7 @@ graph TB
     PA[phi-agent<br/>Builder factory · Renderers<br/>Config · Session · CLI]
 ```
 
-Each crate is a separate repository under [hibuka-labs](https://github.com/hibuka-labs). All built on Rust's async runtime with `Arc<dyn LlmClient>` for provider abstraction. Kernel tools via `phi-kernel-tools` are **off by default** — see [Kernel Tools](guide/tools/file-tools/) for how to enable them.
+Each crate is a separate repository under [hibuka-labs](https://github.com/hibuka-labs). All built on Rust's async runtime with `Arc<dyn LlmClient>` for provider abstraction. File tools and MCP are on by default; shell and multi-agent are opt-in — see [Kernel Tools](guide/tools/file-tools/) for details.
 
 ## Links
 

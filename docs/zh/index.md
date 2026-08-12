@@ -51,7 +51,7 @@ graph TB
     AB[agent-base<br/>运行时内核<br/>Tool trait · LLM 客户端]
 
     AB --> AW[agent-works<br/>MCP · Skills · Focus]
-    AB --> PKT["phi-kernel-tools<br/>内核工具<br/>（默认关闭）"]
+    AB --> PKT["phi-kernel-tools<br/>内核工具"]
     AB --> YT[your-tools<br/>自定义工具实现]
 
     AW --> PA
@@ -61,7 +61,7 @@ graph TB
     PA[phi-agent<br/>Builder 工厂 · 渲染器<br/>配置 · 会话 · CLI]
 ```
 
-每个 crate 都是 [hibuka-labs](https://github.com/hibuka-labs) 下的独立仓库。基于 Rust 异步运行时，通过 `Arc<dyn LlmClient>` 实现 LLM 提供商抽象。`phi-kernel-tools`（内核工具）**默认关闭** — 详见[内核工具](guide/tools/file-tools/)了解如何启用。
+每个 crate 都是 [hibuka-labs](https://github.com/hibuka-labs) 下的独立仓库。基于 Rust 异步运行时，通过 `Arc<dyn LlmClient>` 实现 LLM 提供商抽象。文件工具和 MCP 默认开启，shell 和多 Agent 按需启用 — 详见[内核工具](guide/tools/file-tools/)。
 
 ## 链接
 

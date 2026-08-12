@@ -1,6 +1,6 @@
 [package]
 name = "phi-agent"
-version = "0.9.1"
+version = "0.10.0"
 edition = "2024"
 description = "phi-agent — General-purpose AI Agent framework (builder factory, renderer, config, session management)"
 license = "MIT"
@@ -12,14 +12,14 @@ categories = ["development-tools", "command-line-utilities", "asynchronous"]
 [[bin]]
 name = "phi"
 path = "src/bin/phi/main.rs"
-required-features = ["shell", "mcp", "telemetry", "logging"]
+required-features = ["mcp", "telemetry", "logging"]
 
 [dependencies]
-agent-base = { version = "0.1.13", path = "../agent-base" }
-agent-works = { version = "0.1.6", path = "../agent-works" }
-phi-kernel-tools = { version = "0.1.0", path = "../phi-kernel-tools", default-features = false }
-phi-tools = { version = "0.1.4", optional = true }
-phi-telemetry = { version = "0.1.4", optional = true }
+agent-base = { version = "0.1.14" }
+agent-works = { version = "0.1.7" }
+phi-kernel-tools = { version = "0.1.1", default-features = false }
+phi-tools = { version = "0.1.5", optional = true }
+phi-telemetry = { version = "0.1.5", optional = true }
 log-core = { version = "0.1.3", optional = true }
 anyhow = "1"
 async-trait = "0.1"
@@ -39,15 +39,22 @@ uuid = { version = "1", features = ["v4"] }
 rustyline = "15"
 
 [features]
-default = ["telemetry", "logging"]
-full = ["file", "shell", "multi-agent", "browser", "mcp", "telemetry", "logging"]
+default = ["file", "mcp", "telemetry", "logging"]
+full = ["file", "shell", "mcp", "telemetry", "logging"]
+
+# ── Feature groups ──
+protocol      = ["mcp"]
+observability = ["telemetry", "logging"]
+app           = ["browser"]
+
+# ── Granular feature flags ──
 file = ["phi-kernel-tools/file", "agent-works/skill", "agent-works/prompt_skill"]
 shell = ["phi-kernel-tools/shell"]
+multi-agent = ["phi-kernel-tools/multi-agent"]
+mcp = ["agent-works/mcp"]
+browser = ["phi-tools", "phi-tools/browser"]
 telemetry = ["phi-telemetry"]
 logging = ["log-core"]
-browser = ["phi-tools", "phi-tools/browser"]
-mcp = ["agent-works/mcp"]
-multi-agent = ["phi-kernel-tools/multi-agent"]
 
 [dev-dependencies]
 tempfile = "3"

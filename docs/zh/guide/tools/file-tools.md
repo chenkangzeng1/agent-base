@@ -1,37 +1,34 @@
 # 内核工具
 
-> ⚠️ **内核工具默认关闭。** 需通过 feature flag 显式启用。
+phi-agent 通过 feature flag 提供内核原语。`file` 默认开启，`shell` 和 `multi-agent` 按需启用：
 
-phi-agent 提供三类内核原语，全部 opt-in，默认不注册：
-
-| 类别 | Feature | 工具 | 说明 |
+| 类别 | Feature | 工具 | 默认 |
 |------|---------|------|------|
-| 文件 | `file` | `read_file`、`write_file`、`list_files` | 文件系统读写与目录浏览 |
-| Shell | `shell` | `execute_command` | 执行 Shell 命令（仅 CLI 二进制） |
-| 多 Agent | `multi-agent` | `spawn_agent`、`send_message`、`followup_task`、`wait_agent`、`list_agents`、`close_agent` | 子 Agent 调度与通信 |
+| 文件 | `file` | `read_file`、`write_file`、`list_files` | **开启** |
+| Shell | `shell` | `execute_command` | 关闭 |
+| 多 Agent | `multi-agent` | `spawn_agent`、`send_message`、`followup_task`、`wait_agent`、`list_agents`、`close_agent` | 关闭 |
 
 ## 启用方式
 
-三种方式任选：
+文件工具默认开启，无需操作。Shell 和多 Agent：
 
 ### cargo add
 
 ```bash
-cargo add phi-agent --features file,shell
+cargo add phi-agent --features shell,multi-agent
 ```
 
 ### Cargo.toml
 
 ```toml
 [dependencies]
-phi-agent = { version = "0.9", features = ["file", "shell"] }
+phi-agent = { version = "0.9", features = ["shell", "multi-agent"] }
 ```
 
 ### 命令行编译
 
 ```bash
-cargo build --features file,shell
-cargo run --features file,shell
+cargo run --features shell,multi-agent
 ```
 
 启用后，`base_agent_builder()` 自动注册对应的工具：
@@ -72,11 +69,10 @@ graph TD
 
 ## Shell 工具 (`shell`)
 
-执行 Shell 命令。**仅 CLI 二进制可用**（`required-features = ["shell", ...]`），库模式下由消费者自行决定是否注册。
+执行 Shell 命令。通过 `--features shell` 启用：
 
 ```bash
-# CLI 安装时启用 shell
-cargo install phi-agent --features shell,mcp,telemetry,logging
+cargo install phi-agent --features shell
 ```
 
 ---

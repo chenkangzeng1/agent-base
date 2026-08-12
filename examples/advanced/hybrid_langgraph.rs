@@ -146,7 +146,7 @@ async fn main() -> anyhow::Result<()> {
     eprintln!("Connect from LangGraph: http://localhost:8080/mcp");
     eprintln!();
     eprintln!(
-        "Example: POST {\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"params\":{\"name\":\"run\",\"arguments\":{\"prompt\":\"Hello\"}}}"
+        "Example: POST {{\"jsonrpc\":\"2.0\",\"method\":\"tools/call\",\"params\":{{\"name\":\"run\",\"arguments\":{{\"prompt\":\"Hello\"}}}}}}"
     );
 
     let server = agent.into_mcp_server(config);

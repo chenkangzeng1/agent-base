@@ -1,5 +1,6 @@
 // Re-exports from phi-kernel-tools and phi-tools — single entry point for CLI consumers.
 // To add tools, implement them in the appropriate crate and add a re-export line here.
+#[cfg(feature = "shell")]
 pub use phi_kernel_tools::local_shell::LocalShellTool;
 
 // ── Browser tools (feature = "browser") ──

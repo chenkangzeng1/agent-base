@@ -90,7 +90,7 @@ External orchestrators can observe the agent's reasoning and tool calls in real-
 
 ## Feature gate
 
-MCP is opt-in:
+MCP is enabled by default. Explicit declaration is optional:
 
 ```toml
 [dependencies]

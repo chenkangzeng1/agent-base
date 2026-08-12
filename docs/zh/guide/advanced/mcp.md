@@ -90,7 +90,7 @@ graph TD
 
 ## Feature Gate
 
-MCP 按需引入：
+MCP 默认开启，显式声明可选：
 
 ```toml
 [dependencies]

@@ -10,29 +10,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "agent-base"
-version = "0.1.13"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "eventsource-stream",
- "futures-core",
- "futures-util",
- "reqwest",
- "serde",
- "serde_json",
- "thiserror 2.0.20",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "agent-base"
-version = "0.1.13"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03bde94375308b9b12042322574236228edf986d819247256cb1ad1e1af185b9"
+version = "0.1.14"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -52,9 +30,9 @@ dependencies = [
 
 [[package]]
 name = "agent-works"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
- "agent-base 0.1.13",
+ "agent-base",
  "async-trait",
  "reqwest",
  "serde",
@@ -1679,9 +1657,9 @@ dependencies = [
 
 [[package]]
 name = "phi-agent"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
- "agent-base 0.1.13",
+ "agent-base",
  "agent-works",
  "anyhow",
  "async-trait",
@@ -1710,9 +1688,9 @@ dependencies = [
 
 [[package]]
 name = "phi-kernel-tools"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
- "agent-base 0.1.13",
+ "agent-base",
  "agent-works",
  "async-trait",
  "serde",
@@ -1724,11 +1702,9 @@ dependencies = [
 
 [[package]]
 name = "phi-telemetry"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0db0ff4cf85b6be7ff4e4996f21b1219f29a5eee314ff1497ba7724e111b6d80"
+version = "0.1.5"
 dependencies = [
- "agent-base 0.1.13 (registry+https://github.com/rust-lang/crates.io-index)",
+ "agent-base",
  "anyhow",
  "chrono",
  "serde",
@@ -1739,11 +1715,9 @@ dependencies = [
 
 [[package]]
 name = "phi-tools"
-version = "0.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2bb83f71b2612489c748708af89c6f3fb3f8cd8a5d427e44278395dd987825e8"
+version = "0.1.5"
 dependencies = [
- "agent-base 0.1.13 (registry+https://github.com/rust-lang/crates.io-index)",
+ "agent-base",
  "anyhow",
  "async-trait",
  "base64",

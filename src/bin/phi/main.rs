@@ -21,6 +21,7 @@ use phi_agent::{
     build_system_prompt,
 };
 use run::{default_node_id, init_logging, run_one_shot, run_repl};
+#[cfg(feature = "shell")]
 use tools::LocalShellTool;
 #[cfg(feature = "browser")]
 use tools::{BrowserConnectionOptions, BrowserLaunchOptions, BrowserToolset, register_browser_tools};
@@ -152,7 +153,6 @@ async fn main() -> Result<()> {
     #[allow(unused_mut)]
     let mut builder = base_agent_builder(llm_client)
         .system_prompt(system_prompt)
-        .register_tool(LocalShellTool::new(args.shell_timeout_ms))
         .register_tool(
             phi_agent::UpdatePlanTool::new().with_description(
                 "Create or update a task plan to show the user a checklist with progress. \
@@ -177,6 +177,12 @@ async fn main() -> Result<()> {
         .middleware(TurnToolLimitMiddleware::from_config(&safety_config))
         .apply_if(args.thinking_budget, |b, budget| b.thinking_budget(budget))
         .apply_if(args.max_turns, |b, n| b.execution_max_turns(n));
+
+    // Shell tool — only when feature is enabled
+    #[cfg(feature = "shell")]
+    {
+        builder = builder.register_tool(LocalShellTool::new(args.shell_timeout_ms));
+    }
 
     // Register browser tools if enabled
     #[cfg(feature = "browser")]

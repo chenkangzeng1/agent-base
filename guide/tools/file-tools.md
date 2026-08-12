@@ -1,6 +1,6 @@
 # File Tools
 
-phi-agent gives the agent read/write/list access to the filesystem through kernel tools. These are opt-in — enable via the `file` feature flag.
+phi-agent gives the agent read/write/list access to the filesystem through kernel tools. Enabled by default; can be toggled via the `file` feature flag.
 
 ## Available tools
 
@@ -20,9 +20,10 @@ phi-agent gives the agent read/write/list access to the filesystem through kerne
 
 ## Usage
 
-The file tools are registered automatically by `base_agent_builder()` when the `file` feature is enabled. To use them, enable the feature in your `Cargo.toml`:
+The file tools are registered automatically by `base_agent_builder()` — they are enabled by default, no configuration needed:
 
 ```toml
+# File tools are in the default feature set; explicit declaration is optional
 [dependencies]
 phi-agent = { version = "0.9", features = ["file"] }
 ```

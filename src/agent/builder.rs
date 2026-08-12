@@ -20,20 +20,23 @@ use crate::agent::compression::SummarizingMiddleware;
 /// - Session limits (50 sessions / 100 turns per session / 50k per-message cap)
 /// - Per-run react-loop cap (200 iterations for one user input)
 /// - LLM-based context compression for long tool-heavy conversations
-/// - File tools (read_file / write_file / list_files) — opt-in via `file` feature
+/// - File tools (read_file / write_file / list_files) — enabled by default
 /// - Skills injected into system prompt (not as tools — LLM uses read_file;
-///   requires `file` feature)
-/// - Multi-agent support (opt-in via `multi-agent` feature)
+///   enabled by default via `file` feature)
+/// - MCP protocol support — enabled by default
+/// - Telemetry + logging — enabled by default
 ///
 /// Callers are responsible for: registering additional tools, setting the approval
 /// handler, setting the system prompt, then calling `.build()`.
 ///
-/// To enable file tools: `--features file`.
-/// To enable shell: `--features shell`.
-/// To enable multi-agent: `--features multi-agent` or `.with_multi_agent(...)`.
-/// To enable MCP: `--features mcp`.
-/// To enable browser (CDP): `--features browser`.
-/// To enable everything: `--features full`.
+/// Feature groups (opt-in):
+/// - `shell`: shell execution (`--features shell`)
+/// - `multi-agent`: multi-agent support (`--features multi-agent`)
+/// - `browser`: browser automation via CDP (`--features browser`)
+/// - `protocol` meta: MCP
+/// - `observability` meta: telemetry + logging
+/// - `app` meta: browser (NOT included in `full`)
+/// - `full`: file + shell + mcp + telemetry + logging (excludes browser and multi-agent)
 #[allow(unused_mut)]
 pub fn base_agent_builder(llm_client: Arc<dyn agent_base::StreamClient>) -> agent_works::AgentBuilder {
     // Tool-output cap (default 4000 chars). Tune via PHI_MAX_TOOL_OUTPUT_CHARS for large
