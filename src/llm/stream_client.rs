@@ -161,7 +161,6 @@ mod tests {
     use futures_util::StreamExt;
     use std::pin::Pin;
     use std::sync::Mutex;
-    use std::task::{Context, Poll};
 
     // ── Mock clients ──
 
@@ -272,12 +271,8 @@ mod tests {
             _reasoning: Option<&ReasoningConfig>,
             _response_format: Option<&ResponseFormat>,
         ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
-            let chunks: Vec<AgentResult<StreamChunk>> = self
-                .chunks
-                .lock()
-                .unwrap()
-                .take()
-                .unwrap_or_default();
+            let chunks: Vec<AgentResult<StreamChunk>> =
+                self.chunks.lock().unwrap().take().unwrap_or_default();
             Ok(Box::pin(futures_util::stream::iter(chunks)))
         }
 
@@ -394,8 +389,14 @@ mod tests {
         let client = Arc::new(MockLlmClient::new());
         let caps = client.capabilities();
         let adapter = LlmClientAdapter::new(client);
-        assert_eq!(adapter.capabilities().max_context_tokens, caps.max_context_tokens);
-        assert_eq!(adapter.capabilities().supports_streaming, caps.supports_streaming);
+        assert_eq!(
+            adapter.capabilities().max_context_tokens,
+            caps.max_context_tokens
+        );
+        assert_eq!(
+            adapter.capabilities().supports_streaming,
+            caps.supports_streaming
+        );
     }
 
     // ── LlmClientAdapter::model_name() ──

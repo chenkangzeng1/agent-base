@@ -14,7 +14,7 @@
 
 ```toml
 [dependencies]
-agent-base = "0.1.13"
+agent-base = "0.1.14"
 ```
 
 ## 设计原则
@@ -26,17 +26,19 @@ agent-base = "0.1.13"
 
 ## 特性
 
-- **LLM 抽象** — `LlmClient` trait，内置 OpenAI 和 Anthropic 实现
+- **LLM 抽象** — `LlmClient` trait，内置 OpenAI 和 Anthropic 实现；`StreamClient` trait 用于提供商解耦的流式传输
 - **LLM 重试** — 可配置的指数退避重试策略 `RetryConfig`
 - **工具系统** — `Tool` trait + `ToolRegistry` 注册和调度；可配置 `tool_timeout`
 - **审批流程** — `ApprovalHandler` trait，支持 `AllowOnce` / `AllowAlways` / `Deny` 决策，内置取消支持
 - **错误恢复** — `ToolErrorRecovery` trait；默认 `StopOnError`，可选 `RetryOnError` + 自定义重试提示
 - **事件流** — 结构化 `RuntimeEvent` 流，可配置 `EventBus` 容量
 - **多轮会话** — `AgentSession` 管理消息历史；`SessionStore` 可选持久化；支持 `max_sessions` / `max_turns_per_session` 限制
+- **SQLite 会话存储** — `SqliteSessionStore`，通过 `sqlite-session` feature flag 开启持久化会话存储
 - **子 Agent** — `SubAgentTool`，支持 `Ephemeral`（默认）或 `Persistent` 会话策略
 - **上下文管理** — 可配置的 `ContextWindowManager` 控制 token 预算；`max_message_tokens` 上限
 - **中间件** — `on_user_message`、`on_pre_llm`、`on_post_llm` 三个钩子用于扩展
 - **临时消息（Ephemeral Messages）** — 消息可标记为临时，LLM 本轮可见，turn 结束后自动从内存清理且不持久化
+- **自定义消息** — `ChatMessage::Custom` 变体，配合 `convert_to_llm` 回调支持领域特定的消息类型
 - **Plan 检查清单** — `UpdatePlanTool` 内置工具，支持 `PlanItem` / `PlanStepStatus` 多步骤任务追踪
 - **检查点** — 结构化 `CheckpointData` / `CheckpointStep` 事件支持重放、调试和恢复
 - **工具执行强制** — `ToolEnforcementMiddleware` 促使 LLM 调用工具而非仅描述操作
@@ -46,6 +48,22 @@ agent-base = "0.1.13"
 - **结构化输出** — 通过 `ResponseFormat` 指定输出格式（JSON Schema / JSON Object）
 - **会话 ID 生成器** — 可插拔的 `SessionIdGenerator` 支持自定义 ID 策略
 - **工具输出截断** — 可配置 `max_tool_output_chars`，附带结构化 `TruncationInfo`
+- **工具部分结果** — `ToolContext::emit_partial_result()` 支持长时间工具执行期间流式输出中间结果
+- **截断保护** — 自动检测 LLM 达到 token 上限时产生的截断工具调用，强制重新发出完整参数
+- **消息队列** — `MessageQueue` 支持 steering/follow-up 双队列，可配置 `QueueMode` 顺序或逐一消费
+
+## Feature Flags
+
+| Flag | 说明 | 默认 |
+|------|------|------|
+| `sqlite-session` | 启用 `SqliteSessionStore`（SQLite 持久化会话存储） | 关闭 |
+| `typed-tools` | 启用 `TypedTool` trait，通过 `schemars` 生成 JSON Schema | 关闭 |
+| `telemetry` | 启用 OpenTelemetry 集成，支持分布式追踪 | 关闭 |
+
+```toml
+[dependencies]
+agent-base = { version = "0.1.14", features = ["sqlite-session"] }
+```
 
 ## 快速上手
 
@@ -294,7 +312,7 @@ phi-agent / agent-works / ...              ← 框架 / 增强工具集
 
 ## 稳定性
 
-本项目处于早期开发阶段（v0.1.13）。核心抽象已趋于稳定但尚未冻结。生态演进过程中可能会有小幅 API 变更。
+本项目处于早期开发阶段（v0.1.14）。核心抽象已趋于稳定但尚未冻结。生态演进过程中可能会有小幅 API 变更。
 
 ## 许可证
 

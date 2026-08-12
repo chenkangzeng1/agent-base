@@ -14,7 +14,7 @@ A lightweight **Agent Runtime Kernel** for building AI agents in Rust.
 
 ```toml
 [dependencies]
-agent-base = "0.1.13"
+agent-base = "0.1.14"
 ```
 
 ## Design Principles
@@ -26,17 +26,19 @@ agent-base = "0.1.13"
 
 ## Features
 
-- **LLM Abstraction** — `LlmClient` trait with built-in OpenAI and Anthropic implementations
+- **LLM Abstraction** — `LlmClient` trait with built-in OpenAI and Anthropic implementations; `StreamClient` trait for provider-decoupled streaming
 - **LLM Retry** — Configurable retry with exponential backoff via `RetryConfig`
 - **Tool System** — `Tool` trait + `ToolRegistry` for registration and dispatch; configurable `tool_timeout`
 - **Approval Flow** — `ApprovalHandler` trait with `AllowOnce` / `AllowAlways` / `Deny` decisions + cancellation support
 - **Error Recovery** — `ToolErrorRecovery` trait; defaults to `StopOnError`, opt-in `RetryOnError` + custom retry prompts
 - **Event Streaming** — Structured `RuntimeEvent` stream with configurable `EventBus` capacity
 - **Multi-turn Sessions** — `AgentSession` manages message history; `SessionStore` for optional persistence; `max_sessions` / `max_turns_per_session` limits
+- **SQLite Session Store** — `SqliteSessionStore` behind `sqlite-session` feature flag for persistent session storage
 - **Sub-Agents** — `SubAgentTool` with `Ephemeral` (default) or `Persistent` session policies
 - **Context Management** — Configurable `ContextWindowManager` for token budget control; `max_message_tokens` cap
 - **Middleware** — Hooks at `on_user_message`, `on_pre_llm`, and `on_post_llm` for extensions
 - **Ephemeral Messages** — Messages can be marked ephemeral; visible to LLM during the current turn, automatically cleaned from memory after turn ends, excluded from persistence
+- **Custom Messages** — `ChatMessage::Custom` variant with `convert_to_llm` callback for domain-specific message types
 - **Plan Checklist** — Built-in `UpdatePlanTool` for multi-step task tracking with `PlanItem` / `PlanStepStatus`
 - **Checkpoints** — Structured `CheckpointData` / `CheckpointStep` events enable replay, debugging, and resume
 - **Tool Enforcement** — `ToolEnforcementMiddleware` nudges the LLM to call tools instead of just describing actions
@@ -46,6 +48,22 @@ agent-base = "0.1.13"
 - **Response Format** — Structured output via `ResponseFormat` (JSON Schema / JSON Object)
 - **Session ID Generator** — Pluggable `SessionIdGenerator` for custom ID strategies
 - **Tool Output Truncation** — Configurable `max_tool_output_chars` with structured `TruncationInfo`
+- **Tool Partial Results** — `ToolContext::emit_partial_result()` for streaming intermediate output during long-running tool execution
+- **Truncation Guard** — Automatically detects truncated tool calls when LLM hits the token limit, forcing re-issue with complete arguments
+- **Message Queue** — `MessageQueue` with steering/follow-up queues and configurable `QueueMode` for ordered or one-at-a-time draining
+
+## Feature Flags
+
+| Flag | Description | Default |
+|------|-------------|---------|
+| `sqlite-session` | Enable `SqliteSessionStore` for SQLite-backed session persistence | off |
+| `typed-tools` | Enable `TypedTool` trait with JSON Schema generation via `schemars` | off |
+| `telemetry` | Enable OpenTelemetry integration for distributed tracing | off |
+
+```toml
+[dependencies]
+agent-base = { version = "0.1.14", features = ["sqlite-session"] }
+```
 
 ## Quick Start
 
@@ -294,7 +312,7 @@ This project draws inspiration from the [OpenAI Codex CLI](https://github.com/op
 
 ## Stability
 
-This project is in early development (v0.1.13). The core abstractions are settling but not yet frozen. Expect minor API changes as the ecosystem evolves.
+This project is in early development (v0.1.14). The core abstractions are settling but not yet frozen. Expect minor API changes as the ecosystem evolves.
 
 ## License
 
