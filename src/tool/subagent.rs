@@ -179,3 +179,84 @@ impl Tool for SubAgentTool {
         Ok(vec![Content::text(summary)])
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::AgentBuilder;
+    use crate::llm::{LlmCapabilities, LlmClient, StreamChunk};
+    use crate::tool::content_text;
+    use crate::types::{ChatMessage, ResponseFormat};
+    use async_trait::async_trait;
+    use futures_core::Stream;
+    use serde_json::json;
+    use std::pin::Pin;
+    use std::sync::Arc;
+
+    /// Minimal LLM client — the missing/empty-task branches return before any
+    /// sub-runtime execution, so no real LLM call is needed.
+    struct DummyClient;
+
+    #[async_trait]
+    impl LlmClient for DummyClient {
+        async fn chat(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[Value],
+            _reasoning: Option<&crate::ReasoningConfig>,
+            _response_format: Option<&ResponseFormat>,
+        ) -> AgentResult<Value> {
+            Ok(Value::Null)
+        }
+
+        async fn chat_stream(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[Value],
+            _reasoning: Option<&crate::ReasoningConfig>,
+            _response_format: Option<&ResponseFormat>,
+        ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
+            unimplemented!("not used")
+        }
+
+        fn capabilities(&self) -> LlmCapabilities {
+            LlmCapabilities::default()
+        }
+    }
+
+    fn tool() -> SubAgentTool {
+        let client = crate::llm::adapt(Arc::new(DummyClient));
+        let runtime = AgentBuilder::new(client)
+            .system_prompt("test")
+            .build()
+            .expect("build runtime");
+        SubAgentTool::new("sub", "delegate a task", runtime)
+    }
+
+    #[test]
+    fn schema_requires_task() {
+        let schema = tool().schema();
+        assert_eq!(schema["type"], "object");
+        assert!(schema["properties"]["task"].is_object());
+        assert_eq!(schema["required"], json!(["task"]));
+    }
+
+    #[tokio::test]
+    async fn call_missing_task_is_args_invalid() {
+        let t = tool();
+        let ctx = ToolContext::for_test();
+        let err = t.call(&json!({}), &ctx).await.unwrap_err();
+        assert!(
+            matches!(err, AgentError::ToolArgsInvalid { .. }),
+            "expected ToolArgsInvalid, got: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn call_empty_task_returns_placeholder() {
+        let t = tool();
+        let ctx = ToolContext::for_test();
+        let out = t.call(&json!({"task": ""}), &ctx).await.unwrap();
+        assert!(content_text(&out).contains("empty"));
+    }
+}

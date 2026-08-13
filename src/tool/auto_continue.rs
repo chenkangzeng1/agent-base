@@ -66,3 +66,49 @@ impl Tool for AutoContinueTool {
         ))])
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tool::content_text;
+    use serde_json::json;
+
+    #[test]
+    fn name_is_stable() {
+        assert_eq!(AutoContinueTool::new().name(), "request_auto_continue");
+    }
+
+    #[test]
+    fn schema_requires_reason() {
+        let schema = AutoContinueTool::new().schema();
+        assert_eq!(schema["type"], "object");
+        assert!(schema["properties"]["reason"].is_object());
+        assert_eq!(schema["required"], json!(["reason"]));
+    }
+
+    #[test]
+    fn metadata_origin_is_agent_base() {
+        let m = AutoContinueTool::new().metadata();
+        assert_eq!(m.origin, "agent-base");
+        assert_eq!(m.name, "request_auto_continue");
+    }
+
+    #[tokio::test]
+    async fn call_with_reason_echoes_reason() {
+        let tool = AutoContinueTool::new();
+        let ctx = ToolContext::for_test();
+        let out = tool
+            .call(&json!({"reason": "retry after network error"}), &ctx)
+            .await
+            .unwrap();
+        assert!(content_text(&out).contains("retry after network error"));
+    }
+
+    #[tokio::test]
+    async fn call_without_reason_uses_default() {
+        let tool = AutoContinueTool::new();
+        let ctx = ToolContext::for_test();
+        let out = tool.call(&json!({}), &ctx).await.unwrap();
+        assert!(content_text(&out).contains("no reason provided"));
+    }
+}
