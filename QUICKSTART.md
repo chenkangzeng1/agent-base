@@ -40,14 +40,15 @@ dotenvy = "0.15"
 
 ## Step 1: Define Your First Tool
 
-A **Tool** is anything the LLM can invoke. It has three parts:
+A **Tool** is anything the LLM can invoke. It has four parts:
 - `name()` — unique identifier the LLM uses to call it
-- `definition()` — JSON Schema telling the LLM what arguments to send
+- `description()` — human-readable description of what the tool does
+- `schema()` — JSON Schema telling the LLM what arguments to send
 - `call()` — async execution logic
 
 ```rust
 // src/tools.rs
-use agent_base::{Tool, ToolContext, ToolOutput, ToolControlFlow, AgentResult};
+use agent_base::{Tool, ToolContext, Content, AgentResult};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
@@ -59,27 +60,24 @@ impl Tool for DiskCheckTool {
         "check_disk"
     }
 
-    fn definition(&self) -> Value {
+    fn description(&self) -> &'static str {
+        "Check disk usage on the server. Returns used/total space and usage percentage."
+    }
+
+    fn schema(&self) -> Value {
         json!({
-            "type": "function",
-            "function": {
-                "name": "check_disk",
-                "description": "Check disk usage on the server. Returns used/total space and usage percentage.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": "Filesystem path to check (e.g. '/', '/home', '/var')"
-                        }
-                    },
-                    "required": ["path"]
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Filesystem path to check (e.g. '/', '/home', '/var')"
                 }
-            }
+            },
+            "required": ["path"]
         })
     }
 
-    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
+    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<Vec<Content>> {
         let path = args["path"].as_str().unwrap_or("/");
         // In a real agent, you'd SSH or use sysinfo here.
         // For this tutorial, we simulate the output.
@@ -87,17 +85,12 @@ impl Tool for DiskCheckTool {
             "Filesystem: {}\nSize: 50G  Used: 32G  Avail: 18G  Use%: 64%",
             path
         );
-        Ok(ToolOutput {
-            summary: output,
-            raw: Some(json!({ "path": path, "used_gb": 32, "total_gb": 50, "percent": 64 })),
-            control_flow: ToolControlFlow::Continue,
-            truncation: None,
-        })
+        Ok(vec![Content::text(output)])
     }
 }
 ```
 
-> **Key insight:** `ToolControlFlow::Continue` tells the runtime "let the LLM keep reasoning after this tool". Use `Break` when a tool is a final answer (like a calculator).
+> **Key insight:** A tool returns structured `Content` (typically `Content::text(...)`). After the tool runs, the runtime feeds the result back to the LLM, which keeps reasoning until it produces a final answer.
 
 ---
 
@@ -219,7 +212,7 @@ impl ToolPolicy for HealthCheckPolicy {
 
     fn after_call(
         &self, _tool_name: &str, _args: &Value,
-        _result: &agent_base::ToolOutput, _ctx: &ToolContext,
+        _result: &[agent_base::Content], _ctx: &ToolContext,
     ) -> AgentResult<()> {
         Ok(())
     }
@@ -458,7 +451,7 @@ use std::io::{self, Write};
 
 use agent_base::{
     AgentBuilder, RuntimeEvent, AgentResult, OpenAiClient, RunOutcome,
-    Tool, ToolContext, ToolOutput, ToolControlFlow,
+    Tool, ToolContext, Content,
 };
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -469,31 +462,26 @@ struct CheckDiskTool;
 impl Tool for CheckDiskTool {
     fn name(&self) -> &'static str { "check_disk" }
 
-    fn definition(&self) -> Value {
+    fn description(&self) -> &'static str {
+        "Check disk usage for a given path"
+    }
+
+    fn schema(&self) -> Value {
         json!({
-            "type": "function",
-            "function": {
-                "name": "check_disk",
-                "description": "Check disk usage for a given path",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": { "type": "string", "description": "Path to check" }
-                    },
-                    "required": ["path"]
-                }
-            }
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "Path to check" }
+            },
+            "required": ["path"]
         })
     }
 
-    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
+    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<Vec<Content>> {
         let path = args["path"].as_str().unwrap_or("/");
-        Ok(ToolOutput {
-            summary: format!("{}: 50G total, 32G used (64%)", path),
-            raw: Some(json!({ "path": path, "percent": 64 })),
-            control_flow: ToolControlFlow::Continue,
-            truncation: None,
-        })
+        Ok(vec![Content::text(format!(
+            "{}: 50G total, 32G used (64%)",
+            path
+        ))])
     }
 }
 
@@ -558,8 +546,8 @@ cargo run
 | Concept | What | When to use |
 |---|---|---|
 | `Tool` trait | Define a capability the LLM can invoke | Every agent needs at least one |
-| `ToolControlFlow::Continue` | Let the LLM keep reasoning after this tool | Multi-step tools, probes |
-| `ToolControlFlow::Break` | End the turn after this tool | Final-answer tools, calculators |
+| `description()` + `schema()` | Tell the LLM what the tool does and what arguments it takes | Every tool must implement them |
+| `Content` | Structured tool result (text/image) returned to the LLM | Every `call()` returns `Vec<Content>` |
 | `ToolPolicy` | Decide if a tool needs human approval | Sensitive operations |
 | `ApprovalHandler` | Execute the approval UI/flow | Always paired with ToolPolicy |
 | `Middleware` | Hook into the agent loop | Input/output filtering, nudging |

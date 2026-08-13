@@ -188,7 +188,7 @@ src/
 │   │
 │   └── runtime/                 ─── Core runtime execution
 │       ├── mod.rs               ─── AgentRuntime struct + public API
-│       ├── react_loop.rs        ─── ReAct loop + LLM turn + tool dispatch
+│       ├── react_loop/          ─── ReAct loop (entry / turn / tools / turn_end)
 │       ├── plan_runner.rs       ─── PlanRunner (thin orchestrator wrapper)
 │       ├── llm_engine.rs        ─── LlmEngine (LLM call orchestration)
 │       ├── tool_engine.rs       ─── ToolEngine (tool dispatch + approval + pipeline)
@@ -202,7 +202,7 @@ src/
 │   └── registry.rs              ─── LlmClientBuilder (provider selection)
 │
 ├── tool/                        ─── Tool system
-│   ├── mod.rs                   ─── Tool trait, TypedTool, ToolRegistry, ToolOutput
+│   ├── mod.rs                   ─── Tool trait, TypedTool, ToolRegistry, Content
 │   ├── policy.rs                ─── ToolPolicy trait (approval evaluation)
 │   ├── subagent.rs              ─── SubAgentTool + SubAgentSessionPolicy
 │   ├── auto_continue.rs         ─── AutoContinueTool

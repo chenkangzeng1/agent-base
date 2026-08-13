@@ -71,7 +71,7 @@ agent-base = { version = "0.2.0", features = ["sqlite-session"] }
 Agent 的任何能力都以 `Tool` 的形式表达：
 
 ```rust
-use agent_base::{Tool, ToolContext, ToolOutput, ToolControlFlow, AgentResult};
+use agent_base::{Tool, ToolContext, Content, AgentResult};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
@@ -81,31 +81,23 @@ struct WeatherTool;
 impl Tool for WeatherTool {
     fn name(&self) -> &'static str { "get_weather" }
 
-    fn definition(&self) -> Value {
+    fn description(&self) -> &'static str {
+        "查询指定城市的天气"
+    }
+
+    fn schema(&self) -> Value {
         json!({
-            "type": "function",
-            "function": {
-                "name": "get_weather",
-                "description": "查询指定城市的天气",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "city": { "type": "string", "description": "城市名称" }
-                    },
-                    "required": ["city"]
-                }
-            }
+            "type": "object",
+            "properties": {
+                "city": { "type": "string", "description": "城市名称" }
+            },
+            "required": ["city"]
         })
     }
 
-    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
+    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<Vec<Content>> {
         let city = args["city"].as_str().unwrap_or("未知");
-        Ok(ToolOutput {
-            summary: format!("{}天气：22°C，晴", city),
-            raw: None,
-            control_flow: ToolControlFlow::Continue,
-            truncation: None,
-        })
+        Ok(vec![Content::text(format!("{}天气：22°C，晴", city))])
     }
 }
 ```

@@ -40,14 +40,15 @@ dotenvy = "0.15"
 
 ## Step 1：定义你的第一个 Tool
 
-**Tool** 是 LLM 可以调用的任何能力。每个 Tool 有三个部分：
+**Tool** 是 LLM 可以调用的任何能力。每个 Tool 有四个部分：
 - `name()` — 唯一标识符，LLM 通过它来调用工具
-- `definition()` — JSON Schema，告诉 LLM 该传什么参数
+- `description()` — 人类可读的工具用途描述
+- `schema()` — JSON Schema，告诉 LLM 该传什么参数
 - `call()` — 异步执行逻辑
 
 ```rust
 // src/tools.rs
-use agent_base::{Tool, ToolContext, ToolOutput, ToolControlFlow, AgentResult};
+use agent_base::{Tool, ToolContext, Content, AgentResult};
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
@@ -59,27 +60,24 @@ impl Tool for DiskCheckTool {
         "check_disk"
     }
 
-    fn definition(&self) -> Value {
+    fn description(&self) -> &'static str {
+        "检查服务器磁盘使用情况。返回已用/总空间和使用百分比。"
+    }
+
+    fn schema(&self) -> Value {
         json!({
-            "type": "function",
-            "function": {
-                "name": "check_disk",
-                "description": "检查服务器磁盘使用情况。返回已用/总空间和使用百分比。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": "要检查的文件系统路径（如 '/'、'/home'、'/var'）"
-                        }
-                    },
-                    "required": ["path"]
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "要检查的文件系统路径（如 '/'、'/home'、'/var'）"
                 }
-            }
+            },
+            "required": ["path"]
         })
     }
 
-    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
+    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<Vec<Content>> {
         let path = args["path"].as_str().unwrap_or("/");
         // 实际项目中，这里会通过 SSH 或 sysinfo 获取真实数据
         // 本教程中我们模拟输出
@@ -87,17 +85,12 @@ impl Tool for DiskCheckTool {
             "文件系统: {}\n总计: 50G  已用: 32G  可用: 18G  使用率: 64%",
             path
         );
-        Ok(ToolOutput {
-            summary: output,
-            raw: Some(json!({ "path": path, "used_gb": 32, "total_gb": 50, "percent": 64 })),
-            control_flow: ToolControlFlow::Continue,
-            truncation: None,
-        })
+        Ok(vec![Content::text(output)])
     }
 }
 ```
 
-> **关键点：** `ToolControlFlow::Continue` 表示"执行完这个工具后，让 LLM 继续推理"。如果是最终答案型工具（如计算器），用 `Break` 来结束本轮对话。
+> **关键点：** 工具返回结构化的 `Content`（通常用 `Content::text(...)`）。工具执行完后，Runtime 会把结果回传给 LLM，LLM 继续推理直到给出最终答案。
 
 ---
 
@@ -219,7 +212,7 @@ impl ToolPolicy for HealthCheckPolicy {
 
     fn after_call(
         &self, _tool_name: &str, _args: &Value,
-        _result: &agent_base::ToolOutput, _ctx: &ToolContext,
+        _result: &[agent_base::Content], _ctx: &ToolContext,
     ) -> AgentResult<()> {
         Ok(())
     }
@@ -458,7 +451,7 @@ use std::io::{self, Write};
 
 use agent_base::{
     AgentBuilder, RuntimeEvent, AgentResult, OpenAiClient, RunOutcome,
-    Tool, ToolContext, ToolOutput, ToolControlFlow,
+    Tool, ToolContext, Content,
 };
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -469,31 +462,26 @@ struct CheckDiskTool;
 impl Tool for CheckDiskTool {
     fn name(&self) -> &'static str { "check_disk" }
 
-    fn definition(&self) -> Value {
+    fn description(&self) -> &'static str {
+        "检查指定路径的磁盘使用情况"
+    }
+
+    fn schema(&self) -> Value {
         json!({
-            "type": "function",
-            "function": {
-                "name": "check_disk",
-                "description": "检查指定路径的磁盘使用情况",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": { "type": "string", "description": "要检查的路径" }
-                    },
-                    "required": ["path"]
-                }
-            }
+            "type": "object",
+            "properties": {
+                "path": { "type": "string", "description": "要检查的路径" }
+            },
+            "required": ["path"]
         })
     }
 
-    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
+    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<Vec<Content>> {
         let path = args["path"].as_str().unwrap_or("/");
-        Ok(ToolOutput {
-            summary: format!("{}: 总计 50G，已用 32G（64%）", path),
-            raw: Some(json!({ "path": path, "percent": 64 })),
-            control_flow: ToolControlFlow::Continue,
-            truncation: None,
-        })
+        Ok(vec![Content::text(format!(
+            "{}: 总计 50G，已用 32G（64%）",
+            path
+        ))])
     }
 }
 
@@ -558,8 +546,8 @@ cargo run
 | 概念 | 是什么 | 什么时候用 |
 |---|---|---|
 | `Tool` trait | 定义 LLM 可调用的能力 | 每个 Agent 至少需要一个 Tool |
-| `ToolControlFlow::Continue` | 执行后让 LLM 继续推理 | 多步探测型工具 |
-| `ToolControlFlow::Break` | 执行后结束本轮对话 | 最终答案型工具（如计算器） |
+| `description()` + `schema()` | 告诉 LLM 工具的用途和参数 | 每个 Tool 都要实现 |
+| `Content` | 返回给 LLM 的结构化工具结果（文本/图片） | 每个 `call()` 返回 `Vec<Content>` |
 | `ToolPolicy` | 判断工具是否需要人工审批 | 敏感操作 |
 | `ApprovalHandler` | 执行审批交互 | 和 ToolPolicy 配合使用 |
 | `Middleware` | 在 Agent 循环中插入自定义逻辑 | 输入输出过滤、防幻觉 |
