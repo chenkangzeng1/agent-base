@@ -1,7 +1,7 @@
 //! Benchmarks: ToolRegistry operations (register, find, metadatas, remove).
 
 use agent_base::tool::ToolRegistry;
-use agent_base::{AgentResult, Tool, ToolContext, ToolControlFlow, ToolMetadata, ToolOutput};
+use agent_base::{AgentResult, Content, Tool, ToolContext, ToolMetadata};
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 
 /// A no-op tool for benchmarking.
@@ -25,22 +25,21 @@ impl Tool for NoopTool {
     fn name(&self) -> &'static str {
         self.name
     }
-    fn definition(&self) -> serde_json::Value {
+    fn description(&self) -> &'static str {
+        self.description
+    }
+    fn schema(&self) -> serde_json::Value {
         serde_json::json!({
-            "function": {
-                "name": self.name,
-                "description": self.description,
-                "parameters": {}
-            }
+            "type": "object",
+            "properties": {}
         })
     }
-    async fn call(&self, _args: &serde_json::Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
-        Ok(ToolOutput {
-            summary: "ok".into(),
-            raw: None,
-            control_flow: ToolControlFlow::Continue,
-            truncation: None,
-        })
+    async fn call(
+        &self,
+        _args: &serde_json::Value,
+        _ctx: &ToolContext,
+    ) -> AgentResult<Vec<Content>> {
+        Ok(vec![Content::text("ok")])
     }
     fn metadata(&self) -> ToolMetadata {
         ToolMetadata {

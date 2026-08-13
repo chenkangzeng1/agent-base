@@ -4,7 +4,7 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
-use crate::tool::{Tool, ToolContext, ToolOutput};
+use crate::tool::{Content, Tool, ToolContext};
 use crate::types::{AgentResult, RuntimeEvent, UpdatePlanArgs};
 
 /// A lightweight tool that records and displays a plan checklist to the user.
@@ -19,7 +19,7 @@ use crate::types::{AgentResult, RuntimeEvent, UpdatePlanArgs};
 /// This is a **display-only** protocol, inspired by Codex's `update_plan`.
 pub struct UpdatePlanTool {
     last_objective: Mutex<Option<String>>,
-    custom_description: Option<String>,
+    custom_description: Option<&'static str>,
 }
 
 /// Normalize step text from LLM output for consistent UI rendering.
@@ -100,7 +100,7 @@ impl UpdatePlanTool {
     /// Consumers like ops-agent can use this to inject domain-specific usage
     /// guidelines (e.g. step granularity rules, when to use/not use plans).
     pub fn with_description(mut self, desc: String) -> Self {
-        self.custom_description = Some(desc);
+        self.custom_description = Some(Box::leak(desc.into_boxed_str()));
         self
     }
 }
@@ -117,8 +117,8 @@ impl Tool for UpdatePlanTool {
         "update_plan"
     }
 
-    fn definition(&self) -> Value {
-        let description = self.custom_description.as_deref().unwrap_or(
+    fn description(&self) -> &'static str {
+        self.custom_description.unwrap_or(
             "Record and display a structured plan / checklist to track progress on a complex task.\n\n\
             Use this to show the user what steps you plan to take and update step statuses as you go.\n\n\
             Rules:\n\
@@ -134,49 +134,45 @@ impl Tool for UpdatePlanTool {
             3. 每步闭环 — 一步做完可独立验证结果，不等下步才知道成败\n\
             4. 标注风险 — 涉及 rm、kill、restart、改配置文件时注明\n\
             5. 粒度适中 — 不过细也不过大，每步是独立可验证的最小逻辑单元\n\
-            6. 收敛止步 — 步骤过多说明任务需要拆分或先讨论再定"
-        );
+            6. 收敛止步 — 步骤过多说明任务需要拆分或先讨论再定",
+        )
+    }
+
+    fn schema(&self) -> Value {
         json!({
-            "type": "function",
-            "function": {
-                "name": "update_plan",
-                "description": description,
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "objective": {
-                            "type": "string",
-                            "description": "One-sentence summary of the user's goal. Example: \"安装 Casdoor 身份认证系统\". Must reflect the user's original intent, not just the current sub-task. Optional on subsequent calls — the tool remembers the last objective."
-                        },
-                        "explanation": {
-                            "type": "string",
-                            "description": "Optional explanation of why the plan is being created or changed."
-                        },
-                        "plan": {
-                            "type": "array",
-                            "description": "The complete plan checklist. Each item has a step description and status.",
-                            "items": {
-                                "type": "object",
-                                "properties": {
-                                    "step": {
-                                        "type": "string",
-                                        "description": "Short description of this step (5-7 words). Example: '安装 Docker 引擎'"
-                                    },
-                                    "status": {
-                                        "type": "string",
-                                        "enum": ["pending", "in_progress", "completed"],
-                                        "description": "Current status of this step."
-                                    }
-                                },
-                                "required": ["step", "status"],
-                                "additionalProperties": false
+            "type": "object",
+            "properties": {
+                "objective": {
+                    "type": "string",
+                    "description": "One-sentence summary of the user's goal. Example: \"安装 Casdoor 身份认证系统\". Must reflect the user's original intent, not just the current sub-task. Optional on subsequent calls — the tool remembers the last objective."
+                },
+                "explanation": {
+                    "type": "string",
+                    "description": "Optional explanation of why the plan is being created or changed."
+                },
+                "plan": {
+                    "type": "array",
+                    "description": "The complete plan checklist. Each item has a step description and status.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "step": {
+                                "type": "string",
+                                "description": "Short description of this step (5-7 words). Example: '安装 Docker 引擎'"
+                            },
+                            "status": {
+                                "type": "string",
+                                "enum": ["pending", "in_progress", "completed"],
+                                "description": "Current status of this step."
                             }
-                        }
-                    },
-                    "required": ["plan"],
-                    "additionalProperties": false
+                        },
+                        "required": ["step", "status"],
+                        "additionalProperties": false
+                    }
                 }
-            }
+            },
+            "required": ["plan"],
+            "additionalProperties": false
         })
     }
 
@@ -191,7 +187,7 @@ impl Tool for UpdatePlanTool {
         }
     }
 
-    async fn call(&self, args: &Value, ctx: &ToolContext) -> AgentResult<ToolOutput> {
+    async fn call(&self, args: &Value, ctx: &ToolContext) -> AgentResult<Vec<Content>> {
         let plan_args: UpdatePlanArgs = serde_json::from_value(args.clone()).map_err(|e| {
             crate::types::AgentError::ToolArgsInvalid {
                 name: "update_plan".to_string(),
@@ -242,10 +238,8 @@ impl Tool for UpdatePlanTool {
             .filter(|item| item.status == crate::types::PlanStepStatus::InProgress)
             .count();
 
-        // Build summary and raw output BEFORE emitting event (so we can move
+        // Build the summary BEFORE emitting the event (so we can move
         // normalized_plan into the event instead of cloning it).
-        let raw = Some(serde_json::to_value(&normalized_plan).unwrap_or_default());
-
         let mut summary = format!("📋 {}: {}/{} steps completed", objective, completed, total);
         if in_progress > 0 {
             let current = normalized_plan
@@ -269,12 +263,7 @@ impl Tool for UpdatePlanTool {
             trace_id: None,
         });
 
-        Ok(ToolOutput {
-            summary,
-            raw,
-            control_flow: crate::tool::ToolControlFlow::Continue,
-            truncation: None,
-        })
+        Ok(vec![Content::text(summary)])
     }
 }
 

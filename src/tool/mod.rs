@@ -20,28 +20,6 @@ pub use update_plan::UpdatePlanTool;
 
 pub use policy::ToolPolicy;
 
-#[derive(Clone, Debug, Default)]
-pub struct ToolOutput {
-    pub summary: String,
-    pub raw: Option<Value>,
-    pub control_flow: ToolControlFlow,
-    pub truncation: Option<TruncationInfo>,
-}
-
-#[derive(Clone, Debug)]
-pub struct TruncationInfo {
-    pub original_summary_len: usize,
-    pub original_raw_len: Option<usize>,
-    pub max_allowed_chars: usize,
-}
-
-#[derive(Clone, Debug, Default)]
-pub enum ToolControlFlow {
-    #[default]
-    Break,
-    Continue,
-}
-
 /// Structured content returned by a tool, aligned with the MCP `content`
 /// array shape (no envelope, no orchestration/failure/truncation semantics).
 ///
@@ -77,6 +55,19 @@ impl From<Content> for Vec<Content> {
     fn from(c: Content) -> Self {
         vec![c]
     }
+}
+
+/// Join the textual portion of tool output into a single string for display
+/// and session history. Non-text variants (e.g. `Image`) are skipped.
+pub fn content_text(contents: &[Content]) -> String {
+    contents
+        .iter()
+        .filter_map(|c| match c {
+            Content::Text { text } => Some(text.as_str()),
+            Content::Image { .. } => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[derive(Clone)]
@@ -164,27 +155,23 @@ pub struct ToolMetadata {
 #[async_trait]
 pub trait Tool: Send + Sync {
     fn name(&self) -> &'static str;
-    fn definition(&self) -> Value;
-    async fn call(&self, args: &Value, ctx: &ToolContext) -> AgentResult<ToolOutput>;
+    /// Human-readable description of what this tool does and when to use it.
+    fn description(&self) -> &'static str;
+    /// JSON Schema for the tool's input arguments (MCP `inputSchema` shape,
+    /// without the provider envelope).
+    fn schema(&self) -> Value;
+    async fn call(&self, args: &Value, ctx: &ToolContext) -> AgentResult<Vec<Content>>;
 
     /// Machine-readable metadata for tool introspection.
     ///
-    /// The default implementation extracts `name` and `description` from
-    /// [`Tool::name`] and [`Tool::definition`], sets `origin` to `"custom"`,
+    /// The default implementation derives `name` and `description` from
+    /// [`Tool::name`] and [`Tool::description`], sets `origin` to `"custom"`,
     /// and leaves `requirements` empty. Tool authors are encouraged to
     /// override this to provide an accurate `origin` and `version`.
     fn metadata(&self) -> ToolMetadata {
-        let name = self.name().to_string();
-        let description = self
-            .definition()
-            .get("function")
-            .and_then(|f| f.get("description"))
-            .and_then(|d| d.as_str())
-            .unwrap_or("")
-            .to_string();
         ToolMetadata {
-            name,
-            description,
+            name: self.name().to_string(),
+            description: self.description().to_string(),
             origin: "custom".to_string(),
             version: "unknown".to_string(),
             requirements: vec![],
@@ -201,15 +188,8 @@ pub trait TypedTool: Send + Sync {
     fn description(&self) -> &'static str;
     async fn call_typed(&self, args: Self::Args, ctx: &ToolContext) -> AgentResult<Self::Output>;
 
-    fn control_flow() -> ToolControlFlow
-    where
-        Self: Sized,
-    {
-        ToolControlFlow::Break
-    }
-
-    fn format_output(&self, output: Self::Output) -> String {
-        serde_json::to_string(&output).unwrap_or_default()
+    fn format_output(&self, output: Self::Output) -> Content {
+        Content::text(serde_json::to_string(&output).unwrap_or_default())
     }
 
     /// Machine-readable origin of this tool (crate name, `"agent-base"`, or `"custom"`).
@@ -229,17 +209,12 @@ impl<T: TypedTool + Send + Sync + 'static> Tool for T {
         TypedTool::name(self)
     }
 
-    fn definition(&self) -> Value {
-        let parameters =
-            serde_json::to_value(schemars::schema_for!(T::Args)).unwrap_or(Value::Null);
-        json!({
-            "type": "function",
-            "function": {
-                "name": self.name(),
-                "description": self.description(),
-                "parameters": parameters,
-            }
-        })
+    fn description(&self) -> &'static str {
+        TypedTool::description(self)
+    }
+
+    fn schema(&self) -> Value {
+        serde_json::to_value(schemars::schema_for!(T::Args)).unwrap_or(Value::Null)
     }
 
     fn metadata(&self) -> ToolMetadata {
@@ -252,21 +227,14 @@ impl<T: TypedTool + Send + Sync + 'static> Tool for T {
         }
     }
 
-    async fn call(&self, args: &Value, ctx: &ToolContext) -> AgentResult<ToolOutput> {
+    async fn call(&self, args: &Value, ctx: &ToolContext) -> AgentResult<Vec<Content>> {
         let typed_args: T::Args =
             serde_json::from_value(args.clone()).map_err(|_| AgentError::ToolArgsInvalid {
                 name: self.name().to_string(),
                 raw: args.to_string(),
             })?;
         let output = self.call_typed(typed_args, ctx).await?;
-        let output_json = serde_json::to_value(&output).ok();
-        let summary = self.format_output(output);
-        Ok(ToolOutput {
-            summary,
-            raw: output_json,
-            control_flow: T::control_flow(),
-            truncation: None,
-        })
+        Ok(vec![self.format_output(output)])
     }
 }
 
@@ -300,7 +268,19 @@ impl ToolRegistry {
     }
 
     pub fn definitions(&self) -> Vec<Value> {
-        self.tools.values().map(|tool| tool.definition()).collect()
+        self.tools
+            .values()
+            .map(|tool| {
+                json!({
+                    "type": "function",
+                    "function": {
+                        "name": tool.name(),
+                        "description": tool.description(),
+                        "parameters": tool.schema(),
+                    }
+                })
+            })
+            .collect()
     }
 
     pub fn len(&self) -> usize {

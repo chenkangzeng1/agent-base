@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
-use crate::tool::{Tool, ToolContext, ToolControlFlow, ToolOutput};
+use crate::tool::{Content, Tool, ToolContext};
 use crate::types::AgentResult;
 
 /// Pure orchestration signal tool with zero domain dependency.
@@ -25,23 +25,20 @@ impl Tool for AutoContinueTool {
         "request_auto_continue"
     }
 
-    fn definition(&self) -> Value {
+    fn description(&self) -> &'static str {
+        "When you encounter an error in the previous tool execution and have found a solution or retry strategy, or when you need to execute multiple long tasks in sequence, call this tool to request the system to automatically continue to the next turn instead of stopping and waiting for user reply. This tool is only for making the request; you still need to describe your solution in the prompt."
+    }
+
+    fn schema(&self) -> Value {
         json!({
-            "type": "function",
-            "function": {
-                "name": "request_auto_continue",
-                "description": "When you encounter an error in the previous tool execution and have found a solution or retry strategy, or when you need to execute multiple long tasks in sequence, call this tool to request the system to automatically continue to the next turn instead of stopping and waiting for user reply. This tool is only for making the request; you still need to describe your solution in the prompt.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "reason": {
-                            "type": "string",
-                            "description": "A brief reason for requesting auto-continue, e.g. 'network error, trying alternative source'"
-                        }
-                    },
-                    "required": ["reason"]
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "description": "A brief reason for requesting auto-continue, e.g. 'network error, trying alternative source'"
                 }
-            }
+            },
+            "required": ["reason"]
         })
     }
 
@@ -57,20 +54,15 @@ impl Tool for AutoContinueTool {
         }
     }
 
-    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
+    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<Vec<Content>> {
         let reason = args
             .get("reason")
             .and_then(Value::as_str)
             .unwrap_or("no reason provided");
 
-        Ok(ToolOutput {
-            summary: format!("Auto-continue request received. Reason: {}", reason),
-            raw: Some(json!({
-                "action": "auto_continue",
-                "reason": reason,
-            })),
-            control_flow: ToolControlFlow::Continue,
-            truncation: None,
-        })
+        Ok(vec![Content::text(format!(
+            "Auto-continue request received. Reason: {}",
+            reason
+        ))])
     }
 }

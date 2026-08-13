@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde_json::{Value, json};
 use tokio::sync::Mutex;
 
-use super::{Tool, ToolContext, ToolControlFlow, ToolOutput};
+use super::{Content, Tool, ToolContext};
 use crate::engine::AgentRuntime;
 use crate::types::{AgentError, AgentResult, RuntimeEvent, SessionId, UserEvent};
 
@@ -55,27 +55,24 @@ impl Tool for SubAgentTool {
         self.name
     }
 
-    fn definition(&self) -> Value {
+    fn description(&self) -> &'static str {
+        self.description
+    }
+
+    fn schema(&self) -> Value {
         json!({
-            "type": "function",
-            "function": {
-                "name": self.name,
-                "description": self.description,
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "task": {
-                            "type": "string",
-                            "description": "Task description to delegate to the sub-agent"
-                        }
-                    },
-                    "required": ["task"]
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "Task description to delegate to the sub-agent"
                 }
-            }
+            },
+            "required": ["task"]
         })
     }
 
-    async fn call(&self, args: &Value, ctx: &ToolContext) -> AgentResult<ToolOutput> {
+    async fn call(&self, args: &Value, ctx: &ToolContext) -> AgentResult<Vec<Content>> {
         let task = args.get("task").and_then(Value::as_str).ok_or_else(|| {
             AgentError::ToolArgsInvalid {
                 name: self.name.to_string(),
@@ -84,12 +81,9 @@ impl Tool for SubAgentTool {
         })?;
 
         if task.is_empty() {
-            return Ok(ToolOutput {
-                summary: "Task description is empty, cannot execute".to_string(),
-                raw: None,
-                control_flow: ToolControlFlow::Break,
-                truncation: None,
-            });
+            return Ok(vec![Content::text(
+                "Task description is empty, cannot execute",
+            )]);
         }
 
         let user_event_tx = ctx.user_event_tx.clone();
@@ -182,11 +176,6 @@ impl Tool for SubAgentTool {
             "sub-agent completed"
         );
 
-        Ok(ToolOutput {
-            summary,
-            raw: None,
-            control_flow: ToolControlFlow::Continue,
-            truncation: None,
-        })
+        Ok(vec![Content::text(summary)])
     }
 }

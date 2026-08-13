@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use serde_json::Value;
 
-use super::{ToolContext, ToolOutput};
+use super::{Content, ToolContext};
 use crate::types::{AgentResult, ApprovalRequest};
 
 /// Policy-based control over tool execution.
@@ -69,8 +69,8 @@ pub trait ToolPolicy: Send + Sync {
     /// - Truncation or formatting of large outputs.
     /// - Recording metrics or audit trails.
     ///
-    /// The `result` is the raw [`ToolOutput`] produced by the tool. You can
-    /// inspect it but not modify it through this hook — if you need to
+    /// The `result` is the raw [`Vec<Content>`](Content) produced by the tool.
+    /// You can inspect it but not modify it through this hook — if you need to
     /// transform the output, use a middleware instead.
     ///
     /// Return an `Err` to **reject** the result. The error message is surfaced
@@ -79,7 +79,7 @@ pub trait ToolPolicy: Send + Sync {
         &self,
         tool_name: &str,
         args: &Value,
-        result: &ToolOutput,
+        result: &[Content],
         ctx: &ToolContext,
     ) -> AgentResult<()> {
         let _ = (tool_name, args, result, ctx);

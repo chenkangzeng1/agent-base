@@ -3,8 +3,7 @@ use std::sync::Arc;
 
 use agent_base::{
     AgentBuilder, AgentError, AgentResult, ApprovalDecision, ApprovalHandler, ApprovalRequest,
-    OpenAiClient, RiskLevel, RuntimeEvent, Tool, ToolContext, ToolControlFlow, ToolOutput,
-    ToolPolicy,
+    Content, OpenAiClient, RiskLevel, RuntimeEvent, Tool, ToolContext, ToolPolicy,
 };
 use async_trait::async_trait;
 use dotenvy::dotenv;
@@ -22,34 +21,26 @@ impl Tool for AddTool {
         "add"
     }
 
-    fn definition(&self) -> Value {
+    fn description(&self) -> &'static str {
+        "Calculate the sum of two integers"
+    }
+
+    fn schema(&self) -> Value {
         json!({
-            "type": "function",
-            "function": {
-                "name": "add",
-                "description": "Calculate the sum of two integers",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "a": { "type": "integer", "description": "First addend" },
-                        "b": { "type": "integer", "description": "Second addend" }
-                    },
-                    "required": ["a", "b"]
-                }
-            }
+            "type": "object",
+            "properties": {
+                "a": { "type": "integer", "description": "First addend" },
+                "b": { "type": "integer", "description": "Second addend" }
+            },
+            "required": ["a", "b"]
         })
     }
 
-    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
+    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<Vec<Content>> {
         let a = args["a"].as_i64().unwrap_or(0);
         let b = args["b"].as_i64().unwrap_or(0);
         let result = a + b;
-        Ok(ToolOutput {
-            summary: format!("{} + {} = {}", a, b, result),
-            raw: Some(json!({ "result": result })),
-            control_flow: ToolControlFlow::Break,
-            truncation: None,
-        })
+        Ok(vec![Content::text(format!("{} + {} = {}", a, b, result))])
     }
 }
 
@@ -61,34 +52,26 @@ impl Tool for SubtractTool {
         "subtract"
     }
 
-    fn definition(&self) -> Value {
+    fn description(&self) -> &'static str {
+        "Calculate the difference of two integers（a - b）"
+    }
+
+    fn schema(&self) -> Value {
         json!({
-            "type": "function",
-            "function": {
-                "name": "subtract",
-                "description": "Calculate the difference of two integers（a - b）",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "a": { "type": "integer", "description": "Minuend" },
-                        "b": { "type": "integer", "description": "Subtrahend" }
-                    },
-                    "required": ["a", "b"]
-                }
-            }
+            "type": "object",
+            "properties": {
+                "a": { "type": "integer", "description": "Minuend" },
+                "b": { "type": "integer", "description": "Subtrahend" }
+            },
+            "required": ["a", "b"]
         })
     }
 
-    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
+    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<Vec<Content>> {
         let a = args["a"].as_i64().unwrap_or(0);
         let b = args["b"].as_i64().unwrap_or(0);
         let result = a - b;
-        Ok(ToolOutput {
-            summary: format!("{} - {} = {}", a, b, result),
-            raw: Some(json!({ "result": result })),
-            control_flow: ToolControlFlow::Break,
-            truncation: None,
-        })
+        Ok(vec![Content::text(format!("{} - {} = {}", a, b, result))])
     }
 }
 
@@ -100,34 +83,26 @@ impl Tool for MultiplyTool {
         "multiply"
     }
 
-    fn definition(&self) -> Value {
+    fn description(&self) -> &'static str {
+        "Calculate the product of two integers"
+    }
+
+    fn schema(&self) -> Value {
         json!({
-            "type": "function",
-            "function": {
-                "name": "multiply",
-                "description": "Calculate the product of two integers",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "a": { "type": "integer", "description": "Multiplier" },
-                        "b": { "type": "integer", "description": "Multiplier" }
-                    },
-                    "required": ["a", "b"]
-                }
-            }
+            "type": "object",
+            "properties": {
+                "a": { "type": "integer", "description": "Multiplier" },
+                "b": { "type": "integer", "description": "Multiplier" }
+            },
+            "required": ["a", "b"]
         })
     }
 
-    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
+    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<Vec<Content>> {
         let a = args["a"].as_i64().unwrap_or(0);
         let b = args["b"].as_i64().unwrap_or(0);
         let result = a * b;
-        Ok(ToolOutput {
-            summary: format!("{} × {} = {}", a, b, result),
-            raw: Some(json!({ "result": result })),
-            control_flow: ToolControlFlow::Break,
-            truncation: None,
-        })
+        Ok(vec![Content::text(format!("{} × {} = {}", a, b, result))])
     }
 }
 
@@ -139,43 +114,33 @@ impl Tool for DivideTool {
         "divide"
     }
 
-    fn definition(&self) -> Value {
+    fn description(&self) -> &'static str {
+        "Calculate the quotient of two integers（a ÷ b），Returns quotient and remainder"
+    }
+
+    fn schema(&self) -> Value {
         json!({
-            "type": "function",
-            "function": {
-                "name": "divide",
-                "description": "Calculate the quotient of two integers（a ÷ b），Returns quotient and remainder",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "a": { "type": "integer", "description": "Dividend" },
-                        "b": { "type": "integer", "description": "Divisor" }
-                    },
-                    "required": ["a", "b"]
-                }
-            }
+            "type": "object",
+            "properties": {
+                "a": { "type": "integer", "description": "Dividend" },
+                "b": { "type": "integer", "description": "Divisor" }
+            },
+            "required": ["a", "b"]
         })
     }
 
-    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
+    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<Vec<Content>> {
         let a = args["a"].as_i64().unwrap_or(0);
         let b = args["b"].as_i64().unwrap_or(0);
         if b == 0 {
-            return Ok(ToolOutput {
-                summary: "Error：Divisor cannot be zero".to_string(),
-                raw: Some(json!({ "error": "division by zero" })),
-                control_flow: ToolControlFlow::Break,
-                truncation: None,
-            });
+            return Ok(vec![Content::text("Error：Divisor cannot be zero")]);
         }
         let quotient = a / b;
         let remainder = a % b;
-        Ok(ToolOutput {
-            summary: format!("{} ÷ {} = {}（remainder {}）", a, b, quotient, remainder),
-            raw: Some(json!({ "quotient": quotient, "remainder": remainder })),
-            control_flow: ToolControlFlow::Break,
-            truncation: None,
-        })
+        Ok(vec![Content::text(format!(
+            "{} ÷ {} = {}（remainder {}）",
+            a, b, quotient, remainder
+        ))])
     }
 }
 
@@ -293,7 +258,7 @@ impl ToolPolicy for ArithmeticToolPolicy {
         &self,
         _tool_name: &str,
         _args: &Value,
-        _result: &ToolOutput,
+        _result: &[Content],
         _ctx: &ToolContext,
     ) -> AgentResult<()> {
         Ok(())

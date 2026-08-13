@@ -80,8 +80,8 @@ use std::io::Write;
 use std::sync::Arc;
 
 use agent_base::{
-    AgentBuilder, AgentResult, ChatMessage, OpenAiClient, RuntimeEvent, Tool, ToolContext,
-    ToolControlFlow, ToolOutput, UserEvent,
+    AgentBuilder, AgentResult, ChatMessage, Content, OpenAiClient, RuntimeEvent, Tool, ToolContext,
+    UserEvent,
 };
 use async_trait::async_trait;
 use dotenvy::dotenv;
@@ -103,27 +103,24 @@ impl Tool for AnalyzeTextTool {
         "analyze_text"
     }
 
-    fn definition(&self) -> Value {
+    fn description(&self) -> &'static str {
+        "Analyze text and return character/word count, sentence count, and sentiment (positive/negative/neutral). Supports both Chinese and English. Emits progress events during execution. Only call when the user explicitly provides text to analyze."
+    }
+
+    fn schema(&self) -> Value {
         json!({
-            "type": "function",
-            "function": {
-                "name": "analyze_text",
-                "description": "Analyze text and return character/word count, sentence count, and sentiment (positive/negative/neutral). Supports both Chinese and English. Emits progress events during execution. Only call when the user explicitly provides text to analyze.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "text": {
-                            "type": "string",
-                            "description": "The text to analyze (Chinese or English)"
-                        }
-                    },
-                    "required": ["text"]
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "The text to analyze (Chinese or English)"
                 }
-            }
+            },
+            "required": ["text"]
         })
     }
 
-    async fn call(&self, args: &Value, ctx: &ToolContext) -> AgentResult<ToolOutput> {
+    async fn call(&self, args: &Value, ctx: &ToolContext) -> AgentResult<Vec<Content>> {
         let text = args["text"].as_str().unwrap_or("");
 
         // Step 1: Count characters / words
@@ -194,24 +191,14 @@ impl Tool for AnalyzeTextTool {
         ctx.emit_progress("Analyzing text: complete!");
 
         let count_label = if is_chinese { "chars" } else { "words" };
-        Ok(ToolOutput {
-            summary: format!(
-                "{} {}: {}, Sentence count: {}, Sentiment: {}",
-                if is_chinese { "Char" } else { "Word" },
-                count_label,
-                char_or_word_count,
-                sentence_count,
-                sentiment
-            ),
-            raw: Some(json!({
-                "char_or_word_count": char_or_word_count,
-                "sentence_count": sentence_count,
-                "sentiment": sentiment,
-                "is_chinese": is_chinese
-            })),
-            control_flow: ToolControlFlow::Continue,
-            truncation: None,
-        })
+        Ok(vec![Content::text(format!(
+            "{} {}: {}, Sentence count: {}, Sentiment: {}",
+            if is_chinese { "Char" } else { "Word" },
+            count_label,
+            char_or_word_count,
+            sentence_count,
+            sentiment
+        ))])
     }
 }
 
@@ -231,27 +218,24 @@ impl Tool for SummarizeTool {
         "summarize"
     }
 
-    fn definition(&self) -> Value {
+    fn description(&self) -> &'static str {
+        "Summarize the given text into one sentence using the LLM. Only call when the user explicitly asks to summarize a longer passage."
+    }
+
+    fn schema(&self) -> Value {
         json!({
-            "type": "function",
-            "function": {
-                "name": "summarize",
-                "description": "Summarize the given text into one sentence using the LLM. Only call when the user explicitly asks to summarize a longer passage.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "text": {
-                            "type": "string",
-                            "description": "The text to summarize"
-                        }
-                    },
-                    "required": ["text"]
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string",
+                    "description": "The text to summarize"
                 }
-            }
+            },
+            "required": ["text"]
         })
     }
 
-    async fn call(&self, args: &Value, ctx: &ToolContext) -> AgentResult<ToolOutput> {
+    async fn call(&self, args: &Value, ctx: &ToolContext) -> AgentResult<Vec<Content>> {
         let text = args["text"].as_str().unwrap_or("");
 
         // Get the LLM client from ToolContext — returns error if not configured.
@@ -276,12 +260,7 @@ impl Tool for SummarizeTool {
 
         ctx.emit_progress("Summarize: done!");
 
-        Ok(ToolOutput {
-            summary: format!("Summary: {}", summary),
-            raw: Some(json!({ "summary": summary })),
-            control_flow: ToolControlFlow::Continue,
-            truncation: None,
-        })
+        Ok(vec![Content::text(format!("Summary: {}", summary))])
     }
 }
 
@@ -301,35 +280,32 @@ impl Tool for NotifyTool {
         "notify"
     }
 
-    fn definition(&self) -> Value {
+    fn description(&self) -> &'static str {
+        "Send a notification to an external channel (Slack, email, webhook). Emits a structured event for the host to route. Only call when the user explicitly asks to send a notification."
+    }
+
+    fn schema(&self) -> Value {
         json!({
-            "type": "function",
-            "function": {
-                "name": "notify",
-                "description": "Send a notification to an external channel (Slack, email, webhook). Emits a structured event for the host to route. Only call when the user explicitly asks to send a notification.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "channel": {
-                            "type": "string",
-                            "description": "Notification channel: slack, email, webhook"
-                        },
-                        "message": {
-                            "type": "string",
-                            "description": "The notification message body"
-                        },
-                        "severity": {
-                            "type": "string",
-                            "description": "info, warning, or error"
-                        }
-                    },
-                    "required": ["channel", "message"]
+            "type": "object",
+            "properties": {
+                "channel": {
+                    "type": "string",
+                    "description": "Notification channel: slack, email, webhook"
+                },
+                "message": {
+                    "type": "string",
+                    "description": "The notification message body"
+                },
+                "severity": {
+                    "type": "string",
+                    "description": "info, warning, or error"
                 }
-            }
+            },
+            "required": ["channel", "message"]
         })
     }
 
-    async fn call(&self, args: &Value, ctx: &ToolContext) -> AgentResult<ToolOutput> {
+    async fn call(&self, args: &Value, ctx: &ToolContext) -> AgentResult<Vec<Content>> {
         let channel = args["channel"].as_str().unwrap_or("slack");
         let message = args["message"].as_str().unwrap_or("");
         let severity = args["severity"].as_str().unwrap_or("info");
@@ -347,19 +323,10 @@ impl Tool for NotifyTool {
             }),
         });
 
-        Ok(ToolOutput {
-            summary: format!(
-                "Notification sent to {} (severity: {}): {}",
-                channel, severity, message
-            ),
-            raw: Some(json!({
-                "channel": channel,
-                "severity": severity,
-                "delivered": true
-            })),
-            control_flow: ToolControlFlow::Continue,
-            truncation: None,
-        })
+        Ok(vec![Content::text(format!(
+            "Notification sent to {} (severity: {}): {}",
+            channel, severity, message
+        ))])
     }
 }
 

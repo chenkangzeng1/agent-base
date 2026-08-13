@@ -17,8 +17,7 @@ use std::sync::Arc;
 
 use agent_base::{
     AgentBuilder, AgentError, AgentResult, ApprovalDecision, ApprovalHandler, ApprovalRequest,
-    OpenAiClient, RiskLevel, RuntimeEvent, Tool, ToolContext, ToolControlFlow, ToolOutput,
-    ToolPolicy,
+    Content, OpenAiClient, RiskLevel, RuntimeEvent, Tool, ToolContext, ToolPolicy,
 };
 use async_trait::async_trait;
 use dotenvy::dotenv;
@@ -37,38 +36,30 @@ impl Tool for DiskCheckTool {
         "check_disk"
     }
 
-    fn definition(&self) -> Value {
+    fn description(&self) -> &'static str {
+        "Check server disk usage. Returns used/total space and usage percentage."
+    }
+
+    fn schema(&self) -> Value {
         json!({
-            "type": "function",
-            "function": {
-                "name": "check_disk",
-                "description": "Check server disk usage. Returns used/total space and usage percentage.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "path": {
-                            "type": "string",
-                            "description": "Filesystem path to check (e.g. '/', '/home', '/var')"
-                        }
-                    },
-                    "required": ["path"]
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Filesystem path to check (e.g. '/', '/home', '/var')"
                 }
-            }
+            },
+            "required": ["path"]
         })
     }
 
-    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
+    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<Vec<Content>> {
         let path = args["path"].as_str().unwrap_or("/");
         let output = format!(
             "Filesystem: {}\nTotal: 50G  Used: 32G  Available: 18G  Usage: 64%",
             path
         );
-        Ok(ToolOutput {
-            summary: output,
-            raw: Some(json!({ "path": path, "used_gb": 32, "total_gb": 50, "percent": 64 })),
-            control_flow: ToolControlFlow::Continue,
-            truncation: None,
-        })
+        Ok(vec![Content::text(output)])
     }
 }
 
@@ -81,30 +72,21 @@ impl Tool for MemCheckTool {
         "check_memory"
     }
 
-    fn definition(&self) -> Value {
+    fn description(&self) -> &'static str {
+        "Check server memory usage. Returns used/total memory and usage percentage."
+    }
+
+    fn schema(&self) -> Value {
         json!({
-            "type": "function",
-            "function": {
-                "name": "check_memory",
-                "description": "Check server memory usage. Returns used/total memory and usage percentage.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {}
-                }
-            }
+            "type": "object",
+            "properties": {}
         })
     }
 
-    async fn call(&self, _args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
-        Ok(ToolOutput {
-            summary: "Total: 16G  Used: 12G  Available: 4G  Usage: 75%\nSwap: Total 4G  Used 512M"
-                .into(),
-            raw: Some(
-                json!({ "total_gb": 16, "used_gb": 12, "percent": 75, "swap_total_gb": 4, "swap_used_gb": 0.5 }),
-            ),
-            control_flow: ToolControlFlow::Continue,
-            truncation: None,
-        })
+    async fn call(&self, _args: &Value, _ctx: &ToolContext) -> AgentResult<Vec<Content>> {
+        Ok(vec![Content::text(
+            "Total: 16G  Used: 12G  Available: 4G  Usage: 75%\nSwap: Total 4G  Used 512M",
+        )])
     }
 }
 
@@ -117,37 +99,29 @@ impl Tool for RestartServiceTool {
         "restart_service"
     }
 
-    fn definition(&self) -> Value {
+    fn description(&self) -> &'static str {
+        "Restart a specified system service. This operation causes a brief service interruption and requires manual approval."
+    }
+
+    fn schema(&self) -> Value {
         json!({
-            "type": "function",
-            "function": {
-                "name": "restart_service",
-                "description": "Restart a specified system service. This operation causes a brief service interruption and requires manual approval.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "service": {
-                            "type": "string",
-                            "description": "Service name (e.g. nginx, mysql, redis)"
-                        }
-                    },
-                    "required": ["service"]
+            "type": "object",
+            "properties": {
+                "service": {
+                    "type": "string",
+                    "description": "Service name (e.g. nginx, mysql, redis)"
                 }
-            }
+            },
+            "required": ["service"]
         })
     }
 
-    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
+    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<Vec<Content>> {
         let service = args["service"].as_str().unwrap_or("unknown");
-        Ok(ToolOutput {
-            summary: format!(
-                "Service '{}' has been successfully restarted. Status: active (running)",
-                service
-            ),
-            raw: Some(json!({ "service": service, "status": "restarted", "success": true })),
-            control_flow: ToolControlFlow::Continue,
-            truncation: None,
-        })
+        Ok(vec![Content::text(format!(
+            "Service '{}' has been successfully restarted. Status: active (running)",
+            service
+        ))])
     }
 }
 
@@ -190,7 +164,7 @@ impl ToolPolicy for HealthCheckPolicy {
         &self,
         _tool_name: &str,
         _args: &Value,
-        _result: &ToolOutput,
+        _result: &[Content],
         _ctx: &ToolContext,
     ) -> AgentResult<()> {
         Ok(())

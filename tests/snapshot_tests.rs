@@ -2,7 +2,7 @@
 //!
 //! These catch unintended changes to LLM-visible output formats.
 
-use agent_base::tool::{Tool, ToolContext, ToolOutput, ToolRegistry};
+use agent_base::tool::{Content, Tool, ToolContext, ToolRegistry};
 use agent_base::types::ChatMessage;
 use async_trait::async_trait;
 use serde_json::json;
@@ -16,23 +16,20 @@ impl Tool for EchoTool {
         "echo"
     }
 
-    fn definition(&self) -> serde_json::Value {
+    fn description(&self) -> &'static str {
+        "Echo back the input message"
+    }
+
+    fn schema(&self) -> serde_json::Value {
         json!({
-            "type": "function",
-            "function": {
-                "name": "echo",
-                "description": "Echo back the input message",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "message": {
-                            "type": "string",
-                            "description": "The message to echo"
-                        }
-                    },
-                    "required": ["message"]
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "description": "The message to echo"
                 }
-            }
+            },
+            "required": ["message"]
         })
     }
 
@@ -40,11 +37,8 @@ impl Tool for EchoTool {
         &self,
         _args: &serde_json::Value,
         _ctx: &ToolContext,
-    ) -> agent_base::types::AgentResult<ToolOutput> {
-        Ok(ToolOutput {
-            summary: "echo".to_string(),
-            ..Default::default()
-        })
+    ) -> agent_base::types::AgentResult<Vec<Content>> {
+        Ok(vec![Content::text("echo")])
     }
 }
 

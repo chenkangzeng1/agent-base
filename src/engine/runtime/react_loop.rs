@@ -11,10 +11,7 @@ use crate::types::{
 
 use super::plan_runner::RuntimeCore;
 
-pub(super) enum ToolCallResult {
-    Continue,
-    Break,
-}
+use crate::tool::content_text;
 
 pub(super) struct PostLlmMwResult {
     pub full_text: String,
@@ -322,16 +319,7 @@ impl RuntimeCore {
                 )
                 .await
             {
-                Ok(ToolCallResult::Continue) => {}
-                Ok(ToolCallResult::Break) => {
-                    self.event_bus.emit(RuntimeEvent::RunFinished {
-                        session_id: session_id.clone(),
-                        agent_id: None,
-                        trace_id: None,
-                    });
-                    EventBus::drain_async_events(&mut event_rx, &mut on_event)?;
-                    return Ok(RunOutcome::Completed);
-                }
+                Ok(()) => {}
                 Err(e) => {
                     if let Some(outcome) = self
                         .handle_tool_error(
@@ -990,7 +978,7 @@ impl RuntimeCore {
                             )
                             .await
                         {
-                            Ok(ToolCallResult::Continue) => {
+                            Ok(()) => {
                                 let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
                                 self.fire_turn_end(
                                     session_id,
@@ -1039,48 +1027,6 @@ impl RuntimeCore {
                                     trace_id: None,
                                 });
                                 continue;
-                            }
-                            Ok(ToolCallResult::Break) => {
-                                let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
-                                self.fire_turn_end(
-                                    session_id,
-                                    turn_count,
-                                    turn_start,
-                                    &model,
-                                    user_input_owned,
-                                    ttft_ms,
-                                    llm_duration_ms,
-                                    tool_duration_ms,
-                                    &usage,
-                                    text_len,
-                                    has_thinking,
-                                    tool_call_count,
-                                    &tool_names,
-                                    tool_call_count,
-                                    0,
-                                    RunOutcome::Completed,
-                                    None,
-                                    1,
-                                )
-                                .await;
-                                tracing::info!(
-                                    session_id = session_id.id,
-                                    turn = turn_count,
-                                    "tool calls requested break"
-                                );
-                                let n = result.tool_calls.len();
-                                self.with_session_mut(session_id, |session| {
-                                    session.total_tool_calls += n;
-                                    session.turn_tool_calls += n;
-                                })
-                                .await?;
-                                self.event_bus.emit(RuntimeEvent::RunFinished {
-                                    session_id: session_id.clone(),
-                                    agent_id: None,
-                                    trace_id: None,
-                                });
-                                EventBus::drain_async_events(event_rx, on_event)?;
-                                return Ok((RunOutcome::Completed, turn_count));
                             }
                             Err(e) => {
                                 let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
@@ -1232,7 +1178,7 @@ impl RuntimeCore {
         event_rx: &mut broadcast::Receiver<RuntimeEvent>,
         on_event: &mut F,
         reasoning: String,
-    ) -> AgentResult<ToolCallResult>
+    ) -> AgentResult<()>
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
@@ -1279,22 +1225,15 @@ impl RuntimeCore {
             .await?;
         }
 
-        // Process results: push to session, check for Break
+        // Process results: push to session.
         for result in results {
             self.with_session_mut(session_id, |session| {
-                session.push_tool_result(&result.id, result.output.summary.clone());
+                session.push_tool_result(&result.id, content_text(&result.output));
             })
             .await?;
-
-            if matches!(
-                result.output.control_flow,
-                crate::tool::ToolControlFlow::Break
-            ) {
-                return Ok(ToolCallResult::Break);
-            }
         }
 
-        Ok(ToolCallResult::Continue)
+        Ok(())
     }
 
     pub async fn validate_session(&self, session_id: &SessionId) -> AgentResult<()> {

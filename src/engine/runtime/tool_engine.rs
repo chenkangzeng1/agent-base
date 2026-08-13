@@ -8,7 +8,7 @@ use crate::engine::pipeline::{DefaultPipeline, ToolExecutionPipeline};
 use crate::engine::recovery::ToolErrorRecovery;
 use crate::engine::runtime::event_bus::EventBus;
 use crate::engine::runtime::session_manager::SessionManager;
-use crate::tool::{ToolContext, ToolControlFlow, ToolOutput, ToolPolicy, ToolRegistry};
+use crate::tool::{Content, ToolContext, ToolPolicy, ToolRegistry, content_text};
 use crate::types::{AgentError, AgentResult, Language, RuntimeEvent, SessionId, UserEvent};
 
 pub(crate) struct ToolEngine {
@@ -176,16 +176,11 @@ impl ToolEngine {
                     tool = name,
                     "tool not found in registry"
                 );
-                ToolOutput {
-                    summary: if ctx.language == Language::Zh {
-                        format!("工具 {} 未找到", name)
-                    } else {
-                        format!("Tool {} not found", name)
-                    },
-                    raw: None,
-                    control_flow: ToolControlFlow::Break,
-                    truncation: None,
-                }
+                vec![Content::text(if ctx.language == Language::Zh {
+                    format!("工具 {} 未找到", name)
+                } else {
+                    format!("Tool {} not found", name)
+                })]
             }
         };
 
@@ -193,7 +188,7 @@ impl ToolEngine {
         self.event_bus.emit(RuntimeEvent::ToolCallFinished {
             session_id: session_id.clone(),
             tool_name: name.to_string(),
-            summary: tool_result.summary.clone(),
+            summary: content_text(&tool_result),
             agent_id: None,
             trace_id: None,
         });
@@ -387,7 +382,7 @@ pub struct ToolExecutionResult {
     pub id: String,
     #[allow(dead_code)]
     pub name: String,
-    pub output: ToolOutput,
+    pub output: Vec<Content>,
 }
 
 /// Grouped context passed through the tool execution call chain.

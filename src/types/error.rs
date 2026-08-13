@@ -36,6 +36,9 @@ pub enum AgentError {
     #[error("Tool timeout exceeded")]
     ToolTimeout,
 
+    #[error("Tool '{name}' output exceeds the {max_chars}-char limit")]
+    ToolOutputTooLarge { name: String, max_chars: usize },
+
     #[error("Tool call rejected by approval: {tool_name}")]
     ApprovalDenied { tool_name: String },
 
@@ -131,6 +134,9 @@ impl AgentError {
             Self::ToolNotFound { .. } => ErrorKind::ToolNotFound,
             Self::ToolArgsInvalid { .. } => ErrorKind::ToolArgsInvalid,
             Self::ToolTimeout => ErrorKind::ToolTimeout,
+            Self::ToolOutputTooLarge { name, .. } => ErrorKind::ToolCallFailed {
+                tool_name: name.clone(),
+            },
             Self::ServiceUnavailable(_) => ErrorKind::ModelOverloaded,
             Self::RateLimitExceeded => ErrorKind::RateLimited,
             Self::Cancelled => ErrorKind::Cancelled,

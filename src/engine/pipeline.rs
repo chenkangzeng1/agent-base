@@ -4,12 +4,12 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde_json::Value;
 
-use crate::tool::{Tool, ToolContext, ToolControlFlow, ToolOutput, ToolPolicy, TruncationInfo};
-use crate::types::AgentResult;
+use crate::tool::{Content, Tool, ToolContext, ToolPolicy, content_text};
+use crate::types::{AgentError, AgentResult};
 
 /// Pure execution pipeline — cares about *how* to safely execute a tool.
 ///
-/// Responsibilities: policy hooks, timeout, output truncation.
+/// Responsibilities: policy hooks, timeout, output size limit.
 /// Does NOT do: tool lookup, event emission, user-event forwarding.
 #[async_trait]
 pub trait ToolExecutionPipeline: Send + Sync {
@@ -18,10 +18,10 @@ pub trait ToolExecutionPipeline: Send + Sync {
         tool: &dyn Tool,
         args: &Value,
         ctx: &ToolContext,
-    ) -> AgentResult<ToolOutput>;
+    ) -> AgentResult<Vec<Content>>;
 }
 
-/// Default pipeline: ToolPolicy hooks + timeout + output truncation.
+/// Default pipeline: ToolPolicy hooks + timeout + output size limit.
 #[derive(Clone)]
 pub struct DefaultPipeline {
     tool_policy: Option<Arc<dyn ToolPolicy>>,
@@ -54,67 +54,42 @@ impl ToolExecutionPipeline for DefaultPipeline {
         tool: &dyn Tool,
         args: &Value,
         ctx: &ToolContext,
-    ) -> AgentResult<ToolOutput> {
+    ) -> AgentResult<Vec<Content>> {
         // 1. before_call hook
         if let Some(policy) = &self.tool_policy {
             policy.before_call(tool.name(), args, ctx)?;
         }
 
         // 2. Execute with optional timeout
-        let result = if let Some(timeout_ms) = self.tool_timeout_ms {
+        let output = if let Some(timeout_ms) = self.tool_timeout_ms {
             match tokio::time::timeout(Duration::from_millis(timeout_ms), tool.call(args, ctx))
                 .await
             {
-                Ok(result) => result,
+                Ok(result) => result?,
                 Err(_) => {
                     tracing::warn!(
                         tool = tool.name(),
                         timeout_ms = timeout_ms,
                         "tool execution timed out"
                     );
-                    return Ok(ToolOutput {
-                        summary: "[Tool Timeout]".to_string(),
-                        control_flow: ToolControlFlow::Continue,
-                        ..Default::default()
-                    });
+                    return Ok(vec![Content::text("[Tool Timeout]")]);
                 }
             }
         } else {
-            tool.call(args, ctx).await
+            tool.call(args, ctx).await?
         };
 
-        let mut output = result?;
-
-        // 3. Output truncation
-        if let Some(max_chars) = self.max_output_chars
-            && output.summary.len() > max_chars
-        {
-            let original_summary_len = output.summary.len();
-            let original_raw_len = output.raw.as_ref().map(|v| v.to_string().len());
-            let suffix = "...(truncated)";
-            let keep = max_chars.saturating_sub(suffix.len());
-            if keep > 0 {
-                // Use floor_char_boundary to avoid panicking on multi-byte
-                // UTF-8 characters (e.g. CJK, emoji) where `keep` falls
-                // in the middle of a character.
-                let truncate_at = output.summary.floor_char_boundary(keep);
-                output.summary.truncate(truncate_at);
-                output.summary.push_str(suffix);
-            } else {
-                output.summary = suffix[..max_chars].to_string();
+        // 3. Output size limit — reject by default rather than silently
+        // truncating (design §6.5). Tools that want to return a bounded
+        // subset should do their own explicit truncation before returning.
+        if let Some(max_chars) = self.max_output_chars {
+            let text_len = content_text(&output).len();
+            if text_len > max_chars {
+                return Err(AgentError::ToolOutputTooLarge {
+                    name: tool.name().to_string(),
+                    max_chars,
+                });
             }
-            output.truncation = Some(TruncationInfo {
-                original_summary_len,
-                original_raw_len,
-                max_allowed_chars: max_chars,
-            });
-            tracing::debug!(
-                tool = tool.name(),
-                original_summary_len = original_summary_len,
-                original_raw_len = original_raw_len,
-                max_allowed_chars = max_chars,
-                "tool output truncated"
-            );
         }
 
         // 4. after_call hook
@@ -130,9 +105,8 @@ impl ToolExecutionPipeline for DefaultPipeline {
 mod tests {
     use super::*;
     use serde_json::json;
-    use std::sync::atomic::{AtomicU32, Ordering};
 
-    use crate::types::{AgentError, Language, SessionId};
+    use crate::types::{ApprovalRequest, Language, SessionId};
 
     // ── Test helpers ──
 
@@ -157,18 +131,16 @@ mod tests {
         fn name(&self) -> &'static str {
             "echo"
         }
-        fn definition(&self) -> Value {
+        fn description(&self) -> &'static str {
+            "echo"
+        }
+        fn schema(&self) -> Value {
             json!({})
         }
-        async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
-            Ok(ToolOutput {
-                summary: args
-                    .get("msg")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("ok")
-                    .to_string(),
-                ..Default::default()
-            })
+        async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<Vec<Content>> {
+            Ok(vec![Content::text(
+                args.get("msg").and_then(|v| v.as_str()).unwrap_or("ok"),
+            )])
         }
     }
 
@@ -178,15 +150,15 @@ mod tests {
         fn name(&self) -> &'static str {
             "slow"
         }
-        fn definition(&self) -> Value {
+        fn description(&self) -> &'static str {
+            "slow"
+        }
+        fn schema(&self) -> Value {
             json!({})
         }
-        async fn call(&self, _args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
+        async fn call(&self, _args: &Value, _ctx: &ToolContext) -> AgentResult<Vec<Content>> {
             tokio::time::sleep(Duration::from_secs(10)).await;
-            Ok(ToolOutput {
-                summary: "done".to_string(),
-                ..Default::default()
-            })
+            Ok(vec![Content::text("done")])
         }
     }
 
@@ -196,46 +168,46 @@ mod tests {
         fn name(&self) -> &'static str {
             "fail"
         }
-        fn definition(&self) -> Value {
+        fn description(&self) -> &'static str {
+            "fail"
+        }
+        fn schema(&self) -> Value {
             json!({})
         }
-        async fn call(&self, _args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
+        async fn call(&self, _args: &Value, _ctx: &ToolContext) -> AgentResult<Vec<Content>> {
             Err(AgentError::tool_not_found("intentional"))
         }
     }
 
     struct TrackingPolicy {
-        before_count: AtomicU32,
-        after_count: AtomicU32,
+        before_count: std::sync::atomic::AtomicU32,
+        after_count: std::sync::atomic::AtomicU32,
         fail_before: bool,
     }
     impl TrackingPolicy {
         fn new() -> Self {
             Self {
-                before_count: AtomicU32::new(0),
-                after_count: AtomicU32::new(0),
+                before_count: std::sync::atomic::AtomicU32::new(0),
+                after_count: std::sync::atomic::AtomicU32::new(0),
                 fail_before: false,
             }
         }
         fn fail_before_call() -> Self {
             Self {
-                before_count: AtomicU32::new(0),
-                after_count: AtomicU32::new(0),
+                before_count: std::sync::atomic::AtomicU32::new(0),
+                after_count: std::sync::atomic::AtomicU32::new(0),
                 fail_before: true,
             }
         }
     }
     #[async_trait]
     impl ToolPolicy for TrackingPolicy {
-        async fn evaluate_approval(
-            &self,
-            _: &str,
-            _: &Value,
-        ) -> Option<crate::types::ApprovalRequest> {
+        async fn evaluate_approval(&self, _: &str, _: &Value) -> Option<ApprovalRequest> {
             None
         }
         fn before_call(&self, _name: &str, _args: &Value, _ctx: &ToolContext) -> AgentResult<()> {
-            self.before_count.fetch_add(1, Ordering::SeqCst);
+            self.before_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             if self.fail_before {
                 return Err(AgentError::internal("before_call denied"));
             }
@@ -245,10 +217,11 @@ mod tests {
             &self,
             _name: &str,
             _args: &Value,
-            _output: &ToolOutput,
+            _output: &[Content],
             _ctx: &ToolContext,
         ) -> AgentResult<()> {
-            self.after_count.fetch_add(1, Ordering::SeqCst);
+            self.after_count
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Ok(())
         }
     }
@@ -262,7 +235,7 @@ mod tests {
             .execute(&EchoTool, &json!({"msg": "hello"}), &test_ctx())
             .await
             .unwrap();
-        assert_eq!(output.summary, "hello");
+        assert_eq!(content_text(&output), "hello");
     }
 
     #[tokio::test]
@@ -275,8 +248,16 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(policy.before_count.load(Ordering::SeqCst), 1);
-        assert_eq!(policy.after_count.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            policy
+                .before_count
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        assert_eq!(
+            policy.after_count.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
     }
 
     #[tokio::test]
@@ -287,7 +268,10 @@ mod tests {
         let result = pipeline.execute(&EchoTool, &json!({}), &test_ctx()).await;
         assert!(result.is_err());
         // after_call should NOT be called
-        assert_eq!(policy.after_count.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            policy.after_count.load(std::sync::atomic::Ordering::SeqCst),
+            0
+        );
     }
 
     #[tokio::test]
@@ -297,7 +281,7 @@ mod tests {
             .execute(&SlowTool, &json!({}), &test_ctx())
             .await
             .unwrap();
-        assert_eq!(output.summary, "[Tool Timeout]");
+        assert_eq!(content_text(&output), "[Tool Timeout]");
     }
 
     #[tokio::test]
@@ -307,67 +291,62 @@ mod tests {
             .execute(&EchoTool, &json!({"msg": "fast"}), &test_ctx())
             .await
             .unwrap();
-        assert_eq!(output.summary, "fast");
+        assert_eq!(content_text(&output), "fast");
     }
 
     #[tokio::test]
-    async fn truncation_applies() {
+    async fn output_over_limit_is_rejected() {
         let pipeline = DefaultPipeline::new(None, None, Some(10)); // max 10 chars
-        let output = pipeline
+        let result = pipeline
             .execute(
                 &EchoTool,
                 &json!({"msg": "this is a very long message"}),
                 &test_ctx(),
             )
-            .await
-            .unwrap();
-        assert!(output.summary.len() <= 10);
-        assert!(output.truncation.is_some());
-        let t = output.truncation.unwrap();
-        assert_eq!(t.original_summary_len, 27);
-        assert_eq!(t.max_allowed_chars, 10);
+            .await;
+        assert!(matches!(
+            result,
+            Err(AgentError::ToolOutputTooLarge { max_chars: 10, .. })
+        ));
     }
 
     #[tokio::test]
-    async fn no_truncation_when_short() {
+    async fn no_rejection_when_short() {
         let pipeline = DefaultPipeline::new(None, None, Some(100));
         let output = pipeline
             .execute(&EchoTool, &json!({"msg": "short"}), &test_ctx())
             .await
             .unwrap();
-        assert_eq!(output.summary, "short");
-        assert!(output.truncation.is_none());
+        assert_eq!(content_text(&output), "short");
     }
 
     #[tokio::test]
-    async fn truncation_cjk_no_panic() {
-        // CJK chars are 3 bytes each. With max_chars=20, keep=6 bytes,
-        // which falls inside a 3-byte CJK char. floor_char_boundary
-        // should round down to the nearest char boundary.
+    async fn output_over_limit_cjk_rejected() {
+        // CJK chars are 3 bytes each. The size check counts chars, not bytes,
+        // so a long Chinese string must still be rejected without panicking.
         let pipeline = DefaultPipeline::new(None, None, Some(20));
-        let output = pipeline
+        let result = pipeline
             .execute(
                 &EchoTool,
-                &json!({"msg": "这是一个很长的中文消息，用于测试多字节字符的截断处理"}),
+                &json!({"msg": "这是一个很长的中文消息，用于测试多字节字符的超限处理"}),
                 &test_ctx(),
             )
-            .await
-            .unwrap();
-        assert!(output.summary.len() <= 20);
-        assert!(output.summary.ends_with("...(truncated)") || output.summary.len() <= 20);
-        assert!(output.truncation.is_some());
-        // Must not panic — that's the main assertion
+            .await;
+        assert!(matches!(
+            result,
+            Err(AgentError::ToolOutputTooLarge { max_chars: 20, .. })
+        ));
     }
 
     #[tokio::test]
-    async fn timeout_plus_truncation() {
+    async fn timeout_plus_limit() {
         let pipeline = DefaultPipeline::new(None, Some(50), Some(100));
         let output = pipeline
             .execute(&SlowTool, &json!({}), &test_ctx())
             .await
             .unwrap();
-        assert_eq!(output.summary, "[Tool Timeout]");
-        assert!(output.truncation.is_none()); // timeout output is short
+        // timeout output is short, so it does not trip the size limit
+        assert_eq!(content_text(&output), "[Tool Timeout]");
     }
 
     #[tokio::test]

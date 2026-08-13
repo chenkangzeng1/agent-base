@@ -2,8 +2,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use agent_base::{
-    AgentBuilder, AgentError, AgentResult, ChatMessage, Middleware, OpenAiClient, PostLlmCtx,
-    RuntimeEvent, SessionId, Tool, ToolContext, ToolControlFlow, ToolOutput,
+    AgentBuilder, AgentError, AgentResult, ChatMessage, Content, Middleware, OpenAiClient,
+    PostLlmCtx, RuntimeEvent, SessionId, Tool, ToolContext,
 };
 use async_trait::async_trait;
 use dotenvy::dotenv;
@@ -17,31 +17,23 @@ impl Tool for EchoTool {
         "echo"
     }
 
-    fn definition(&self) -> Value {
+    fn description(&self) -> &'static str {
+        "echo back the message"
+    }
+
+    fn schema(&self) -> Value {
         json!({
-            "type": "function",
-            "function": {
-                "name": "echo",
-                "description": "echo back the message",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "message": { "type": "string" }
-                    },
-                    "required": ["message"]
-                }
-            }
+            "type": "object",
+            "properties": {
+                "message": { "type": "string" }
+            },
+            "required": ["message"]
         })
     }
 
-    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
+    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<Vec<Content>> {
         let msg = args["message"].as_str().unwrap_or("");
-        Ok(ToolOutput {
-            summary: format!("echo: {msg}"),
-            raw: Some(json!({ "echo": msg })),
-            control_flow: ToolControlFlow::Break,
-            truncation: None,
-        })
+        Ok(vec![Content::text(format!("echo: {msg}"))])
     }
 }
 
@@ -53,34 +45,26 @@ impl Tool for AddTool {
         "add"
     }
 
-    fn definition(&self) -> Value {
+    fn description(&self) -> &'static str {
+        "Calculate the sum of two integers"
+    }
+
+    fn schema(&self) -> Value {
         json!({
-            "type": "function",
-            "function": {
-                "name": "add",
-                "description": "Calculate the sum of two integers",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "a": { "type": "integer", "description": "First addend" },
-                        "b": { "type": "integer", "description": "Second addend" }
-                    },
-                    "required": ["a", "b"]
-                }
-            }
+            "type": "object",
+            "properties": {
+                "a": { "type": "integer", "description": "First addend" },
+                "b": { "type": "integer", "description": "Second addend" }
+            },
+            "required": ["a", "b"]
         })
     }
 
-    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
+    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<Vec<Content>> {
         let a = args["a"].as_i64().unwrap_or(0);
         let b = args["b"].as_i64().unwrap_or(0);
         let result = a + b;
-        Ok(ToolOutput {
-            summary: format!("{} + {} = {}", a, b, result),
-            raw: Some(json!({ "result": result })),
-            control_flow: ToolControlFlow::Break,
-            truncation: None,
-        })
+        Ok(vec![Content::text(format!("{} + {} = {}", a, b, result))])
     }
 }
 
