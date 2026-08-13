@@ -13,6 +13,9 @@ use super::plan_runner::RuntimeCore;
 
 use crate::tool::content_text;
 
+mod turn_end;
+use turn_end::TurnEndCtx;
+
 pub(super) struct PostLlmMwResult {
     pub full_text: String,
     pub is_tool_call: bool,
@@ -1431,110 +1434,6 @@ impl RuntimeCore {
         {
             tracing::warn!(error = %e, "failed to clean up ephemeral messages");
         }
-    }
-
-    /// Build a TurnContext and fire all registered turn-end callbacks.
-    /// agent-base does NOT store, aggregate, or persist metrics — consumers
-    /// (e.g. phi-telemetry) do that via their registered callback.
-    async fn fire_turn_end(&self, ctx: TurnEndCtx<'_>) {
-        let duration_ms = ctx.turn_start.elapsed().as_millis() as u64;
-
-        let turn_ctx = crate::types::TurnContext {
-            session_id: ctx.session_id.id,
-            turn_number: ctx.turn_number,
-            ttft_ms: ctx.ttft_ms,
-            llm_duration_ms: ctx.llm_duration_ms,
-            duration_ms,
-            tool_duration_ms: ctx.tool_duration_ms,
-            usage: ctx.usage.clone(),
-            full_text_len: ctx.text_length,
-            has_thinking: ctx.has_thinking,
-            tools_used: ctx.tools_used.to_vec(),
-            tool_call_count: ctx.tool_call_count,
-            tool_success: ctx.tool_success,
-            tool_failed: ctx.tool_failed,
-            outcome: ctx.outcome,
-            error_message: ctx.error_message.map(|s| s.to_string()),
-            user_input: truncate_for_context(ctx.user_input),
-            model: ctx.model.to_string(),
-            plan_updates: self.event_bus.take_plan_updates(),
-            approval_count: self.event_bus.take_approval_count(),
-            llm_calls: ctx.llm_calls,
-        };
-
-        let callbacks = self.turn_end_callbacks.read().unwrap();
-        for cb in callbacks.iter() {
-            cb(&turn_ctx);
-        }
-        drop(callbacks);
-    }
-}
-
-/// Collapsed argument bundle for `fire_turn_end` — a borrowed struct so the 7
-/// call sites name fields instead of passing an opaque run of `0,0,0,&None,...`.
-struct TurnEndCtx<'a> {
-    session_id: &'a SessionId,
-    turn_number: u32,
-    turn_start: std::time::Instant,
-    model: &'a str,
-    user_input: &'a str,
-    ttft_ms: u64,
-    llm_duration_ms: u64,
-    tool_duration_ms: u64,
-    usage: &'a Option<crate::llm::UsageInfo>,
-    text_length: u64,
-    has_thinking: bool,
-    tool_call_count: u32,
-    tools_used: &'a [String],
-    tool_success: u32,
-    tool_failed: u32,
-    outcome: RunOutcome,
-    error_message: Option<&'a str>,
-    llm_calls: u32,
-}
-
-impl<'a> TurnEndCtx<'a> {
-    /// Fill the six always-provided fields; the rest default to "zero" metrics
-    /// (0 / false / `&None` / `&[]` / `None`), matching the old positional calls.
-    fn new(
-        session_id: &'a SessionId,
-        turn_number: u32,
-        turn_start: std::time::Instant,
-        model: &'a str,
-        user_input: &'a str,
-        outcome: RunOutcome,
-    ) -> Self {
-        Self {
-            session_id,
-            turn_number,
-            turn_start,
-            model,
-            user_input,
-            ttft_ms: 0,
-            llm_duration_ms: 0,
-            tool_duration_ms: 0,
-            usage: &None,
-            text_length: 0,
-            has_thinking: false,
-            tool_call_count: 0,
-            tools_used: &[],
-            tool_success: 0,
-            tool_failed: 0,
-            outcome,
-            error_message: None,
-            llm_calls: 0,
-        }
-    }
-}
-
-/// Truncate a string to 80 characters (respecting UTF-8 boundaries),
-/// appending "..." if truncated.
-fn truncate_for_context(s: &str) -> String {
-    if s.chars().count() > 80 {
-        let truncated: String = s.chars().take(80).collect();
-        format!("{}...", truncated)
-    } else {
-        s.to_string()
     }
 }
 
