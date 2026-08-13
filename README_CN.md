@@ -14,7 +14,7 @@
 
 ```toml
 [dependencies]
-agent-base = "0.1.14"
+agent-base = "0.2.0"
 ```
 
 ## 设计原则
@@ -61,7 +61,7 @@ agent-base = "0.1.14"
 
 ```toml
 [dependencies]
-agent-base = { version = "0.1.14", features = ["sqlite-session"] }
+agent-base = { version = "0.2.0", features = ["sqlite-session"] }
 ```
 
 ## 快速上手
@@ -311,7 +311,7 @@ phi-agent / agent-works / ...              ← 框架 / 增强工具集
 
 ## 稳定性
 
-本项目处于早期开发阶段（v0.1.14）。核心抽象已趋于稳定但尚未冻结。生态演进过程中可能会有小幅 API 变更。
+本项目处于早期开发阶段（v0.2.0）。核心抽象已趋于稳定但尚未冻结。生态演进过程中可能会有小幅 API 变更。
 
 ## 许可证
 
