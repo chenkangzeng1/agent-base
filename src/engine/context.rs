@@ -165,6 +165,7 @@ fn is_cjk(c: char) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{ImageAttachment, ToolCallMessage};
 
     #[test]
     fn test_estimate_tokens_empty() {
@@ -177,6 +178,85 @@ mod tests {
         let tokens = ContextWindowManager::estimate_tokens(text);
         // ~28 chars / 4 ≈ 7
         assert!(tokens > 0 && tokens <= 15);
+    }
+
+    #[test]
+    fn test_estimate_tokens_cjk() {
+        // 4 CJK chars / 1.5 -> ceil(2.667) = 3
+        assert_eq!(ContextWindowManager::estimate_tokens("你好世界"), 3);
+    }
+
+    #[test]
+    fn test_estimate_tokens_mixed() {
+        // 2 CJK + 5 latin: 2/1.5 + 5/4 = 1.333 + 1.25 = 2.583 -> 3
+        assert_eq!(ContextWindowManager::estimate_tokens("你好hello"), 3);
+    }
+
+    #[test]
+    fn test_message_tokens_user_with_url_image() {
+        let msg = ChatMessage::user_with_images(
+            "pic",
+            vec![ImageAttachment::Url {
+                url: "http://x/a.png".into(),
+                detail: None,
+            }],
+        );
+        let base = ContextWindowManager::message_tokens(&ChatMessage::user("pic"));
+        let t = ContextWindowManager::message_tokens(&msg);
+        assert!(t > base);
+    }
+
+    #[test]
+    fn test_message_tokens_user_with_base64_image() {
+        // with media_type
+        let msg = ChatMessage::user_with_images(
+            "pic",
+            vec![ImageAttachment::Base64 {
+                data: "abcd".into(),
+                media_type: Some("image/png".into()),
+                detail: None,
+            }],
+        );
+        let base = ContextWindowManager::message_tokens(&ChatMessage::user("pic"));
+        assert!(ContextWindowManager::message_tokens(&msg) > base);
+
+        // without media_type
+        let msg = ChatMessage::user_with_images(
+            "pic",
+            vec![ImageAttachment::Base64 {
+                data: "abcd".into(),
+                media_type: None,
+                detail: None,
+            }],
+        );
+        assert!(ContextWindowManager::message_tokens(&msg) > base);
+    }
+
+    #[test]
+    fn test_message_tokens_assistant_reasoning_and_tool_calls() {
+        let msg = ChatMessage::Assistant {
+            content: Some("ans".into()),
+            reasoning_content: Some("thinking".into()),
+            tool_calls: Some(vec![ToolCallMessage {
+                id: "tc1".into(),
+                name: "echo".into(),
+                arguments: "{}".into(),
+            }]),
+        };
+        let t = ContextWindowManager::message_tokens(&msg);
+        assert!(t > 0);
+    }
+
+    #[test]
+    fn test_message_tokens_tool_and_custom() {
+        let tool = ChatMessage::tool("tc1", "done");
+        assert!(ContextWindowManager::message_tokens(&tool) > 0);
+
+        let custom = ChatMessage::Custom {
+            role: "artifact".into(),
+            data: serde_json::json!({"x": 1}),
+        };
+        assert!(ContextWindowManager::message_tokens(&custom) > 0);
     }
 
     #[test]
