@@ -788,4 +788,200 @@ mod tests {
         assert_eq!(defs.len(), 1);
         assert_eq!(defs[0]["function"]["name"], "echo");
     }
+
+    // ── B5: tool-failure / user-event forwarding / approval edges ────────
+
+    struct FailingTool;
+    #[async_trait]
+    impl Tool for FailingTool {
+        fn name(&self) -> &'static str {
+            "failing"
+        }
+        fn description(&self) -> &'static str {
+            ""
+        }
+        fn schema(&self) -> Value {
+            serde_json::json!({})
+        }
+        async fn call(&self, _args: &Value, _ctx: &ToolContext) -> AgentResult<Vec<Content>> {
+            Err(AgentError::internal("simulated tool failure"))
+        }
+    }
+
+    struct ProgressTool;
+    #[async_trait]
+    impl Tool for ProgressTool {
+        fn name(&self) -> &'static str {
+            "progress"
+        }
+        fn description(&self) -> &'static str {
+            ""
+        }
+        fn schema(&self) -> Value {
+            serde_json::json!({})
+        }
+        async fn call(&self, _args: &Value, ctx: &ToolContext) -> AgentResult<Vec<Content>> {
+            ctx.emit_progress("working");
+            Ok(vec![Content::text("done")])
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_tool_returns_tool_execution_error_on_failure() {
+        let mut registry = ToolRegistry::default();
+        registry.register(FailingTool);
+
+        let event_bus = EventBus::new(16);
+        let mut event_rx = event_bus.subscribe();
+        let engine = ToolEngine::new(registry, None, None, Arc::new(StopOnError), event_bus);
+
+        let sm = session_manager();
+
+        for language in [Language::En, Language::Zh] {
+            let c = ExecutionContext {
+                session_manager: sm.clone(),
+                llm_client: None,
+                language,
+                tool_timeout_ms: None,
+                max_output_chars: None,
+                cancel_token: CancellationToken::new(),
+            };
+            let mut events = Vec::new();
+            let err = engine
+                .execute_tool(
+                    &SessionId::new(1),
+                    "call_1",
+                    "failing",
+                    &Value::Null,
+                    "{}",
+                    &c,
+                    &mut event_rx,
+                    &mut |e| -> AgentResult<()> {
+                        events.push(e);
+                        Ok(())
+                    },
+                )
+                .await
+                .err()
+                .expect("failing tool should error");
+
+            assert!(
+                matches!(err, AgentError::ToolExecution { .. }),
+                "expected ToolExecution, got {err:?}"
+            );
+            assert!(
+                events.iter().any(
+                    |e| matches!(e, RuntimeEvent::ToolCallFinished { summary, .. }
+                        if summary.contains("failed") || summary.contains("失败"))
+                ),
+                "should emit error ToolCallFinished"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_tool_forwards_user_events() {
+        let mut registry = ToolRegistry::default();
+        registry.register(ProgressTool);
+
+        let event_bus = EventBus::new(16);
+        let mut event_rx = event_bus.subscribe();
+        let engine = ToolEngine::new(registry, None, None, Arc::new(StopOnError), event_bus);
+
+        let sm = session_manager();
+        let c = ctx(&sm);
+
+        let mut forwarded = Vec::new();
+        let result = engine
+            .execute_tool(
+                &SessionId::new(1),
+                "call_1",
+                "progress",
+                &Value::Null,
+                "{}",
+                &c,
+                &mut event_rx,
+                &mut |e| -> AgentResult<()> {
+                    forwarded.push(e);
+                    Ok(())
+                },
+            )
+            .await
+            .expect("progress tool should execute");
+
+        assert_eq!(content_text(&result.output), "done");
+        assert!(
+            forwarded.iter().any(|e| matches!(
+                e,
+                RuntimeEvent::UserEvent {
+                    event: UserEvent::Progress { .. },
+                    ..
+                }
+            )),
+            "should forward progress as a UserEvent"
+        );
+    }
+
+    #[tokio::test]
+    async fn process_approval_skips_when_cached() {
+        let event_bus = EventBus::new(16);
+        let mut event_rx = event_bus.subscribe();
+        let engine = ToolEngine::new(
+            ToolRegistry::default(),
+            Some(Arc::new(DenyAllApprovalHandler)),
+            Some(Arc::new(RequireApproval)),
+            Arc::new(StopOnError),
+            event_bus,
+        );
+        let sm = session_manager();
+        let c = ctx(&sm);
+        let sid = sm.create_session(None).await;
+
+        // Pre-cache the approval with the same action_key the policy emits.
+        sm.cache_approval(&sid, "approve:echo".to_string()).await;
+
+        // Cached approval short-circuits even though the handler would deny.
+        engine
+            .process_approval(
+                &sid,
+                "echo",
+                &Value::Null,
+                "{}",
+                &c,
+                &mut event_rx,
+                &mut |_| -> AgentResult<()> { Ok(()) },
+            )
+            .await
+            .expect("cached approval should skip");
+    }
+
+    #[tokio::test]
+    async fn process_approval_denies_when_no_handler() {
+        let event_bus = EventBus::new(16);
+        let mut event_rx = event_bus.subscribe();
+        let engine = ToolEngine::new(
+            ToolRegistry::default(),
+            None, // no approval handler
+            Some(Arc::new(RequireApproval)),
+            Arc::new(StopOnError),
+            event_bus,
+        );
+        let sm = session_manager();
+        let c = ctx(&sm);
+
+        let err = engine
+            .process_approval(
+                &SessionId::new(1),
+                "echo",
+                &Value::Null,
+                "{}",
+                &c,
+                &mut event_rx,
+                &mut |_| -> AgentResult<()> { Ok(()) },
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, AgentError::ApprovalDenied { .. }));
+    }
 }
