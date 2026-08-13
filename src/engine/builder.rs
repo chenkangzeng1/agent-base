@@ -232,10 +232,6 @@ impl AgentBuilder {
 
         let event_bus = super::runtime::EventBus::new(self.event_bus_capacity);
 
-        // Inject EventBus into framework-provided tools that need it
-        // (e.g., UpdatePlanTool via FrameworkTool::set_event_bus)
-        self.tools.inject_event_bus(&event_bus);
-
         let session_store = self
             .session_store
             .unwrap_or_else(|| Arc::new(InMemorySessionStore::new()));

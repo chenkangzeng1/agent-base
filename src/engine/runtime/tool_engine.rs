@@ -43,11 +43,6 @@ impl ToolEngine {
         self.tools.read().await.definitions()
     }
 
-    /// Inject EventBus into framework tools in an external ToolRegistry.
-    pub fn inject_event_bus_into(&self, tools: &crate::tool::ToolRegistry) {
-        tools.inject_event_bus(&self.event_bus);
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub async fn execute_tool<F>(
         &self,
@@ -89,6 +84,7 @@ impl ToolEngine {
             session_store: Some(ctx.session_manager.session_store().clone()),
             language: ctx.language.clone(),
             cancel_token: ctx.cancel_token.clone(),
+            event_bus: self.event_bus.clone(),
         };
 
         // Lookup tool and execute via pipeline.

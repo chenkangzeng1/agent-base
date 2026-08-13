@@ -147,6 +147,7 @@ mod tests {
             session_store: None,
             language: Language::En,
             cancel_token: tokio_util::sync::CancellationToken::new(),
+            event_bus: crate::engine::EventBus::new(1),
         }
     }
 

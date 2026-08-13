@@ -92,6 +92,9 @@ pub struct ToolContext {
     pub language: crate::types::Language,
     /// Cancellation token for checking if the operation should be cancelled.
     pub cancel_token: tokio_util::sync::CancellationToken,
+    /// Internal runtime event bus (framework tools emit `RuntimeEvent`s here).
+    /// `pub(crate)` — engine-internal; user tools should use `emit_user_event()`.
+    pub(crate) event_bus: crate::engine::EventBus,
 }
 
 impl ToolContext {
@@ -132,6 +135,7 @@ impl ToolContext {
             session_store: None,
             language: crate::types::Language::En,
             cancel_token: tokio_util::sync::CancellationToken::new(),
+            event_bus: crate::engine::EventBus::new(1),
         }
     }
 }
@@ -163,14 +167,6 @@ pub trait Tool: Send + Sync {
     fn definition(&self) -> Value;
     async fn call(&self, args: &Value, ctx: &ToolContext) -> AgentResult<ToolOutput>;
 
-    /// Return `Some(&dyn FrameworkTool)` if this tool is a framework-internal tool
-    /// that needs engine infrastructure injection (EventBus).
-    /// Default returns `None` — user-defined tools need not override this.
-    #[allow(private_interfaces)]
-    fn as_framework_tool(&self) -> Option<&dyn FrameworkTool> {
-        None
-    }
-
     /// Machine-readable metadata for tool introspection.
     ///
     /// The default implementation extracts `name` and `description` from
@@ -194,18 +190,6 @@ pub trait Tool: Send + Sync {
             requirements: vec![],
         }
     }
-}
-
-/// Marker trait for framework-internal tools that require engine infrastructure.
-///
-/// Framework tools implement this trait to receive `EventBus`
-/// references during `AgentBuilder::build()`. User-defined tools do not need this.
-///
-/// All methods have default no-op implementations so only the needed injection
-/// points need to be overridden.
-pub(crate) trait FrameworkTool: Tool {
-    /// Inject the internal event bus. Called once during build.
-    fn set_event_bus(&self, _event_bus: crate::engine::EventBus) {}
 }
 
 #[async_trait]
@@ -315,15 +299,6 @@ impl ToolRegistry {
         let mut list: Vec<_> = self.tools.values().map(|tool| tool.metadata()).collect();
         list.sort_by(|a, b| a.name.cmp(&b.name));
         list
-    }
-
-    /// Inject the internal `EventBus` into framework-provided tools.
-    pub(crate) fn inject_event_bus(&self, event_bus: &crate::engine::EventBus) {
-        for tool in self.tools.values() {
-            if let Some(fw) = tool.as_framework_tool() {
-                fw.set_event_bus(event_bus.clone());
-            }
-        }
     }
 }
 

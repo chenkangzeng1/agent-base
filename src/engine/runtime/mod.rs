@@ -103,12 +103,6 @@ impl AgentRuntime {
         self.runner.tool_engine.tools_arc()
     }
 
-    /// Inject the internal EventBus into framework tools in the given registry.
-    /// Call this after replacing tools in the registry (e.g., in `build_tools`).
-    pub fn inject_framework_deps(&self, tools: &crate::tool::ToolRegistry) {
-        self.runner.tool_engine.inject_event_bus_into(tools);
-    }
-
     pub fn config(&self) -> tokio::sync::RwLockReadGuard<'_, AgentConfig> {
         self.runner.config.blocking_read()
     }

@@ -4,8 +4,7 @@ use std::sync::Mutex;
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
-use crate::engine::EventBus;
-use crate::tool::{FrameworkTool, Tool, ToolContext, ToolOutput};
+use crate::tool::{Tool, ToolContext, ToolOutput};
 use crate::types::{AgentResult, RuntimeEvent, UpdatePlanArgs};
 
 /// A lightweight tool that records and displays a plan checklist to the user.
@@ -19,7 +18,6 @@ use crate::types::{AgentResult, RuntimeEvent, UpdatePlanArgs};
 ///
 /// This is a **display-only** protocol, inspired by Codex's `update_plan`.
 pub struct UpdatePlanTool {
-    event_bus: Mutex<Option<EventBus>>,
     last_objective: Mutex<Option<String>>,
     custom_description: Option<String>,
 }
@@ -91,7 +89,6 @@ fn normalize_step_text(raw: &str) -> String {
 impl UpdatePlanTool {
     pub fn new() -> Self {
         Self {
-            event_bus: Mutex::new(None),
             last_objective: Mutex::new(None),
             custom_description: None,
         }
@@ -111,12 +108,6 @@ impl UpdatePlanTool {
 impl Default for UpdatePlanTool {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl FrameworkTool for UpdatePlanTool {
-    fn set_event_bus(&self, event_bus: EventBus) {
-        *self.event_bus.lock().unwrap() = Some(event_bus);
     }
 }
 
@@ -200,12 +191,7 @@ impl Tool for UpdatePlanTool {
         }
     }
 
-    #[allow(private_interfaces)]
-    fn as_framework_tool(&self) -> Option<&dyn FrameworkTool> {
-        Some(self)
-    }
-
-    async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<ToolOutput> {
+    async fn call(&self, args: &Value, ctx: &ToolContext) -> AgentResult<ToolOutput> {
         let plan_args: UpdatePlanArgs = serde_json::from_value(args.clone()).map_err(|e| {
             crate::types::AgentError::ToolArgsInvalid {
                 name: "update_plan".to_string(),
@@ -274,19 +260,14 @@ impl Tool for UpdatePlanTool {
         }
 
         // Broadcast PlanUpdated event (normalized_plan is moved here, not cloned)
-        {
-            let guard = self.event_bus.lock().unwrap();
-            if let Some(ref event_bus) = *guard {
-                event_bus.emit(RuntimeEvent::PlanUpdated {
-                    session_id: _ctx.session_id.clone(),
-                    objective: objective.clone(),
-                    explanation: plan_args.explanation.clone(),
-                    plan: normalized_plan,
-                    agent_id: None,
-                    trace_id: None,
-                });
-            }
-        }
+        ctx.event_bus.emit(RuntimeEvent::PlanUpdated {
+            session_id: ctx.session_id.clone(),
+            objective: objective.clone(),
+            explanation: plan_args.explanation.clone(),
+            plan: normalized_plan,
+            agent_id: None,
+            trace_id: None,
+        });
 
         Ok(ToolOutput {
             summary,
