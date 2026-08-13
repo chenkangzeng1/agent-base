@@ -119,6 +119,21 @@ impl ToolContext {
             is_partial,
         });
     }
+
+    /// Test-only constructor: a `ToolContext` with a disconnected event
+    /// channel and no LLM/session backends. Lets downstream tests drop their
+    /// bespoke `dummy_ctx()` helpers.
+    pub fn for_test() -> Self {
+        let (tx, _rx) = mpsc::unbounded_channel();
+        ToolContext {
+            session_id: SessionId::new(0),
+            user_event_tx: tx,
+            llm_client: None,
+            session_store: None,
+            language: crate::types::Language::En,
+            cancel_token: tokio_util::sync::CancellationToken::new(),
+        }
+    }
 }
 
 /// Machine-readable metadata for a registered tool — origin, version, and
@@ -331,5 +346,14 @@ mod tests {
         let j = serde_json::to_value(&c).unwrap();
         assert_eq!(j["type"], "text");
         assert_eq!(j["text"], "hi");
+    }
+
+    #[test]
+    fn tool_context_for_test_constructs() {
+        let ctx = ToolContext::for_test();
+        assert!(ctx.llm_client.is_none());
+        assert!(ctx.session_store.is_none());
+        assert!(!ctx.cancel_token.is_cancelled());
+        ctx.emit_progress("hello");
     }
 }

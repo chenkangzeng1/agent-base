@@ -133,6 +133,7 @@ impl AgentError {
             Self::ToolTimeout => ErrorKind::ToolTimeout,
             Self::ServiceUnavailable(_) => ErrorKind::ModelOverloaded,
             Self::RateLimitExceeded => ErrorKind::RateLimited,
+            Self::Cancelled => ErrorKind::Cancelled,
             // Llm, LlmApi, LlmStream → overloaded (transient LLM failures)
             Self::Llm(_) | Self::LlmApi { .. } | Self::LlmStream(_) => ErrorKind::ModelOverloaded,
             // Everything else → internal
@@ -174,6 +175,8 @@ pub enum ErrorKind {
     ModelOverloaded,
     /// Rate limit was exceeded.
     RateLimited,
+    /// The operation was cancelled by the user or a cancellation signal.
+    Cancelled,
     /// Catch-all for errors that don't fit a specific category.
     Internal,
 }
@@ -187,6 +190,7 @@ impl std::fmt::Display for ErrorKind {
             Self::ToolTimeout => write!(f, "tool timeout"),
             Self::ModelOverloaded => write!(f, "model overloaded"),
             Self::RateLimited => write!(f, "rate limited"),
+            Self::Cancelled => write!(f, "cancelled"),
             Self::Internal => write!(f, "internal error"),
         }
     }
@@ -266,11 +270,13 @@ mod tests {
     }
 
     #[test]
+    fn kind_cancelled() {
+        assert_eq!(AgentError::Cancelled.kind(), ErrorKind::Cancelled);
+    }
+
+    #[test]
     fn kind_internal_fallback() {
         let err = AgentError::internal("something");
-        assert_eq!(err.kind(), ErrorKind::Internal);
-
-        let err = AgentError::Cancelled;
         assert_eq!(err.kind(), ErrorKind::Internal);
 
         let err = AgentError::config_error("bad config");
