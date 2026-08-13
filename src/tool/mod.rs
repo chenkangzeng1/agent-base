@@ -42,6 +42,43 @@ pub enum ToolControlFlow {
     Continue,
 }
 
+/// Structured content returned by a tool, aligned with the MCP `content`
+/// array shape (no envelope, no orchestration/failure/truncation semantics).
+///
+/// Only `Text` is consumed by the first LLM adapter; `Image` is shape-reserved
+/// and the adapter reports "not supported" rather than silently dropping it.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum Content {
+    Text {
+        text: String,
+    },
+    /// Base64-encoded image payload.
+    Image {
+        data: String,
+        mime_type: String,
+    },
+}
+
+impl Content {
+    pub fn text(s: impl Into<String>) -> Self {
+        Content::Text { text: s.into() }
+    }
+
+    pub fn image(data: impl Into<String>, mime_type: impl Into<String>) -> Self {
+        Content::Image {
+            data: data.into(),
+            mime_type: mime_type.into(),
+        }
+    }
+}
+
+impl From<Content> for Vec<Content> {
+    fn from(c: Content) -> Self {
+        vec![c]
+    }
+}
+
 #[derive(Clone)]
 pub struct ToolContext {
     pub session_id: SessionId,
@@ -272,5 +309,27 @@ impl ToolRegistry {
                 fw.set_event_bus(event_bus.clone());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn content_text_ctor_and_into_vec() {
+        let c = Content::text("hello");
+        let v: Vec<Content> = c.clone().into();
+        assert_eq!(v.len(), 1);
+        assert!(matches!(v[0], Content::Text { .. }));
+        assert!(matches!(&c, Content::Text { text } if text == "hello"));
+    }
+
+    #[test]
+    fn content_serializes_with_type_tag() {
+        let c = Content::text("hi");
+        let j = serde_json::to_value(&c).unwrap();
+        assert_eq!(j["type"], "text");
+        assert_eq!(j["text"], "hi");
     }
 }
