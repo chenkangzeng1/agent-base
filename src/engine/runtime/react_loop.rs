@@ -21,6 +21,13 @@ pub(super) struct PostLlmMwResult {
     pub follow_up_message: Option<String>,
 }
 
+/// Control-flow result of one `handle_llm_turn` call: keep looping, or
+/// terminate the turn with a final outcome.
+enum TurnFlow {
+    Continue,
+    Done(RunOutcome),
+}
+
 impl RuntimeCore {
     pub async fn run<F>(&self, session_id: SessionId, mut on_event: F) -> AgentResult<RunOutcome>
     where
@@ -789,269 +796,279 @@ impl RuntimeCore {
                 "LLM stream processed"
             );
 
-            match result {
-                Ok(LlmTurnResult {
-                    full_text,
-                    reasoning_text,
-                    is_tool_call,
-                    tool_calls,
-                    usage,
-                    finish_reason,
-                    ttft_ms,
-                    llm_duration_ms,
-                }) => {
-                    tracing::info!(
+            match self
+                .handle_llm_turn(
+                    session_id,
+                    user_input_owned,
+                    tool_definitions,
+                    turn_count,
+                    turn_start,
+                    &model,
+                    result,
+                    event_rx,
+                    on_event,
+                )
+                .await?
+            {
+                TurnFlow::Continue => continue,
+                TurnFlow::Done(outcome) => return Ok((outcome, turn_count)),
+            }
+        }
+    }
+
+    /// Dispatch one LLM turn result: push messages, run tool calls, fire the
+    /// turn-end callback, and decide whether the loop continues or the turn ends.
+    #[allow(clippy::too_many_arguments)]
+    async fn handle_llm_turn<F>(
+        &self,
+        session_id: &SessionId,
+        user_input_owned: &str,
+        tool_definitions: &[serde_json::Value],
+        turn_count: u32,
+        turn_start: std::time::Instant,
+        model: &str,
+        result: AgentResult<LlmTurnResult>,
+        event_rx: &mut broadcast::Receiver<RuntimeEvent>,
+        on_event: &mut F,
+    ) -> AgentResult<TurnFlow>
+    where
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
+    {
+        match result {
+            Ok(LlmTurnResult {
+                full_text,
+                reasoning_text,
+                is_tool_call,
+                tool_calls,
+                usage,
+                finish_reason,
+                ttft_ms,
+                llm_duration_ms,
+            }) => {
+                tracing::info!(
+                    session_id = session_id.id,
+                    turn = turn_count,
+                    text_len = full_text.len(),
+                    is_tool_call = is_tool_call,
+                    tool_call_count = tool_calls.len(),
+                    "LLM turn result"
+                );
+                // Capture text info before moves
+                let text_len = full_text.len() as u64;
+                let has_thinking = !reasoning_text.is_empty();
+                let tool_calls_parsed: Vec<(String, String, String)> = tool_calls
+                    .iter()
+                    .map(|tc| {
+                        let id = tc
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let name = tc
+                            .get("function")
+                            .and_then(|f| f.get("name"))
+                            .and_then(|n| n.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let args = tc
+                            .get("function")
+                            .and_then(|f| f.get("arguments"))
+                            .and_then(|a| a.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        (id, name, args)
+                    })
+                    .collect();
+
+                let available_tools: Vec<String> = tool_definitions
+                    .iter()
+                    .filter_map(|d| {
+                        d.get("function")?
+                            .get("name")?
+                            .as_str()
+                            .map(|s| s.to_string())
+                    })
+                    .collect();
+
+                let result = self
+                    .apply_post_llm_mw(
+                        session_id,
+                        full_text,
+                        is_tool_call,
+                        tool_calls_parsed,
+                        &available_tools,
+                        turn_count,
+                    )
+                    .await?;
+
+                if !result.skip_push && !result.full_text.is_empty() {
+                    // Preserve reasoning so the LLM can see its own prior thinking
+                    // in subsequent turns, avoiding "amnesia" re-derivation.
+                    let reasoning = reasoning_text.clone();
+                    self.with_session_mut(session_id, |session| {
+                        if !reasoning.is_empty() {
+                            session.push_assistant_with_reasoning(&result.full_text, &reasoning);
+                        } else {
+                            session.push_message(MessageRole::Assistant, &result.full_text);
+                        }
+                    })
+                    .await?;
+                }
+
+                if let Some(follow_up) = result.follow_up_message {
+                    self.with_session_mut(session_id, |session| {
+                        session.push_message(MessageRole::User, &follow_up);
+                    })
+                    .await?;
+                    return Ok(TurnFlow::Continue);
+                }
+
+                if result.full_text.is_empty() && !result.is_tool_call {
+                    tracing::debug!(
                         session_id = session_id.id,
                         turn = turn_count,
-                        text_len = full_text.len(),
-                        is_tool_call = is_tool_call,
-                        tool_call_count = tool_calls.len(),
-                        "LLM turn result"
+                        "empty LLM response, continuing"
                     );
-                    // Capture text info before moves
-                    let text_len = full_text.len() as u64;
-                    let has_thinking = !reasoning_text.is_empty();
-                    let tool_calls_parsed: Vec<(String, String, String)> = tool_calls
-                        .iter()
-                        .map(|tc| {
-                            let id = tc
-                                .get("id")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let name = tc
+                    return Ok(TurnFlow::Continue);
+                }
+
+                if result.is_tool_call && !result.tool_calls.is_empty() {
+                    // P5: Truncation guard — when the LLM response hit the token limit,
+                    // tool call arguments may be incomplete. Fail all tool calls
+                    // without executing them, so the LLM can retry with complete args.
+                    if finish_reason.as_deref() == Some("length") {
+                        tracing::warn!(
+                            session_id = session_id.id,
+                            turn = turn_count,
+                            tool_count = tool_calls.len(),
+                            "LLM response truncated (finish_reason=length) — tool calls may have incomplete arguments, marking as errors"
+                        );
+                        for tc in &tool_calls {
+                            let tc_id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                            let tc_name = tc
                                 .get("function")
                                 .and_then(|f| f.get("name"))
                                 .and_then(|n| n.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let args = tc
-                                .get("function")
-                                .and_then(|f| f.get("arguments"))
-                                .and_then(|a| a.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            (id, name, args)
-                        })
-                        .collect();
+                                .unwrap_or("unknown");
+                            self.with_session_mut(session_id, |session| {
+                                session.push_message(
+                                    MessageRole::Assistant,
+                                    format!("[would call tool: {}]", tc_name),
+                                );
+                                session.push_tool_result(
+                                    tc_id,
+                                    "Tool call was not executed: the response hit the output token limit, \
+                                     so its arguments may be truncated. Re-issue the tool call with complete arguments.",
+                                );
+                            })
+                            .await?;
+                        }
+                        // Skip tool execution entirely — the error results above will
+                        // cause the LLM to regenerate the tool calls in the next turn.
+                        return Ok(TurnFlow::Continue);
+                    }
 
-                    let available_tools: Vec<String> = tool_definitions
-                        .iter()
-                        .filter_map(|d| {
-                            d.get("function")?
-                                .get("name")?
-                                .as_str()
-                                .map(|s| s.to_string())
-                        })
-                        .collect();
-
-                    let result = self
-                        .apply_post_llm_mw(
-                            session_id,
-                            full_text,
-                            is_tool_call,
-                            tool_calls_parsed,
-                            &available_tools,
+                    tracing::info!(
+                        session_id = session_id.id,
+                        turn = turn_count,
+                        tool_count = result.tool_calls.len(),
+                        "handling tool calls"
+                    );
+                    self.event_bus.emit(RuntimeEvent::Checkpoint {
+                        session_id: session_id.clone(),
+                        checkpoint: CheckpointData {
+                            session_id: session_id.clone(),
+                            user_input: user_input_owned.to_string(),
+                            step: CheckpointStep::BeforeToolCalls {
+                                tool_calls: result.tool_calls.clone(),
+                            },
                             turn_count,
+                        },
+                        agent_id: None,
+                        trace_id: None,
+                    });
+
+                    let tool_start = std::time::Instant::now();
+                    let tool_call_count = result.tool_calls.len() as u32;
+                    let tool_names: Vec<String> = result
+                        .tool_calls
+                        .iter()
+                        .map(|(_, name, _)| name.clone())
+                        .collect();
+
+                    match self
+                        .handle_tool_calls(
+                            session_id,
+                            &result.tool_calls,
+                            event_rx,
+                            on_event,
+                            reasoning_text,
                         )
-                        .await?;
-
-                    if !result.skip_push && !result.full_text.is_empty() {
-                        // Preserve reasoning so the LLM can see its own prior thinking
-                        // in subsequent turns, avoiding "amnesia" re-derivation.
-                        let reasoning = reasoning_text.clone();
-                        self.with_session_mut(session_id, |session| {
-                            if !reasoning.is_empty() {
-                                session
-                                    .push_assistant_with_reasoning(&result.full_text, &reasoning);
-                            } else {
-                                session.push_message(MessageRole::Assistant, &result.full_text);
-                            }
-                        })
-                        .await?;
-                    }
-
-                    if let Some(follow_up) = result.follow_up_message {
-                        self.with_session_mut(session_id, |session| {
-                            session.push_message(MessageRole::User, &follow_up);
-                        })
-                        .await?;
-                        continue;
-                    }
-
-                    if result.full_text.is_empty() && !result.is_tool_call {
-                        tracing::debug!(
-                            session_id = session_id.id,
-                            turn = turn_count,
-                            "empty LLM response, continuing"
-                        );
-                        continue;
-                    }
-
-                    if result.is_tool_call && !result.tool_calls.is_empty() {
-                        // P5: Truncation guard — when the LLM response hit the token limit,
-                        // tool call arguments may be incomplete. Fail all tool calls
-                        // without executing them, so the LLM can retry with complete args.
-                        if finish_reason.as_deref() == Some("length") {
-                            tracing::warn!(
+                        .await
+                    {
+                        Ok(()) => {
+                            let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
+                            self.fire_turn_end(TurnEndCtx {
+                                ttft_ms,
+                                llm_duration_ms,
+                                tool_duration_ms,
+                                usage: &usage,
+                                text_length: text_len,
+                                has_thinking,
+                                tool_call_count,
+                                tools_used: &tool_names,
+                                tool_success: tool_call_count,
+                                llm_calls: 1,
+                                ..TurnEndCtx::new(
+                                    session_id,
+                                    turn_count,
+                                    turn_start,
+                                    model,
+                                    user_input_owned,
+                                    RunOutcome::Completed,
+                                )
+                            })
+                            .await;
+                            tracing::info!(
                                 session_id = session_id.id,
                                 turn = turn_count,
-                                tool_count = tool_calls.len(),
-                                "LLM response truncated (finish_reason=length) — tool calls may have incomplete arguments, marking as errors"
+                                "tool calls done, continuing loop"
                             );
-                            for tc in &tool_calls {
-                                let tc_id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                                let tc_name = tc
-                                    .get("function")
-                                    .and_then(|f| f.get("name"))
-                                    .and_then(|n| n.as_str())
-                                    .unwrap_or("unknown");
-                                self.with_session_mut(session_id, |session| {
-                                    session.push_message(
-                                        MessageRole::Assistant,
-                                        format!("[would call tool: {}]", tc_name),
-                                    );
-                                    session.push_tool_result(
-                                        tc_id,
-                                        "Tool call was not executed: the response hit the output token limit, \
-                                         so its arguments may be truncated. Re-issue the tool call with complete arguments.",
-                                    );
-                                })
-                                .await?;
-                            }
-                            // Skip tool execution entirely — the error results above will
-                            // cause the LLM to regenerate the tool calls in the next turn.
-                            continue;
-                        }
-
-                        tracing::info!(
-                            session_id = session_id.id,
-                            turn = turn_count,
-                            tool_count = result.tool_calls.len(),
-                            "handling tool calls"
-                        );
-                        self.event_bus.emit(RuntimeEvent::Checkpoint {
-                            session_id: session_id.clone(),
-                            checkpoint: CheckpointData {
+                            let n = result.tool_calls.len();
+                            self.with_session_mut(session_id, |session| {
+                                session.total_tool_calls += n;
+                                session.turn_tool_calls += n;
+                            })
+                            .await?;
+                            self.event_bus.emit(RuntimeEvent::Checkpoint {
                                 session_id: session_id.clone(),
-                                user_input: user_input_owned.to_string(),
-                                step: CheckpointStep::BeforeToolCalls {
-                                    tool_calls: result.tool_calls.clone(),
-                                },
-                                turn_count,
-                            },
-                            agent_id: None,
-                            trace_id: None,
-                        });
-
-                        let tool_start = std::time::Instant::now();
-                        let tool_call_count = result.tool_calls.len() as u32;
-                        let tool_names: Vec<String> = result
-                            .tool_calls
-                            .iter()
-                            .map(|(_, name, _)| name.clone())
-                            .collect();
-
-                        match self
-                            .handle_tool_calls(
-                                session_id,
-                                &result.tool_calls,
-                                event_rx,
-                                on_event,
-                                reasoning_text,
-                            )
-                            .await
-                        {
-                            Ok(()) => {
-                                let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
-                                self.fire_turn_end(TurnEndCtx {
-                                    ttft_ms,
-                                    llm_duration_ms,
-                                    tool_duration_ms,
-                                    usage: &usage,
-                                    text_length: text_len,
-                                    has_thinking,
-                                    tool_call_count,
-                                    tools_used: &tool_names,
-                                    tool_success: tool_call_count,
-                                    llm_calls: 1,
-                                    ..TurnEndCtx::new(
-                                        session_id,
-                                        turn_count,
-                                        turn_start,
-                                        &model,
-                                        user_input_owned,
-                                        RunOutcome::Completed,
-                                    )
-                                })
-                                .await;
-                                tracing::info!(
-                                    session_id = session_id.id,
-                                    turn = turn_count,
-                                    "tool calls done, continuing loop"
-                                );
-                                let n = result.tool_calls.len();
-                                self.with_session_mut(session_id, |session| {
-                                    session.total_tool_calls += n;
-                                    session.turn_tool_calls += n;
-                                })
-                                .await?;
-                                self.event_bus.emit(RuntimeEvent::Checkpoint {
+                                checkpoint: CheckpointData {
                                     session_id: session_id.clone(),
-                                    checkpoint: CheckpointData {
-                                        session_id: session_id.clone(),
-                                        user_input: user_input_owned.to_string(),
-                                        step: CheckpointStep::AfterToolCalls {
-                                            tool_calls: result.tool_calls.clone(),
-                                            results: Vec::new(),
-                                        },
-                                        turn_count,
+                                    user_input: user_input_owned.to_string(),
+                                    step: CheckpointStep::AfterToolCalls {
+                                        tool_calls: result.tool_calls.clone(),
+                                        results: Vec::new(),
                                     },
-                                    agent_id: None,
-                                    trace_id: None,
-                                });
-                                continue;
-                            }
-                            Err(e) => {
-                                let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
-                                let error_msg = e.to_string();
-                                if let Some(outcome) = self
-                                    .handle_tool_error(
-                                        session_id,
-                                        &result.tool_calls,
-                                        e,
-                                        event_rx,
-                                        on_event,
-                                    )
-                                    .await?
-                                {
-                                    self.fire_turn_end(TurnEndCtx {
-                                        ttft_ms,
-                                        llm_duration_ms,
-                                        tool_duration_ms,
-                                        usage: &usage,
-                                        text_length: text_len,
-                                        has_thinking,
-                                        tool_call_count,
-                                        tools_used: &tool_names,
-                                        tool_failed: tool_call_count,
-                                        error_message: Some(&error_msg),
-                                        llm_calls: 1,
-                                        ..TurnEndCtx::new(
-                                            session_id,
-                                            turn_count,
-                                            turn_start,
-                                            &model,
-                                            user_input_owned,
-                                            RunOutcome::Failed {
-                                                error: error_msg.clone(),
-                                            },
-                                        )
-                                    })
-                                    .await;
-                                    return Ok((outcome, turn_count));
-                                }
-                                // Retry: record metrics for the failed attempt
+                                    turn_count,
+                                },
+                                agent_id: None,
+                                trace_id: None,
+                            });
+                            return Ok(TurnFlow::Continue);
+                        }
+                        Err(e) => {
+                            let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
+                            let error_msg = e.to_string();
+                            if let Some(outcome) = self
+                                .handle_tool_error(
+                                    session_id,
+                                    &result.tool_calls,
+                                    e,
+                                    event_rx,
+                                    on_event,
+                                )
+                                .await?
+                            {
                                 self.fire_turn_end(TurnEndCtx {
                                     ttft_ms,
                                     llm_duration_ms,
@@ -1068,7 +1085,7 @@ impl RuntimeCore {
                                         session_id,
                                         turn_count,
                                         turn_start,
-                                        &model,
+                                        model,
                                         user_input_owned,
                                         RunOutcome::Failed {
                                             error: error_msg.clone(),
@@ -1076,64 +1093,90 @@ impl RuntimeCore {
                                     )
                                 })
                                 .await;
-                                continue;
+                                return Ok(TurnFlow::Done(outcome));
                             }
+                            // Retry: record metrics for the failed attempt
+                            self.fire_turn_end(TurnEndCtx {
+                                ttft_ms,
+                                llm_duration_ms,
+                                tool_duration_ms,
+                                usage: &usage,
+                                text_length: text_len,
+                                has_thinking,
+                                tool_call_count,
+                                tools_used: &tool_names,
+                                tool_failed: tool_call_count,
+                                error_message: Some(&error_msg),
+                                llm_calls: 1,
+                                ..TurnEndCtx::new(
+                                    session_id,
+                                    turn_count,
+                                    turn_start,
+                                    model,
+                                    user_input_owned,
+                                    RunOutcome::Failed {
+                                        error: error_msg.clone(),
+                                    },
+                                )
+                            })
+                            .await;
+                            return Ok(TurnFlow::Continue);
                         }
                     }
+                }
 
-                    tracing::info!(
-                        session_id = session_id.id,
-                        turn = turn_count,
-                        "text-only response, run completed"
-                    );
-                    self.fire_turn_end(TurnEndCtx {
-                        ttft_ms,
-                        llm_duration_ms,
-                        usage: &usage,
-                        text_length: text_len,
-                        has_thinking,
-                        llm_calls: 1,
-                        ..TurnEndCtx::new(
-                            session_id,
-                            turn_count,
-                            turn_start,
-                            &model,
-                            user_input_owned,
-                            RunOutcome::Completed,
-                        )
-                    })
-                    .await;
-                    return Ok((RunOutcome::Completed, turn_count));
-                }
-                Err(e) => {
-                    // Fire turn-end callback for LLM stream error
-                    let stream_outcome = if e.is_cancelled() {
-                        RunOutcome::Cancelled
-                    } else {
-                        RunOutcome::Failed {
-                            error: e.to_string(),
-                        }
-                    };
-                    self.fire_turn_end(TurnEndCtx {
-                        error_message: Some(&e.to_string()),
-                        ..TurnEndCtx::new(
-                            session_id,
-                            turn_count,
-                            turn_start,
-                            &model,
-                            user_input_owned,
-                            stream_outcome,
-                        )
-                    })
-                    .await;
-                    // Persist session on cancellation (LLM-stream path bypasses handle_tool_error)
-                    if e.is_cancelled()
-                        && let Ok(session) = self.session_manager.session_or_err(session_id).await
-                    {
-                        let _ = self.session_manager.session_store().save(&session).await;
+                tracing::info!(
+                    session_id = session_id.id,
+                    turn = turn_count,
+                    "text-only response, run completed"
+                );
+                self.fire_turn_end(TurnEndCtx {
+                    ttft_ms,
+                    llm_duration_ms,
+                    usage: &usage,
+                    text_length: text_len,
+                    has_thinking,
+                    llm_calls: 1,
+                    ..TurnEndCtx::new(
+                        session_id,
+                        turn_count,
+                        turn_start,
+                        model,
+                        user_input_owned,
+                        RunOutcome::Completed,
+                    )
+                })
+                .await;
+                Ok(TurnFlow::Done(RunOutcome::Completed))
+            }
+            Err(e) => {
+                // Fire turn-end callback for LLM stream error
+                let stream_outcome = if e.is_cancelled() {
+                    RunOutcome::Cancelled
+                } else {
+                    RunOutcome::Failed {
+                        error: e.to_string(),
                     }
-                    return Err(e);
+                };
+                self.fire_turn_end(TurnEndCtx {
+                    error_message: Some(&e.to_string()),
+                    ..TurnEndCtx::new(
+                        session_id,
+                        turn_count,
+                        turn_start,
+                        model,
+                        user_input_owned,
+                        stream_outcome,
+                    )
+                })
+                .await;
+                // Persist session on cancellation (LLM-stream path bypasses handle_tool_error)
+                if e.is_cancelled()
+                    && let Ok(session) = self.session_manager.session_or_err(session_id).await
+                {
+                    let _ = self.session_manager.session_store().save(&session).await;
                 }
+                Err(e)
             }
         }
     }
