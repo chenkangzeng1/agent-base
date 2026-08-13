@@ -69,3 +69,109 @@ impl Middleware for ToolEnforcementMiddleware {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::SessionId;
+
+    fn ctx(available_tools: Vec<String>) -> PostLlmCtx {
+        PostLlmCtx {
+            session_id: SessionId::new(1),
+            full_text: "I will do it.".to_string(),
+            is_tool_call: false,
+            tool_calls: vec![],
+            available_tools,
+            turn_count: 1,
+            total_tool_calls: 0,
+            nudge_count: 0,
+            turn_tool_calls: 0,
+            skip_push: false,
+            follow_up_message: None,
+        }
+    }
+
+    #[test]
+    fn config_defaults() {
+        let cfg = ToolEnforcementConfig::default();
+        assert_eq!(cfg.max_nudges, 3);
+        assert!(cfg.first_turn_only);
+        assert_eq!(cfg.min_tools_threshold, 1);
+        assert!(cfg.nudge_message.contains("CRITICAL"));
+    }
+
+    #[tokio::test]
+    async fn nudges_when_no_tool_call() {
+        let config = ToolEnforcementConfig::default();
+        let expected_nudge = config.nudge_message.clone();
+        let mw = ToolEnforcementMiddleware::new(config);
+
+        let mut c = ctx(vec!["read".to_string()]);
+        mw.on_post_llm(&mut c).await.unwrap();
+
+        assert!(c.skip_push);
+        assert_eq!(c.nudge_count, 1);
+        assert_eq!(c.follow_up_message, Some(expected_nudge));
+    }
+
+    #[tokio::test]
+    async fn skips_when_below_tools_threshold() {
+        let mw = ToolEnforcementMiddleware::new(ToolEnforcementConfig::default());
+        let mut c = ctx(vec![]);
+        mw.on_post_llm(&mut c).await.unwrap();
+
+        assert!(!c.skip_push);
+        assert_eq!(c.nudge_count, 0);
+        assert!(c.follow_up_message.is_none());
+    }
+
+    #[tokio::test]
+    async fn skips_when_is_tool_call() {
+        let mw = ToolEnforcementMiddleware::new(ToolEnforcementConfig::default());
+        let mut c = ctx(vec!["read".to_string()]);
+        c.is_tool_call = true;
+        mw.on_post_llm(&mut c).await.unwrap();
+
+        assert!(!c.skip_push);
+        assert_eq!(c.nudge_count, 0);
+    }
+
+    #[tokio::test]
+    async fn skips_when_full_text_empty() {
+        let mw = ToolEnforcementMiddleware::new(ToolEnforcementConfig::default());
+        let mut c = ctx(vec!["read".to_string()]);
+        c.full_text = String::new();
+        mw.on_post_llm(&mut c).await.unwrap();
+
+        assert!(!c.skip_push);
+        assert_eq!(c.nudge_count, 0);
+    }
+
+    #[tokio::test]
+    async fn skips_when_max_nudges_reached() {
+        let config = ToolEnforcementConfig {
+            max_nudges: 1,
+            ..ToolEnforcementConfig::default()
+        };
+        let mw = ToolEnforcementMiddleware::new(config);
+
+        let mut c = ctx(vec!["read".to_string()]);
+        c.nudge_count = 1;
+        mw.on_post_llm(&mut c).await.unwrap();
+
+        assert!(!c.skip_push);
+        assert_eq!(c.nudge_count, 1);
+        assert!(c.follow_up_message.is_none());
+    }
+
+    #[tokio::test]
+    async fn first_turn_only_skips_after_tool_calls() {
+        let mw = ToolEnforcementMiddleware::new(ToolEnforcementConfig::default());
+        let mut c = ctx(vec!["read".to_string()]);
+        c.total_tool_calls = 1;
+        mw.on_post_llm(&mut c).await.unwrap();
+
+        assert!(!c.skip_push);
+        assert_eq!(c.nudge_count, 0);
+    }
+}

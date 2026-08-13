@@ -395,3 +395,65 @@ pub(crate) struct ExecutionContext {
     pub max_output_chars: Option<usize>,
     pub cancel_token: tokio_util::sync::CancellationToken,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::{InMemorySessionStore, StopOnError};
+    use crate::types::{AtomicU64SessionIdGenerator, SessionConfig};
+    use tokio_util::sync::CancellationToken;
+
+    #[tokio::test]
+    async fn execute_tool_returns_not_found_for_unknown_tool() {
+        // Empty registry + minimal runtime plumbing so the tool-not-found
+        // branch is the only code path exercised.
+        let event_bus = EventBus::new(16);
+        let mut event_rx = event_bus.subscribe();
+        let engine = ToolEngine::new(
+            ToolRegistry::default(),
+            None,
+            None,
+            Arc::new(StopOnError),
+            event_bus,
+        );
+
+        let session_manager = SessionManager::new(
+            Arc::new(AtomicU64SessionIdGenerator::default()),
+            Arc::new(InMemorySessionStore::new()),
+            SessionConfig::default(),
+        );
+
+        for (language, expected) in [
+            (Language::En, "Tool no_such_tool not found"),
+            (Language::Zh, "工具 no_such_tool 未找到"),
+        ] {
+            let ctx = ExecutionContext {
+                session_manager: session_manager.clone(),
+                llm_client: None,
+                language,
+                tool_timeout_ms: None,
+                max_output_chars: None,
+                cancel_token: CancellationToken::new(),
+            };
+
+            let session_id = SessionId::new(1);
+            let result = engine
+                .execute_tool(
+                    &session_id,
+                    "call_1",
+                    "no_such_tool",
+                    &Value::Null,
+                    "{}",
+                    &ctx,
+                    &mut event_rx,
+                    &mut |_| -> AgentResult<()> { Ok(()) },
+                )
+                .await
+                .expect("unknown tool should not error");
+
+            assert_eq!(result.id, "call_1");
+            assert_eq!(result.name, "no_such_tool");
+            assert_eq!(content_text(&result.output), expected);
+        }
+    }
+}

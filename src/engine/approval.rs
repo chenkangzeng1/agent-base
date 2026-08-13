@@ -63,3 +63,38 @@ impl ApprovalHandler for AllowAllApprovalHandler {
         Ok(ApprovalDecision::AllowAlways)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::RiskLevel;
+    use tokio_util::sync::CancellationToken;
+
+    fn request() -> ApprovalRequest {
+        ApprovalRequest {
+            title: "Delete file".to_string(),
+            message: "Really delete?".to_string(),
+            action_key: Some("delete".to_string()),
+            risk_level: RiskLevel::Destructive,
+            raw: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn deny_all_returns_deny() {
+        let decision = DenyAllApprovalHandler
+            .approve(request(), CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(decision, ApprovalDecision::Deny);
+    }
+
+    #[tokio::test]
+    async fn allow_all_returns_allow_always() {
+        let decision = AllowAllApprovalHandler
+            .approve(request(), CancellationToken::new())
+            .await
+            .unwrap();
+        assert_eq!(decision, ApprovalDecision::AllowAlways);
+    }
+}

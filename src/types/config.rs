@@ -219,3 +219,93 @@ pub struct SessionConfig {
     /// None = 不限制
     pub max_message_tokens: Option<usize>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::AgentError;
+
+    #[test]
+    fn language_display_and_default() {
+        assert_eq!(Language::default(), Language::En);
+        assert_eq!(Language::En.to_string(), "en");
+        assert_eq!(Language::Zh.to_string(), "zh");
+    }
+
+    #[test]
+    fn retry_config_defaults_and_builders() {
+        let cfg = RetryConfig::default();
+        assert_eq!(cfg.max_retries, 3);
+        assert_eq!(cfg.initial_backoff_ms, 500);
+        assert_eq!(cfg.max_backoff_ms, 10_000);
+        assert_eq!(cfg.backoff_multiplier, 2.0);
+        assert!(cfg.jitter);
+
+        let cfg = RetryConfig::new()
+            .max_retries(7)
+            .initial_backoff_ms(100)
+            .max_backoff_ms(20_000)
+            .no_jitter();
+        assert_eq!(cfg.max_retries, 7);
+        assert_eq!(cfg.initial_backoff_ms, 100);
+        assert_eq!(cfg.max_backoff_ms, 20_000);
+        assert!(!cfg.jitter);
+    }
+
+    #[test]
+    fn response_format_to_api_value() {
+        let v = ResponseFormat::JsonObject.to_api_value();
+        assert_eq!(v["type"], "json_object");
+
+        let v = ResponseFormat::JsonSchema {
+            name: "event".to_string(),
+            schema: serde_json::json!({"type": "object"}),
+        }
+        .to_api_value();
+        assert_eq!(v["type"], "json_schema");
+        assert_eq!(v["json_schema"]["name"], "event");
+        assert_eq!(v["json_schema"]["schema"]["type"], "object");
+    }
+
+    #[test]
+    fn safety_config_defaults() {
+        let cfg = SafetyConfig::default();
+        assert_eq!(cfg.max_tool_calls_per_turn, 128);
+        assert_eq!(cfg.max_consecutive_failures, 3);
+    }
+
+    #[test]
+    fn validate_accepts_default() {
+        assert!(AgentConfig::default().validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_zero_max_turns() {
+        let mut cfg = AgentConfig::default();
+        cfg.execution.max_turns = Some(0);
+        let err = cfg.validate().unwrap_err();
+        assert!(matches!(err, AgentError::ConfigError(_)));
+        assert!(err.to_string().contains("max_turns"));
+    }
+
+    #[test]
+    fn validate_rejects_zero_max_sessions() {
+        let mut cfg = AgentConfig::default();
+        cfg.session.max_sessions = Some(0);
+        assert!(matches!(cfg.validate(), Err(AgentError::ConfigError(_))));
+    }
+
+    #[test]
+    fn validate_rejects_zero_tool_timeout() {
+        let mut cfg = AgentConfig::default();
+        cfg.tool.tool_timeout_ms = Some(0);
+        assert!(matches!(cfg.validate(), Err(AgentError::ConfigError(_))));
+    }
+
+    #[test]
+    fn validate_rejects_zero_max_tool_calls() {
+        let mut cfg = AgentConfig::default();
+        cfg.safety.max_tool_calls_per_turn = 0;
+        assert!(matches!(cfg.validate(), Err(AgentError::ConfigError(_))));
+    }
+}

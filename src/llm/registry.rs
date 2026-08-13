@@ -78,3 +78,103 @@ impl LlmClientBuilder {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_from_str_is_case_insensitive() {
+        assert!(matches!(
+            LlmProvider::from_str("openai"),
+            LlmProvider::OpenAi
+        ));
+        assert!(matches!(
+            LlmProvider::from_str("OpenAI"),
+            LlmProvider::OpenAi
+        ));
+        assert!(matches!(
+            LlmProvider::from_str("OPENAI"),
+            LlmProvider::OpenAi
+        ));
+        assert!(matches!(
+            LlmProvider::from_str("anthropic"),
+            LlmProvider::Anthropic
+        ));
+        assert!(matches!(
+            LlmProvider::from_str("Anthropic"),
+            LlmProvider::Anthropic
+        ));
+    }
+
+    #[test]
+    fn provider_from_str_unknown_becomes_custom() {
+        assert!(matches!(
+            LlmProvider::from_str("ollama"),
+            LlmProvider::Custom(ref s) if s == "ollama"
+        ));
+        assert!(matches!(
+            LlmProvider::from_str(""),
+            LlmProvider::Custom(ref s) if s.is_empty()
+        ));
+    }
+
+    #[test]
+    fn build_routes_openai() {
+        let client = LlmClientBuilder::new(LlmProvider::OpenAi, "sk-test", "gpt-4o").build();
+        assert_eq!(client.model_name(), "gpt-4o");
+        assert_eq!(client.capabilities().max_context_tokens, Some(128_000));
+    }
+
+    #[test]
+    fn build_routes_anthropic() {
+        let client = LlmClientBuilder::new(LlmProvider::Anthropic, "sk-ant", "claude").build();
+        assert_eq!(client.model_name(), "claude");
+        assert_eq!(client.capabilities().max_context_tokens, Some(200_000));
+    }
+
+    #[test]
+    fn build_custom_defaults_to_openai() {
+        let client =
+            LlmClientBuilder::new(LlmProvider::Custom("ollama".into()), "sk", "llama").build();
+        assert_eq!(client.model_name(), "llama");
+        assert_eq!(client.capabilities().max_context_tokens, Some(128_000));
+    }
+
+    #[test]
+    fn base_url_is_chainable() {
+        let client = LlmClientBuilder::new(LlmProvider::OpenAi, "sk", "gpt-4o")
+            .base_url("http://localhost:9999/v1")
+            .build();
+        assert_eq!(client.model_name(), "gpt-4o");
+    }
+
+    #[test]
+    fn builder_from_env_reads_vars_and_requires_key() {
+        // Single test (no intra-module parallelism) so env mutations can't race.
+        unsafe {
+            std::env::remove_var("LLM_API_KEY");
+            std::env::remove_var("LLM_MODEL");
+            std::env::remove_var("LLM_BASE_URL");
+            std::env::remove_var("LLM_PROVIDER");
+        }
+        assert!(LlmClientBuilder::from_env().is_none());
+
+        unsafe {
+            std::env::set_var("LLM_API_KEY", "env-key");
+            std::env::set_var("LLM_MODEL", "env-model");
+            std::env::set_var("LLM_BASE_URL", "http://env.test/v1");
+            std::env::set_var("LLM_PROVIDER", "anthropic");
+        }
+        let client = LlmClientBuilder::from_env().expect("all vars set").build();
+        assert_eq!(client.model_name(), "env-model");
+        assert_eq!(client.capabilities().max_context_tokens, Some(200_000));
+
+        unsafe {
+            std::env::remove_var("LLM_API_KEY");
+            std::env::remove_var("LLM_MODEL");
+            std::env::remove_var("LLM_BASE_URL");
+            std::env::remove_var("LLM_PROVIDER");
+        }
+    }
+}
