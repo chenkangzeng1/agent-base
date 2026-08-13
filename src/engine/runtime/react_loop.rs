@@ -1345,6 +1345,7 @@ impl RuntimeCore {
                     agent_id: None,
                     trace_id: None,
                 })?;
+                self.cleanup_ephemeral(&session_id).await;
                 // Safe: we just checked it's Err and cancelled
                 return Err(result.unwrap_err());
             }
@@ -1356,6 +1357,7 @@ impl RuntimeCore {
                     agent_id: None,
                     trace_id: None,
                 })?;
+                self.cleanup_ephemeral(&session_id).await;
                 return Ok(RunOutcome::Cancelled);
             }
 
@@ -1395,14 +1397,7 @@ impl RuntimeCore {
         EventBus::drain_async_events(&mut event_rx, &mut on_event)?;
 
         // Clean up ephemeral messages
-        if let Err(e) = self
-            .with_session_mut(&session_id, |session| {
-                session.remove_ephemeral_messages();
-            })
-            .await
-        {
-            tracing::warn!(error = %e, "failed to clean up ephemeral messages");
-        }
+        self.cleanup_ephemeral(&session_id).await;
 
         Ok(final_outcome)
     }
@@ -1412,6 +1407,18 @@ impl RuntimeCore {
         F: FnOnce(&mut crate::engine::AgentSession) -> R,
     {
         self.session_manager.with_session_mut(session_id, f).await
+    }
+
+    /// Remove ephemeral messages from the session, best-effort (warn on failure).
+    async fn cleanup_ephemeral(&self, session_id: &SessionId) {
+        if let Err(e) = self
+            .with_session_mut(session_id, |session| {
+                session.remove_ephemeral_messages();
+            })
+            .await
+        {
+            tracing::warn!(error = %e, "failed to clean up ephemeral messages");
+        }
     }
 
     /// Build a TurnContext and fire all registered turn-end callbacks.
@@ -2466,6 +2473,54 @@ mod tests {
         assert_eq!(
             finished, 1,
             "run_managed() must emit exactly one RunFinished"
+        );
+    }
+
+    // ── Bug ② regression: run_managed cancel cleans up ephemeral msgs ───
+
+    #[tokio::test]
+    async fn run_managed_cancel_cleans_up_ephemeral_messages() {
+        let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+            StreamChunk::ToolCall(serde_json::json!({
+                "delta": {
+                    "tool_calls": [{
+                        "id": "call_cancel",
+                        "function": { "name": "cancel", "arguments": "{}" }
+                    }]
+                }
+            })),
+            StreamChunk::Stop {
+                finish_reason: Some("tool_calls".to_string()),
+            },
+        ]])));
+        let runtime = AgentBuilder::new(client)
+            .system_prompt("test")
+            .register_tool(CancelTool)
+            .build()
+            .expect("build runtime");
+
+        let sid = runtime.create_session().await;
+        // Inject an ephemeral message that must be cleaned up when the run ends.
+        runtime
+            .set_messages(&sid, vec![ChatMessage::user_ephemeral("temp nudge")])
+            .await
+            .unwrap();
+
+        let result = runtime
+            .run_managed(sid.clone(), "cancel now", |_| Ok(()))
+            .await;
+
+        assert!(
+            matches!(result, Ok(RunOutcome::Cancelled)),
+            "run_managed should return Cancelled: {:?}",
+            result
+        );
+
+        let session = runtime.session(&sid).await.expect("session exists");
+        assert!(
+            session.chat_messages().iter().all(|m| !m.is_ephemeral()),
+            "run_managed cancel must clean up ephemeral messages, got: {:?}",
+            session.chat_messages()
         );
     }
 }
