@@ -214,7 +214,18 @@ impl<T: TypedTool + Send + Sync + 'static> Tool for T {
     }
 
     fn schema(&self) -> Value {
-        serde_json::to_value(schemars::schema_for!(T::Args)).unwrap_or(Value::Null)
+        // Generate a provider-safe JSON Schema: Draft 7 (not 2020-12), with
+        // nested subschemas inlined (no `$ref`/`$defs`/`/definitions`) and no
+        // root `$schema`/meta-schema key. OpenAI-compatible function-calling
+        // rejects `$ref` and 2020-12's `$defs`, so the default 2020-12 output
+        // would break any `Args` containing a nested enum or struct.
+        let settings = schemars::generate::SchemaSettings::draft07().with(|s| {
+            s.inline_subschemas = true;
+            s.meta_schema = None;
+        });
+        let generator = schemars::SchemaGenerator::new(settings);
+        let schema = generator.into_root_schema_for::<T::Args>();
+        serde_json::to_value(schema).unwrap_or(Value::Null)
     }
 
     fn metadata(&self) -> ToolMetadata {
@@ -351,6 +362,64 @@ mod tests {
         // The derived schema exposes the struct's fields as object properties.
         assert!(j["properties"]["name"].is_object());
         assert!(j["properties"]["times"].is_object());
+    }
+
+    #[test]
+    fn typed_tool_schema_is_provider_safe_for_nested_enum() {
+        #[derive(schemars::JsonSchema, serde::Deserialize, serde::Serialize)]
+        enum Status {
+            Active,
+            Paused,
+        }
+
+        #[derive(schemars::JsonSchema, serde::Deserialize, serde::Serialize)]
+        struct Args {
+            name: String,
+            status: Status,
+        }
+
+        #[derive(Default)]
+        struct NestedTool;
+        #[async_trait]
+        impl TypedTool for NestedTool {
+            type Args = Args;
+            type Output = String;
+            fn name(&self) -> &'static str {
+                "nested"
+            }
+            fn description(&self) -> &'static str {
+                ""
+            }
+            async fn call_typed(
+                &self,
+                _args: Args,
+                _ctx: &ToolContext,
+            ) -> crate::types::AgentResult<String> {
+                Ok(String::new())
+            }
+        }
+
+        let schema = Tool::schema(&NestedTool);
+        let raw = schema.to_string();
+        // OpenAI-compatible function-calling rejects $ref / $defs; the nested
+        // enum must be inlined rather than referenced.
+        assert!(!raw.contains("$ref"), "schema contains $ref: {raw}");
+        assert!(!raw.contains("$defs"), "schema contains $defs: {raw}");
+        assert!(
+            !raw.contains("definitions"),
+            "schema has definitions: {raw}"
+        );
+        assert!(schema.get("$schema").is_none(), "schema has $schema key");
+
+        // The enum variants are inlined directly under properties.status.
+        let variants: Vec<&str> = schema["properties"]["status"]["enum"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert!(variants.contains(&"Active"), "missing Active: {variants:?}");
+        assert!(variants.contains(&"Paused"), "missing Paused: {variants:?}");
     }
 
     #[test]

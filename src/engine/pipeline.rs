@@ -83,7 +83,7 @@ impl ToolExecutionPipeline for DefaultPipeline {
         // truncating (design §6.5). Tools that want to return a bounded
         // subset should do their own explicit truncation before returning.
         if let Some(max_chars) = self.max_output_chars {
-            let text_len = content_text(&output).len();
+            let text_len = content_text(&output).chars().count();
             if text_len > max_chars {
                 return Err(AgentError::ToolOutputTooLarge {
                     name: tool.name().to_string(),
@@ -336,6 +336,22 @@ mod tests {
             result,
             Err(AgentError::ToolOutputTooLarge { max_chars: 20, .. })
         ));
+    }
+
+    #[tokio::test]
+    async fn cjk_within_char_limit_is_not_rejected() {
+        // 17 CJK chars = 51 bytes. With a 20-char limit, byte-counting would
+        // wrongly reject (51 > 20), but char-counting must accept (17 <= 20).
+        let pipeline = DefaultPipeline::new(None, None, Some(20));
+        let output = pipeline
+            .execute(
+                &EchoTool,
+                &json!({"msg": "这是一个用于验证字符计数的中文消息"}),
+                &test_ctx(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(content_text(&output).chars().count(), 17);
     }
 
     #[tokio::test]
