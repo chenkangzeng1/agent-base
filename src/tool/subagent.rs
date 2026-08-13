@@ -259,4 +259,115 @@ mod tests {
         let out = t.call(&json!({"task": ""}), &ctx).await.unwrap();
         assert!(content_text(&out).contains("empty"));
     }
+
+    // ── B4: sub-agent call happy path (ephemeral + persistent) ──────────
+
+    struct ScriptedClient {
+        script: std::sync::Mutex<std::vec::IntoIter<Vec<StreamChunk>>>,
+    }
+
+    impl ScriptedClient {
+        fn new(script: Vec<Vec<StreamChunk>>) -> Self {
+            Self {
+                script: std::sync::Mutex::new(script.into_iter()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LlmClient for ScriptedClient {
+        async fn chat(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[Value],
+            _reasoning: Option<&crate::ReasoningConfig>,
+            _response_format: Option<&ResponseFormat>,
+        ) -> AgentResult<Value> {
+            Ok(Value::Null)
+        }
+
+        async fn chat_stream(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[Value],
+            _reasoning: Option<&crate::ReasoningConfig>,
+            _response_format: Option<&ResponseFormat>,
+        ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
+            let chunks: Vec<AgentResult<StreamChunk>> = self
+                .script
+                .lock()
+                .unwrap()
+                .next()
+                .unwrap_or_default()
+                .into_iter()
+                .map(Ok)
+                .collect();
+            Ok(Box::pin(futures_util::stream::iter(chunks)))
+        }
+
+        fn capabilities(&self) -> LlmCapabilities {
+            LlmCapabilities::default()
+        }
+    }
+
+    fn text_subagent(texts: Vec<&str>) -> SubAgentTool {
+        let script = texts
+            .into_iter()
+            .map(|t| {
+                vec![
+                    StreamChunk::Text(t.to_string()),
+                    StreamChunk::Stop {
+                        finish_reason: Some("stop".to_string()),
+                    },
+                ]
+            })
+            .collect();
+        let client = crate::llm::adapt(Arc::new(ScriptedClient::new(script)));
+        let runtime = AgentBuilder::new(client)
+            .system_prompt("test")
+            .build()
+            .expect("build runtime");
+        SubAgentTool::new("sub", "delegate a task", runtime)
+    }
+
+    #[tokio::test]
+    async fn call_ephemeral_runs_subagent_and_returns_text() {
+        let t = text_subagent(vec!["sub answer"]);
+        let ctx = ToolContext::for_test();
+        let out = t
+            .call(&json!({"task": "do the thing"}), &ctx)
+            .await
+            .unwrap();
+        assert!(content_text(&out).contains("sub answer"), "{out:?}");
+    }
+
+    #[tokio::test]
+    async fn call_persistent_reuses_session() {
+        let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![
+            vec![
+                StreamChunk::Text("first".to_string()),
+                StreamChunk::Stop {
+                    finish_reason: Some("stop".to_string()),
+                },
+            ],
+            vec![
+                StreamChunk::Text("second".to_string()),
+                StreamChunk::Stop {
+                    finish_reason: Some("stop".to_string()),
+                },
+            ],
+        ])));
+        let runtime = AgentBuilder::new(client)
+            .system_prompt("test")
+            .build()
+            .expect("build runtime");
+        let t = SubAgentTool::with_persistent("sub", "delegate", runtime);
+        let ctx = ToolContext::for_test();
+
+        let out1 = t.call(&json!({"task": "first task"}), &ctx).await.unwrap();
+        assert!(content_text(&out1).contains("first"), "{out1:?}");
+
+        let out2 = t.call(&json!({"task": "second task"}), &ctx).await.unwrap();
+        assert!(content_text(&out2).contains("second"), "{out2:?}");
+    }
 }
