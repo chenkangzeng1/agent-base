@@ -63,12 +63,12 @@ jobs:
   # ── Coverage gate ──
   #
   # Fails the build if line coverage drops below the threshold. This turns the
-  # one-off test-backfill (T1–T4) into a durable constraint: any PR that lowers
+  # test-backfill phase (B1–B5) into a durable constraint: any PR that lowers
   # coverage below the floor is rejected.
   #
-  # Measured 2026-08-13 after T1–T4: 83.18% line coverage (cargo llvm-cov,
-  # library target). Threshold is set ~3 points below to absorb CI machine
-  # variance while still catching regressions.
+  # Measured 2026-08-13 after B1–B5: 90.83% line coverage (cargo llvm-cov,
+  # library target). Threshold is set at 90 to ratchet the floor upward while
+  # leaving ~80 lines of headroom to absorb CI machine variance.
   #
   # NOTE: this number includes `#[cfg(test)]` modules (which run ~100%), so it
   # is a nominal floor, not the "real library code only" figure. Re-measure with
@@ -90,4 +90,4 @@ jobs:
         uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Coverage gate
-        run: cargo llvm-cov --fail-under-lines 80
+        run: cargo llvm-cov --fail-under-lines 90
