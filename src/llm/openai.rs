@@ -876,4 +876,189 @@ mod tests {
         let result: Result<Vec<_>, _> = stream.try_collect().await;
         assert!(result.is_err());
     }
+
+    // ── B2: remaining enum arms + adapter delegation + HTTP edges ────────
+
+    #[test]
+    fn image_to_json_detail_variants() {
+        // Url + Low / Auto
+        let v = OpenAiClient::image_to_json(&ImageAttachment::Url {
+            url: "http://x/a.png".into(),
+            detail: Some(ImageDetail::Low),
+        });
+        assert_eq!(v["image_url"]["detail"], "low");
+
+        let v = OpenAiClient::image_to_json(&ImageAttachment::Url {
+            url: "http://x/a.png".into(),
+            detail: Some(ImageDetail::Auto),
+        });
+        assert_eq!(v["image_url"]["detail"], "auto");
+
+        // Base64 + High / Auto
+        let v = OpenAiClient::image_to_json(&ImageAttachment::Base64 {
+            data: "abc".into(),
+            media_type: None,
+            detail: Some(ImageDetail::High),
+        });
+        assert_eq!(v["image_url"]["detail"], "high");
+
+        let v = OpenAiClient::image_to_json(&ImageAttachment::Base64 {
+            data: "abc".into(),
+            media_type: None,
+            detail: Some(ImageDetail::Auto),
+        });
+        assert_eq!(v["image_url"]["detail"], "auto");
+    }
+
+    #[test]
+    fn apply_reasoning_config_qwen_effort_all_levels() {
+        // None/Low already covered; exercise None→0, Medium→2000, XHigh→10000.
+        for (effort, budget, enabled) in [
+            (ReasoningEffort::None, 0, false),
+            (ReasoningEffort::Medium, 2000, true),
+            (ReasoningEffort::XHigh, 10000, true),
+        ] {
+            let c = client("qwen-max");
+            let mut body = serde_json::json!({"model": "qwen-max"});
+            let rc = ReasoningConfig {
+                enabled: None,
+                budget_tokens: None,
+                effort: Some(effort),
+            };
+            c.apply_reasoning_config(&mut body, Some(&rc));
+            assert_eq!(body["thinking_budget"], serde_json::json!(budget));
+            assert_eq!(body["enable_thinking"], serde_json::json!(enabled));
+        }
+    }
+
+    #[test]
+    fn apply_reasoning_config_deepseek_effort_all_levels() {
+        // Medium already covered; exercise None/Low/High/XHigh.
+        for (effort, expected) in [
+            (ReasoningEffort::None, "none"),
+            (ReasoningEffort::Low, "low"),
+            (ReasoningEffort::High, "high"),
+            (ReasoningEffort::XHigh, "high"),
+        ] {
+            let c = client("deepseek-chat");
+            let mut body = serde_json::json!({"model": "deepseek-chat"});
+            let rc = ReasoningConfig {
+                enabled: None,
+                budget_tokens: None,
+                effort: Some(effort),
+            };
+            c.apply_reasoning_config(&mut body, Some(&rc));
+            assert_eq!(body["reasoning_effort"], serde_json::json!(expected));
+        }
+    }
+
+    #[test]
+    fn apply_reasoning_config_other_effort_all_levels() {
+        // XHigh already covered; exercise None/Low/Medium/High.
+        for (effort, expected) in [
+            (ReasoningEffort::None, "none"),
+            (ReasoningEffort::Low, "low"),
+            (ReasoningEffort::Medium, "medium"),
+            (ReasoningEffort::High, "high"),
+        ] {
+            let c = client("gpt-4o");
+            let mut body = serde_json::json!({"model": "gpt-4o"});
+            let rc = ReasoningConfig {
+                enabled: None,
+                budget_tokens: None,
+                effort: Some(effort),
+            };
+            c.apply_reasoning_config(&mut body, Some(&rc));
+            assert_eq!(body["reasoning_effort"], serde_json::json!(expected));
+        }
+    }
+
+    #[test]
+    fn stream_client_delegates_capabilities_and_model_name() {
+        let c = OpenAiClient::new("k".into(), "gpt-4o".into(), None);
+        let caps = <OpenAiClient as crate::llm::StreamClient>::capabilities(&c);
+        assert!(caps.supports_streaming);
+        assert_eq!(
+            <OpenAiClient as crate::llm::StreamClient>::model_name(&c),
+            "gpt-4o"
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_client_stream_delegates_to_chat_stream() {
+        let server = MockServer::start().await;
+        let sse = "data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"},\"finish_reason\":\"\"}]}\n\ndata: [DONE]\n\n";
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let client = OpenAiClient::new("k".into(), "gpt-4o".into(), Some(server.uri()));
+        let stream = <OpenAiClient as crate::llm::StreamClient>::stream(
+            &client,
+            &[ChatMessage::user("hi")],
+            &[],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let chunks: Vec<StreamChunk> = stream.try_collect().await.unwrap();
+        assert!(matches!(&chunks[0], StreamChunk::Text(t) if t == "Hi"));
+    }
+
+    #[tokio::test]
+    async fn chat_errors_on_non_json_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not-json"))
+            .mount(&server)
+            .await;
+
+        let client = OpenAiClient::new("k".into(), "gpt-4o".into(), Some(server.uri()));
+        let resp = client
+            .chat(&[ChatMessage::user("hi")], &[], None, None)
+            .await;
+        assert!(resp.is_err());
+    }
+
+    #[tokio::test]
+    async fn chat_stream_emits_empty_text_for_no_choices_or_usage() {
+        let server = MockServer::start().await;
+        let sse = "data: {\"id\":\"x\"}\n\n";
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let client = OpenAiClient::new("k".into(), "gpt-4o".into(), Some(server.uri()));
+        let stream = client
+            .chat_stream(&[ChatMessage::user("hi")], &[], None, None)
+            .await
+            .unwrap();
+        let chunks: Vec<StreamChunk> = stream.try_collect().await.unwrap();
+        assert!(matches!(&chunks[0], StreamChunk::Text(t) if t.is_empty()));
+    }
+
+    #[tokio::test]
+    async fn chat_stream_emits_empty_text_for_empty_delta() {
+        let server = MockServer::start().await;
+        let sse = "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"\"}]}\n\n";
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let client = OpenAiClient::new("k".into(), "gpt-4o".into(), Some(server.uri()));
+        let stream = client
+            .chat_stream(&[ChatMessage::user("hi")], &[], None, None)
+            .await
+            .unwrap();
+        let chunks: Vec<StreamChunk> = stream.try_collect().await.unwrap();
+        assert!(matches!(&chunks[0], StreamChunk::Text(t) if t.is_empty()));
+    }
 }

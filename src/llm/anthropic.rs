@@ -911,4 +911,95 @@ mod tests {
         let result: Result<Vec<_>, _> = stream.try_collect().await;
         assert!(result.is_err());
     }
+
+    // ── B2: adapter delegation + remaining HTTP/SSE edges ────────────────
+
+    #[test]
+    fn stream_client_delegates_capabilities_and_model_name() {
+        let c = AnthropicClient::new("k".into(), "claude-sonnet".into(), None);
+        let caps = <AnthropicClient as crate::llm::StreamClient>::capabilities(&c);
+        assert!(caps.supports_streaming);
+        assert_eq!(
+            <AnthropicClient as crate::llm::StreamClient>::model_name(&c),
+            "claude-sonnet"
+        );
+    }
+
+    #[tokio::test]
+    async fn stream_client_stream_delegates_to_chat_stream() {
+        let server = MockServer::start().await;
+        let sse = concat!(
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n",
+        );
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let client = AnthropicClient::new("k".into(), "claude-sonnet".into(), Some(server.uri()));
+        let stream = <AnthropicClient as crate::llm::StreamClient>::stream(
+            &client,
+            &[ChatMessage::user("hi")],
+            &[],
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        let chunks: Vec<StreamChunk> = stream.try_collect().await.unwrap();
+        assert!(matches!(&chunks[0], StreamChunk::Text(t) if t == "hi"));
+    }
+
+    #[tokio::test]
+    async fn chat_errors_on_non_json_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not-json"))
+            .mount(&server)
+            .await;
+
+        let client = AnthropicClient::new("k".into(), "claude-sonnet".into(), Some(server.uri()));
+        let resp = client
+            .chat(&[ChatMessage::user("hi")], &[], None, None)
+            .await;
+        assert!(resp.is_err());
+    }
+
+    #[tokio::test]
+    async fn chat_stream_returns_error_on_non_success_status() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(401).set_body_string("unauthorized"))
+            .mount(&server)
+            .await;
+
+        let client = AnthropicClient::new("k".into(), "claude-sonnet".into(), Some(server.uri()));
+        let result = client
+            .chat_stream(&[ChatMessage::user("hi")], &[], None, None)
+            .await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn chat_stream_wraps_parse_error_as_err() {
+        let server = MockServer::start().await;
+        let sse = concat!("event: message_stop\n", "data: not-json\n\n");
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let client = AnthropicClient::new("k".into(), "claude-sonnet".into(), Some(server.uri()));
+        let stream = client
+            .chat_stream(&[ChatMessage::user("hi")], &[], None, None)
+            .await
+            .unwrap();
+        let result: Result<Vec<_>, _> = stream.try_collect().await;
+        assert!(result.is_err());
+    }
 }
