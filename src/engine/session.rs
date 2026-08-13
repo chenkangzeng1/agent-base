@@ -457,6 +457,166 @@ mod tests {
         s.pop_last_message(); // should not panic
         assert_eq!(s.chat_messages().len(), 0);
     }
+
+    // ── B5: remaining session lifecycle paths ──────────────────────────────
+
+    #[test]
+    fn test_id_and_action_allowlist() {
+        let mut s = make_session();
+        assert_eq!(s.id(), Some(SessionId::new(1)));
+        assert!(!s.is_action_allowed("approve:rm"));
+        s.allow_action("approve:rm");
+        assert!(s.is_action_allowed("approve:rm"));
+        assert!(!s.is_action_allowed("approve:shell"));
+    }
+
+    #[test]
+    fn test_chat_messages_mut() {
+        let mut s = make_session();
+        s.chat_messages_mut().push(ChatMessage::user("direct"));
+        assert_eq!(s.chat_messages().len(), 1);
+    }
+
+    #[test]
+    fn test_push_message_tool_role() {
+        let mut s = make_session();
+        s.push_message(MessageRole::Tool, "result");
+        assert!(matches!(s.chat_messages()[0], ChatMessage::Tool { .. }));
+    }
+
+    #[test]
+    fn test_push_assistant_with_reasoning() {
+        let mut s = make_session();
+        s.push_assistant_with_reasoning("answer", "thinking");
+        match &s.chat_messages()[0] {
+            ChatMessage::Assistant {
+                content,
+                reasoning_content,
+                ..
+            } => {
+                assert_eq!(content.as_deref(), Some("answer"));
+                assert_eq!(reasoning_content.as_deref(), Some("thinking"));
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_push_user_message_with_images() {
+        let mut s = make_session();
+        s.push_user_message_with_images(
+            "look",
+            vec![ImageAttachment::Url {
+                url: "http://x".into(),
+                detail: None,
+            }],
+        );
+        match &s.chat_messages()[0] {
+            ChatMessage::User { images, .. } => assert_eq!(images.len(), 1),
+            other => panic!("unexpected message: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_push_assistant_tool_call_singular() {
+        let mut s = make_session();
+        s.push_assistant_tool_call("call_1", "bash", "{}");
+        match &s.chat_messages()[0] {
+            ChatMessage::Assistant {
+                tool_calls: Some(tc),
+                ..
+            } => {
+                assert_eq!(tc.len(), 1);
+                assert_eq!(tc[0].id, "call_1");
+                assert_eq!(tc[0].name, "bash");
+            }
+            other => panic!("unexpected message: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_simple_messages_filters_empty_content_tool_calls() {
+        let mut s = make_session();
+        s.chat_messages_mut().push(ChatMessage::Assistant {
+            content: Some(String::new()),
+            reasoning_content: None,
+            tool_calls: Some(vec![ToolCallMessage {
+                id: "c".into(),
+                name: "t".into(),
+                arguments: "{}".into(),
+            }]),
+        });
+        assert!(s.simple_messages().is_empty());
+    }
+
+    #[test]
+    fn test_remove_ephemeral_messages() {
+        let mut s = make_session();
+        s.push_message(MessageRole::System, "keep");
+        s.chat_messages_mut()
+            .push(ChatMessage::user_ephemeral("temp"));
+        s.chat_messages_mut()
+            .push(ChatMessage::system_ephemeral("temp2"));
+        s.push_message(MessageRole::User, "keep2");
+        assert_eq!(s.chat_messages().len(), 4);
+        s.remove_ephemeral_messages();
+        assert_eq!(s.chat_messages().len(), 2);
+        assert!(s.chat_messages().iter().all(|m| !m.is_ephemeral()));
+    }
+
+    #[test]
+    fn test_close_dangling_tool_calls_noop_without_tool_call() {
+        let mut s = make_session();
+        s.push_message(MessageRole::User, "hi");
+        s.push_message(MessageRole::Assistant, "hi");
+        s.close_dangling_tool_calls("failed");
+        assert_eq!(s.chat_messages().len(), 2);
+    }
+
+    #[test]
+    fn test_close_dangling_tool_calls_adds_missing_results() {
+        let mut s = make_session();
+        s.push_message(MessageRole::User, "do");
+        s.push_assistant_tool_calls(
+            &[
+                ("c1".into(), "t".into(), "{}".into()),
+                ("c2".into(), "t".into(), "{}".into()),
+            ],
+            None,
+        );
+        s.push_tool_result("c1", "ok"); // only c1 answered
+        s.close_dangling_tool_calls("failed");
+
+        let tool_results: Vec<(String, String)> = s
+            .chat_messages()
+            .iter()
+            .filter_map(|m| match m {
+                ChatMessage::Tool {
+                    tool_call_id,
+                    content,
+                } => Some((tool_call_id.clone(), content.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(tool_results.len(), 2);
+        assert!(
+            tool_results
+                .iter()
+                .any(|(id, c)| id == "c2" && c == "failed")
+        );
+    }
+
+    #[test]
+    fn test_set_chat_messages_recalculates_total_tool_calls() {
+        let mut s = make_session();
+        let msgs = vec![
+            ChatMessage::user("do"),
+            ChatMessage::assistant_tool_call("c1", "t", "{}"),
+            ChatMessage::tool("c1", "result"),
+        ];
+        s.set_chat_messages(msgs).unwrap();
+        assert_eq!(s.total_tool_calls, 1);
+    }
 }
 
 #[cfg(test)]
