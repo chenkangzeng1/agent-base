@@ -162,6 +162,44 @@ impl LlmClient for ErrorStreamClient {
     }
 }
 
+/// LLM client whose stream immediately yields a cancellation error, exercising
+/// the `e.is_cancelled()` branch of the LLM-stream error path.
+struct CancelledStreamClient;
+
+#[async_trait]
+impl LlmClient for CancelledStreamClient {
+    async fn chat(
+        &self,
+        _messages: &[ChatMessage],
+        _tools: &[Value],
+        _reasoning: Option<&crate::ReasoningConfig>,
+        _response_format: Option<&ResponseFormat>,
+    ) -> AgentResult<Value> {
+        Ok(Value::Null)
+    }
+
+    async fn chat_stream(
+        &self,
+        _messages: &[ChatMessage],
+        _tools: &[Value],
+        _reasoning: Option<&crate::ReasoningConfig>,
+        _response_format: Option<&ResponseFormat>,
+    ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
+        struct CancelledStream;
+        impl Stream for CancelledStream {
+            type Item = AgentResult<StreamChunk>;
+            fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+                Poll::Ready(Some(Err(AgentError::Cancelled)))
+            }
+        }
+        Ok(Box::pin(CancelledStream))
+    }
+
+    fn capabilities(&self) -> LlmCapabilities {
+        LlmCapabilities::default()
+    }
+}
+
 #[tokio::test]
 async fn run_turn_emits_run_finished_on_llm_error() {
     let client = crate::llm::adapt(Arc::new(ErrorStreamClient));
@@ -536,6 +574,33 @@ impl Tool for CancelTool {
     async fn call(&self, _args: &Value, ctx: &ToolContext) -> AgentResult<Vec<Content>> {
         ctx.cancel_token.cancel();
         Ok(vec![Content::text("cancelled")])
+    }
+}
+
+/// Tool that cancels the run's token and then blocks forever, so
+/// `execute_tool`'s `cancel_token.cancelled()` branch fires and propagates a raw
+/// `AgentError::Cancelled` (not wrapped in `ToolExecution`) to `handle_tool_error`.
+struct CancelPendingTool;
+
+#[async_trait]
+impl Tool for CancelPendingTool {
+    fn name(&self) -> &'static str {
+        "cancel_pending"
+    }
+
+    fn description(&self) -> &'static str {
+        "Cancel the current run mid-execution"
+    }
+
+    fn schema(&self) -> Value {
+        serde_json::json!({"type": "object", "properties": {}})
+    }
+
+    async fn call(&self, _args: &Value, ctx: &ToolContext) -> AgentResult<Vec<Content>> {
+        ctx.cancel_token.cancel();
+        // Never resolve — let execute_tool's cancellation branch fire instead.
+        std::future::pending::<()>().await;
+        unreachable!("cancelled tool should never resolve")
     }
 }
 
@@ -1305,5 +1370,160 @@ async fn max_turns_exceeded_event_order() {
             "AfterToolCalls",
             "RunFinished"
         ]
+    );
+}
+
+// ── Cancel / error-recovery branch coverage (react_loop coverage trough) ──
+//
+// The following tests target the cancel and error sub-paths that the happy-path
+// suite never reached: mid-execution tool cancellation, cancelled LLM stream
+// errors, the optional llm_retry branch, and run_managed's cancel / turn-budget
+// branches.
+
+#[tokio::test]
+async fn run_turn_tool_cancelled_mid_execution_returns_cancelled() {
+    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+        StreamChunk::ToolCall(serde_json::json!({
+            "delta": {
+                "tool_calls": [{
+                    "id": "call_cancel",
+                    "function": { "name": "cancel_pending", "arguments": "{}" }
+                }]
+            }
+        })),
+        StreamChunk::Stop {
+            finish_reason: Some("tool_calls".to_string()),
+        },
+    ]])));
+    let runtime = AgentBuilder::new(client)
+        .system_prompt("test")
+        .register_tool(CancelPendingTool)
+        .build()
+        .expect("build runtime");
+
+    let sid = runtime.create_session().await;
+    let mut events = Vec::new();
+    let result = runtime
+        .run_turn(sid.clone(), "cancel now", |event| {
+            events.push(event);
+            Ok(())
+        })
+        .await;
+
+    assert!(
+        matches!(&result, Err(e) if e.is_cancelled()),
+        "run_turn should surface a Cancelled error for mid-execution tool cancel, got: {result:?}"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunCancelled { .. })),
+        "cancelled tool execution must emit RunCancelled"
+    );
+}
+
+#[tokio::test]
+async fn run_turn_llm_stream_cancelled_returns_cancelled() {
+    let client = crate::llm::adapt(Arc::new(CancelledStreamClient));
+    let runtime = AgentBuilder::new(client)
+        .system_prompt("test")
+        .build()
+        .expect("build runtime");
+
+    let sid = runtime.create_session().await;
+    let mut events = Vec::new();
+    let result = runtime
+        .run_turn(sid.clone(), "test input", |event| {
+            events.push(event);
+            Ok(())
+        })
+        .await;
+
+    assert!(
+        matches!(&result, Err(e) if e.is_cancelled()),
+        "run_turn should surface the cancelled LLM stream error, got: {result:?}"
+    );
+    assert!(
+        events
+            .iter()
+            .any(|e| matches!(e, RuntimeEvent::RunCancelled { .. })),
+        "cancelled LLM stream must emit RunCancelled"
+    );
+}
+
+#[tokio::test]
+async fn run_turn_with_llm_retry_completes() {
+    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(text_script("answer"))));
+    let runtime = AgentBuilder::new(client)
+        .system_prompt("test")
+        .llm_retry(crate::types::RetryConfig::default().max_retries(1))
+        .build()
+        .expect("build runtime");
+
+    let sid = runtime.create_session().await;
+    let result = runtime.run_turn(sid.clone(), "hi", |_| Ok(())).await;
+
+    assert!(
+        matches!(result, Ok(RunOutcome::Completed)),
+        "run_turn with llm_retry should complete: {:?}",
+        result
+    );
+}
+
+#[tokio::test]
+async fn run_managed_tool_cancelled_mid_execution_returns_cancelled() {
+    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+        StreamChunk::ToolCall(serde_json::json!({
+            "delta": {
+                "tool_calls": [{
+                    "id": "call_cancel",
+                    "function": { "name": "cancel_pending", "arguments": "{}" }
+                }]
+            }
+        })),
+        StreamChunk::Stop {
+            finish_reason: Some("tool_calls".to_string()),
+        },
+    ]])));
+    let runtime = AgentBuilder::new(client)
+        .system_prompt("test")
+        .register_tool(CancelPendingTool)
+        .build()
+        .expect("build runtime");
+
+    let sid = runtime.create_session().await;
+    let result = runtime
+        .run_managed(sid.clone(), "cancel now", |_| Ok(()))
+        .await;
+
+    assert!(
+        matches!(&result, Err(e) if e.is_cancelled()),
+        "run_managed should surface a Cancelled error for mid-execution tool cancel, got: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn run_managed_max_turns_exceeded() {
+    // max_turns = 1 caps the *cumulative* turn budget across follow-ups. The
+    // first inner loop consumes the single turn; the seeded follow-up message
+    // triggers a second iteration, which hits the cap before any further LLM call.
+    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(text_script("done"))));
+    let runtime = AgentBuilder::new(client)
+        .system_prompt("test")
+        .execution_max_turns(1)
+        .build()
+        .expect("build runtime");
+
+    let sid = runtime.create_session().await;
+    runtime.follow_up("continue".to_string());
+
+    let result = runtime
+        .run_managed(sid.clone(), "do something", |_| Ok(()))
+        .await;
+
+    assert!(
+        matches!(result, Ok(RunOutcome::MaxTurnsExceeded { .. })),
+        "run_managed should exceed its cumulative turn budget: {:?}",
+        result
     );
 }
