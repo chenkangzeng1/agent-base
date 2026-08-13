@@ -250,6 +250,7 @@ impl RuntimeCore {
         // Emit RunFinished on any non-cancelled error so event listeners
         // know the turn ended.
         let (outcome, turn_count) = match result {
+            Ok((RunOutcome::Cancelled, _)) => return Ok(RunOutcome::Cancelled),
             Ok(tuple) => {
                 // The loop no longer emits RunFinished on completion; emit it
                 // here once so listeners see a single terminal event.
@@ -1499,7 +1500,7 @@ mod tests {
     use crate::tool::{Content, Tool, ToolContext, ToolPolicy};
     use crate::types::{
         AgentError, AgentResult, ApprovalRequest, ChatMessage, CheckpointData, CheckpointStep,
-        ResponseFormat, RiskLevel, RunOutcome, SessionId,
+        ResponseFormat, RiskLevel, RunOutcome, SessionId, TurnContext,
     };
     use async_trait::async_trait;
     use futures_core::Stream;
@@ -2521,6 +2522,294 @@ mod tests {
             session.chat_messages().iter().all(|m| !m.is_ephemeral()),
             "run_managed cancel must clean up ephemeral messages, got: {:?}",
             session.chat_messages()
+        );
+    }
+
+    // ── Characterization: exact ordered event sequences ──────────────────
+    //
+    // These pin the observable ordering (checkpoint steps + terminal events)
+    // and the turn-end TurnContext values, so the TurnEndCtx / handle_llm_turn
+    // refactor cannot silently change behavior.
+
+    /// Map a captured event stream to a compact ordered label sequence,
+    /// keeping only checkpoint steps and terminal (RunFinished/RunCancelled)
+    /// events — the observable ordering the refactor must preserve.
+    fn terminal_seq(events: &[RuntimeEvent]) -> Vec<&'static str> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                RuntimeEvent::Checkpoint { checkpoint, .. } => Some(match &checkpoint.step {
+                    CheckpointStep::AfterUserInput => "AfterUserInput",
+                    CheckpointStep::BeforeLlm { .. } => "BeforeLlm",
+                    CheckpointStep::BeforeToolCalls { .. } => "BeforeToolCalls",
+                    CheckpointStep::AfterToolCalls { .. } => "AfterToolCalls",
+                }),
+                RuntimeEvent::RunFinished { .. } => Some("RunFinished"),
+                RuntimeEvent::RunCancelled { .. } => Some("RunCancelled"),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Single-turn text-only script.
+    fn text_script(text: &str) -> Vec<Vec<StreamChunk>> {
+        vec![vec![
+            StreamChunk::Text(text.to_string()),
+            StreamChunk::Stop {
+                finish_reason: Some("stop".to_string()),
+            },
+        ]]
+    }
+
+    #[tokio::test]
+    async fn turn_end_callback_receives_correct_context() {
+        let client = crate::llm::adapt(Arc::new(ScriptedClient::new(text_script("answer"))));
+        let runtime = AgentBuilder::new(client)
+            .system_prompt("test")
+            .build()
+            .expect("build runtime");
+
+        let captured = Arc::new(Mutex::new(Vec::<TurnContext>::new()));
+        let captured_clone = captured.clone();
+        runtime.on_turn_end(move |ctx| {
+            captured_clone.lock().unwrap().push(ctx.clone());
+        });
+
+        let sid = runtime.create_session().await;
+        let result = runtime.run_turn(sid.clone(), "question", |_| Ok(())).await;
+
+        assert!(matches!(result, Ok(RunOutcome::Completed)));
+        let contexts = captured.lock().unwrap();
+        assert_eq!(contexts.len(), 1, "one turn → one turn-end callback");
+        let ctx = &contexts[0];
+        assert!(matches!(&ctx.outcome, RunOutcome::Completed));
+        assert_eq!(ctx.turn_number, 1);
+        assert_eq!(ctx.tool_call_count, 0);
+        assert_eq!(ctx.tool_success, 0);
+        assert_eq!(ctx.tool_failed, 0);
+        assert!(ctx.error_message.is_none());
+        assert_eq!(ctx.full_text_len, "answer".len() as u64);
+        assert!(!ctx.has_thinking);
+        assert_eq!(ctx.llm_calls, 1);
+        assert_eq!(ctx.user_input.as_str(), "question");
+    }
+
+    #[tokio::test]
+    async fn run_turn_text_only_event_order() {
+        let client = crate::llm::adapt(Arc::new(ScriptedClient::new(text_script("answer"))));
+        let runtime = AgentBuilder::new(client)
+            .system_prompt("test")
+            .build()
+            .expect("build runtime");
+        let sid = runtime.create_session().await;
+
+        let (events, outcome) = runtime
+            .run_turn_collect(sid, "question")
+            .await
+            .expect("run_turn_collect");
+
+        assert!(matches!(outcome, RunOutcome::Completed));
+        assert_eq!(
+            terminal_seq(&events),
+            vec!["AfterUserInput", "BeforeLlm", "RunFinished"]
+        );
+    }
+
+    #[tokio::test]
+    async fn run_turn_tool_call_then_text_event_order() {
+        let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![
+            vec![
+                StreamChunk::ToolCall(serde_json::json!({
+                    "delta": {
+                        "tool_calls": [{
+                            "id": "call_1",
+                            "function": {
+                                "name": "echo",
+                                "arguments": "{\"text\":\"hello\"}"
+                            }
+                        }]
+                    }
+                })),
+                StreamChunk::Stop {
+                    finish_reason: Some("tool_calls".to_string()),
+                },
+            ],
+            vec![
+                StreamChunk::Text("final answer".to_string()),
+                StreamChunk::Stop {
+                    finish_reason: Some("stop".to_string()),
+                },
+            ],
+        ])));
+        let runtime = AgentBuilder::new(client)
+            .system_prompt("test")
+            .register_tool(EchoTool)
+            .build()
+            .expect("build runtime");
+        let sid = runtime.create_session().await;
+
+        let (events, outcome) = runtime
+            .run_turn_collect(sid, "echo hello")
+            .await
+            .expect("run_turn_collect");
+
+        assert!(matches!(outcome, RunOutcome::Completed));
+        assert_eq!(
+            terminal_seq(&events),
+            vec![
+                "AfterUserInput",
+                "BeforeLlm",
+                "BeforeToolCalls",
+                "AfterToolCalls",
+                "BeforeLlm",
+                "RunFinished"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn run_turn_cancel_does_not_emit_runfinished() {
+        let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+            StreamChunk::ToolCall(serde_json::json!({
+                "delta": {
+                    "tool_calls": [{
+                        "id": "call_cancel",
+                        "function": { "name": "cancel", "arguments": "{}" }
+                    }]
+                }
+            })),
+            StreamChunk::Stop {
+                finish_reason: Some("tool_calls".to_string()),
+            },
+        ]])));
+        let runtime = AgentBuilder::new(client)
+            .system_prompt("test")
+            .register_tool(CancelTool)
+            .build()
+            .expect("build runtime");
+        let sid = runtime.create_session().await;
+
+        let mut events = Vec::new();
+        let result = runtime
+            .run_turn(sid.clone(), "cancel now", |event| {
+                events.push(event);
+                Ok(())
+            })
+            .await;
+
+        assert!(matches!(result, Ok(RunOutcome::Cancelled)));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, RuntimeEvent::RunCancelled { .. })),
+            "cancel must emit RunCancelled"
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| matches!(e, RuntimeEvent::RunFinished { .. }))
+                .count(),
+            0,
+            "cancelled run_turn must not emit RunFinished"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_text_only_event_order() {
+        let client = crate::llm::adapt(Arc::new(ScriptedClient::new(text_script("answer"))));
+        let runtime = AgentBuilder::new(client)
+            .system_prompt("test")
+            .build()
+            .expect("build runtime");
+        let sid = runtime.create_session().await;
+        runtime.add_user_message(&sid, "question").await.unwrap();
+
+        let mut events = Vec::new();
+        let outcome = runtime
+            .run(sid.clone(), |event| {
+                events.push(event);
+                Ok(())
+            })
+            .await
+            .expect("run");
+
+        assert!(matches!(outcome, RunOutcome::Completed));
+        assert_eq!(terminal_seq(&events), vec!["BeforeLlm", "RunFinished"]);
+    }
+
+    #[tokio::test]
+    async fn run_managed_text_only_event_order() {
+        let client = crate::llm::adapt(Arc::new(ScriptedClient::new(text_script("done"))));
+        let runtime = AgentBuilder::new(client)
+            .system_prompt("test")
+            .build()
+            .expect("build runtime");
+        let sid = runtime.create_session().await;
+
+        let mut events = Vec::new();
+        let outcome = runtime
+            .run_managed(sid.clone(), "do something", |event| {
+                events.push(event);
+                Ok(())
+            })
+            .await
+            .expect("run_managed");
+
+        assert!(matches!(outcome, RunOutcome::Completed));
+        assert_eq!(terminal_seq(&events), vec!["BeforeLlm", "RunFinished"]);
+    }
+
+    #[tokio::test]
+    async fn max_turns_exceeded_event_order() {
+        // Turn 1 requests a tool; with max_turns = 1, turn 2 hits the cap
+        // before any LLM call, so the second script entry is never consumed.
+        let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![
+            vec![
+                StreamChunk::ToolCall(serde_json::json!({
+                    "delta": {
+                        "tool_calls": [{
+                            "id": "call_1",
+                            "function": {
+                                "name": "echo",
+                                "arguments": "{\"text\":\"hello\"}"
+                            }
+                        }]
+                    }
+                })),
+                StreamChunk::Stop {
+                    finish_reason: Some("tool_calls".to_string()),
+                },
+            ],
+            vec![
+                StreamChunk::Text("unused".to_string()),
+                StreamChunk::Stop {
+                    finish_reason: Some("stop".to_string()),
+                },
+            ],
+        ])));
+        let runtime = AgentBuilder::new(client)
+            .system_prompt("test")
+            .register_tool(EchoTool)
+            .execution_max_turns(1)
+            .build()
+            .expect("build runtime");
+        let sid = runtime.create_session().await;
+
+        let (events, outcome) = runtime
+            .run_turn_collect(sid, "go")
+            .await
+            .expect("run_turn_collect");
+
+        assert!(matches!(outcome, RunOutcome::MaxTurnsExceeded { .. }));
+        assert_eq!(
+            terminal_seq(&events),
+            vec![
+                "AfterUserInput",
+                "BeforeLlm",
+                "BeforeToolCalls",
+                "AfterToolCalls",
+                "RunFinished"
+            ]
         );
     }
 }
