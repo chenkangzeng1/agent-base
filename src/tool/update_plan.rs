@@ -270,7 +270,8 @@ impl Tool for UpdatePlanTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{PlanItem, PlanStepStatus};
+    use crate::tool::content_text;
+    use crate::types::{AgentError, PlanItem, PlanStepStatus};
 
     #[test]
     fn test_update_plan_args_validation() {
@@ -395,5 +396,101 @@ mod tests {
         // Fallback: don't return empty
         let result = normalize_step_text("123");
         assert!(!result.is_empty());
+    }
+
+    // ── B4: accessors + call orchestration ────────────────────────────────
+
+    #[test]
+    fn accessors_name_schema_metadata() {
+        let t = UpdatePlanTool::new();
+        assert_eq!(t.name(), "update_plan");
+        assert_eq!(t.schema()["required"], json!(["plan"]));
+        let m = t.metadata();
+        assert_eq!(m.name, "update_plan");
+        assert_eq!(m.origin, "agent-base");
+        assert!(m.requirements.is_empty());
+    }
+
+    #[test]
+    fn with_description_overrides_default() {
+        let t = UpdatePlanTool::new().with_description("custom desc".to_string());
+        assert_eq!(t.description(), "custom desc");
+
+        let t = UpdatePlanTool::new();
+        assert!(
+            t.description()
+                .contains("Record and display a structured plan")
+        );
+    }
+
+    #[tokio::test]
+    async fn call_with_full_plan_builds_summary_with_current() {
+        let t = UpdatePlanTool::new();
+        let ctx = ToolContext::for_test();
+        let args = json!({
+            "objective": "Install Docker",
+            "plan": [
+                {"step": "Install Docker", "status": "completed"},
+                {"step": "Add GPG key", "status": "in_progress"},
+                {"step": "Update packages", "status": "pending"}
+            ]
+        });
+        let out = t.call(&args, &ctx).await.unwrap();
+        let text = content_text(&out);
+        assert!(
+            text.contains("Install Docker: 1/3 steps completed"),
+            "{text}"
+        );
+        assert!(text.contains("Current: \"Add GPG key\""), "{text}");
+    }
+
+    #[tokio::test]
+    async fn call_all_completed_emits_completion() {
+        let t = UpdatePlanTool::new();
+        let ctx = ToolContext::for_test();
+        let args = json!({
+            "objective": "Install Docker",
+            "plan": [{"step": "Install Docker", "status": "completed"}]
+        });
+        let out = t.call(&args, &ctx).await.unwrap();
+        assert!(content_text(&out).contains("all steps completed"));
+    }
+
+    #[tokio::test]
+    async fn call_remembers_last_objective() {
+        let t = UpdatePlanTool::new();
+        let ctx = ToolContext::for_test();
+
+        let args = json!({
+            "objective": "Install Docker",
+            "plan": [{"step": "Install Docker", "status": "completed"}]
+        });
+        let _ = t.call(&args, &ctx).await.unwrap();
+
+        let args = json!({
+            "plan": [{"step": "Add GPG key", "status": "in_progress"}]
+        });
+        let out = t.call(&args, &ctx).await.unwrap();
+        assert!(content_text(&out).contains("Install Docker"));
+    }
+
+    #[tokio::test]
+    async fn call_without_objective_uses_placeholder() {
+        let t = UpdatePlanTool::new();
+        let ctx = ToolContext::for_test();
+        let args = json!({
+            "plan": [{"step": "Install Docker", "status": "completed"}]
+        });
+        let out = t.call(&args, &ctx).await.unwrap();
+        assert!(content_text(&out).contains("(no objective specified)"));
+    }
+
+    #[tokio::test]
+    async fn call_empty_plan_is_invalid() {
+        let t = UpdatePlanTool::new();
+        let ctx = ToolContext::for_test();
+        let args = json!({"objective": "x", "plan": []});
+        let err = t.call(&args, &ctx).await.unwrap_err();
+        assert!(matches!(err, AgentError::ToolArgsInvalid { .. }));
     }
 }

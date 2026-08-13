@@ -457,4 +457,163 @@ mod tests {
             .collect();
         assert_eq!(names, vec!["alpha", "mike", "zeta"]);
     }
+
+    // ── B4: content image / partial result / typed-tool blanket / registry ──
+
+    #[test]
+    fn content_image_and_content_text_skips_images() {
+        let img = Content::image("base64data", "image/png");
+        assert!(
+            matches!(&img, Content::Image { data, mime_type } if data == "base64data" && mime_type == "image/png")
+        );
+
+        let text = content_text(&[
+            Content::text("a"),
+            Content::image("b", "image/png"),
+            Content::text("c"),
+        ]);
+        assert_eq!(text, "a\nc");
+    }
+
+    #[test]
+    fn emit_partial_result_sends_event() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let ctx = ToolContext {
+            session_id: SessionId::new(0),
+            user_event_tx: tx,
+            llm_client: None,
+            session_store: None,
+            language: crate::types::Language::En,
+            cancel_token: tokio_util::sync::CancellationToken::new(),
+            event_bus: crate::engine::EventBus::new(1),
+        };
+        ctx.emit_partial_result("tc1", "partial", true);
+        match rx.try_recv().unwrap() {
+            UserEvent::ToolPartialResult {
+                tool_call_id,
+                content,
+                is_partial,
+            } => {
+                assert_eq!(tool_call_id, "tc1");
+                assert_eq!(content, "partial");
+                assert!(is_partial);
+            }
+            other => panic!("unexpected event: {other:?}"),
+        }
+    }
+
+    // A concrete TypedTool exercising the blanket `impl Tool for T`.
+    #[derive(schemars::JsonSchema, serde::Deserialize, serde::Serialize)]
+    struct GreetArgs {
+        name: String,
+    }
+
+    struct GreetTool;
+    #[async_trait]
+    impl TypedTool for GreetTool {
+        type Args = GreetArgs;
+        type Output = String;
+        fn name(&self) -> &'static str {
+            "greet"
+        }
+        fn description(&self) -> &'static str {
+            "greets a name"
+        }
+        fn origin(&self) -> &'static str {
+            "test-crate"
+        }
+        fn version(&self) -> &'static str {
+            "1.0.0"
+        }
+        async fn call_typed(&self, args: GreetArgs, _ctx: &ToolContext) -> AgentResult<String> {
+            Ok(format!("Hello, {}!", args.name))
+        }
+    }
+
+    #[test]
+    fn typed_tool_blanket_delegates_name_description() {
+        let t = GreetTool;
+        assert_eq!(Tool::name(&t), "greet");
+        assert_eq!(Tool::description(&t), "greets a name");
+    }
+
+    #[test]
+    fn typed_tool_metadata_uses_origin_and_version() {
+        let m = Tool::metadata(&GreetTool);
+        assert_eq!(m.name, "greet");
+        assert_eq!(m.description, "greets a name");
+        assert_eq!(m.origin, "test-crate");
+        assert_eq!(m.version, "1.0.0");
+        assert!(m.requirements.is_empty());
+    }
+
+    #[tokio::test]
+    async fn typed_tool_call_deserializes_and_formats() {
+        let ctx = ToolContext::for_test();
+        let out = Tool::call(&GreetTool, &json!({"name": "world"}), &ctx)
+            .await
+            .unwrap();
+        // format_output JSON-serializes the String, so it is quoted.
+        assert_eq!(content_text(&out), "\"Hello, world!\"");
+    }
+
+    #[tokio::test]
+    async fn typed_tool_call_invalid_args_is_tool_args_invalid() {
+        let ctx = ToolContext::for_test();
+        let err = Tool::call(&GreetTool, &json!({"nope": 1}), &ctx)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, AgentError::ToolArgsInvalid { .. }));
+    }
+
+    struct NamedTool(&'static str);
+    #[async_trait]
+    impl Tool for NamedTool {
+        fn name(&self) -> &'static str {
+            self.0
+        }
+        fn description(&self) -> &'static str {
+            ""
+        }
+        fn schema(&self) -> serde_json::Value {
+            serde_json::Value::Null
+        }
+        async fn call(
+            &self,
+            _args: &serde_json::Value,
+            _ctx: &ToolContext,
+        ) -> AgentResult<Vec<Content>> {
+            Ok(vec![])
+        }
+    }
+
+    #[test]
+    fn registry_register_arc_get_remove_len_is_empty() {
+        let mut r = ToolRegistry::default();
+        assert!(r.is_empty());
+        assert_eq!(r.len(), 0);
+
+        let t: Arc<dyn Tool> = Arc::new(NamedTool("x"));
+        r.register_arc(t);
+        assert!(!r.is_empty());
+        assert_eq!(r.len(), 1);
+        assert!(r.get("x").is_some());
+        assert!(r.get("missing").is_none());
+
+        r.remove("x");
+        assert!(r.is_empty());
+    }
+
+    #[test]
+    fn metadatas_are_sorted_by_name() {
+        let mut r = ToolRegistry::default();
+        r.register(NamedTool("zeta"));
+        r.register(NamedTool("alpha"));
+
+        let metas = r.metadatas();
+        let names: Vec<&str> = metas.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, vec!["alpha", "zeta"]);
+        assert_eq!(metas[0].origin, "custom");
+        assert_eq!(metas[0].version, "unknown");
+    }
 }
