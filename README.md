@@ -57,7 +57,6 @@ agent-base = "0.1.14"
 | Flag | Description | Default |
 |------|-------------|---------|
 | `sqlite-session` | Enable `SqliteSessionStore` for SQLite-backed session persistence | off |
-| `typed-tools` | Enable `TypedTool` trait with JSON Schema generation via `schemars` | off |
 | `telemetry` | Enable OpenTelemetry integration for distributed tracing | off |
 
 ```toml

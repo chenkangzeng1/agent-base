@@ -194,12 +194,11 @@ pub trait Tool: Send + Sync {
 
 #[async_trait]
 pub trait TypedTool: Send + Sync {
-    type Args: serde::de::DeserializeOwned;
+    type Args: serde::de::DeserializeOwned + schemars::JsonSchema;
     type Output: serde::Serialize;
 
     fn name(&self) -> &'static str;
     fn description(&self) -> &'static str;
-    fn parameters_schema(&self) -> Value;
     async fn call_typed(&self, args: Self::Args, ctx: &ToolContext) -> AgentResult<Self::Output>;
 
     fn control_flow() -> ToolControlFlow
@@ -212,6 +211,16 @@ pub trait TypedTool: Send + Sync {
     fn format_output(&self, output: Self::Output) -> String {
         serde_json::to_string(&output).unwrap_or_default()
     }
+
+    /// Machine-readable origin of this tool (crate name, `"agent-base"`, or `"custom"`).
+    fn origin(&self) -> &'static str {
+        "custom"
+    }
+
+    /// Crate/package version, or `"unknown"` when built outside a crate.
+    fn version(&self) -> &'static str {
+        "unknown"
+    }
 }
 
 #[async_trait]
@@ -221,14 +230,26 @@ impl<T: TypedTool + Send + Sync + 'static> Tool for T {
     }
 
     fn definition(&self) -> Value {
+        let parameters =
+            serde_json::to_value(schemars::schema_for!(T::Args)).unwrap_or(Value::Null);
         json!({
             "type": "function",
             "function": {
                 "name": self.name(),
                 "description": self.description(),
-                "parameters": self.parameters_schema(),
+                "parameters": parameters,
             }
         })
+    }
+
+    fn metadata(&self) -> ToolMetadata {
+        ToolMetadata {
+            name: self.name().to_string(),
+            description: self.description().to_string(),
+            origin: self.origin().to_string(),
+            version: self.version().to_string(),
+            requirements: vec![],
+        }
     }
 
     async fn call(&self, args: &Value, ctx: &ToolContext) -> AgentResult<ToolOutput> {
@@ -330,5 +351,21 @@ mod tests {
         assert!(ctx.session_store.is_none());
         assert!(!ctx.cancel_token.is_cancelled());
         ctx.emit_progress("hello");
+    }
+
+    #[test]
+    fn typed_tool_schema_is_derived_from_args() {
+        #[derive(schemars::JsonSchema, serde::Deserialize, serde::Serialize)]
+        struct GreetArgs {
+            name: String,
+            #[serde(default)]
+            times: u32,
+        }
+
+        let schema = schemars::schema_for!(GreetArgs);
+        let j = serde_json::to_value(&schema).unwrap();
+        // The derived schema exposes the struct's fields as object properties.
+        assert!(j["properties"]["name"].is_object());
+        assert!(j["properties"]["times"].is_object());
     }
 }

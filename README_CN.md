@@ -57,7 +57,6 @@ agent-base = "0.1.14"
 | Flag | 说明 | 默认 |
 |------|------|------|
 | `sqlite-session` | 启用 `SqliteSessionStore`（SQLite 持久化会话存储） | 关闭 |
-| `typed-tools` | 启用 `TypedTool` trait，通过 `schemars` 生成 JSON Schema | 关闭 |
 | `telemetry` | 启用 OpenTelemetry 集成，支持分布式追踪 | 关闭 |
 
 ```toml
