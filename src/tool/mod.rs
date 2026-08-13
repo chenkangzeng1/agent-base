@@ -189,7 +189,15 @@ pub trait TypedTool: Send + Sync {
     async fn call_typed(&self, args: Self::Args, ctx: &ToolContext) -> AgentResult<Self::Output>;
 
     fn format_output(&self, output: Self::Output) -> Content {
-        Content::text(serde_json::to_string(&output).unwrap_or_default())
+        // A `String` output is emitted verbatim; any other serializable type is
+        // rendered as JSON. This avoids `serde_json::to_string` wrapping a plain
+        // string in literal double quotes (`hello` → `"hello"`), which would leak
+        // quotes into the LLM-visible tool result.
+        match serde_json::to_value(&output) {
+            Ok(serde_json::Value::String(s)) => Content::text(s),
+            Ok(other) => Content::text(other.to_string()),
+            Err(_) => Content::text(String::new()),
+        }
     }
 
     /// Machine-readable origin of this tool (crate name, `"agent-base"`, or `"custom"`).
@@ -553,8 +561,44 @@ mod tests {
         let out = Tool::call(&GreetTool, &json!({"name": "world"}), &ctx)
             .await
             .unwrap();
-        // format_output JSON-serializes the String, so it is quoted.
-        assert_eq!(content_text(&out), "\"Hello, world!\"");
+        // format_output emits a String verbatim (not JSON-quoted).
+        assert_eq!(content_text(&out), "Hello, world!");
+    }
+
+    // A struct-typed output confirms non-String outputs still serialize as JSON.
+    #[derive(serde::Serialize)]
+    struct GreetResult {
+        message: String,
+    }
+
+    struct GreetStructTool;
+    #[async_trait]
+    impl TypedTool for GreetStructTool {
+        type Args = GreetArgs;
+        type Output = GreetResult;
+        fn name(&self) -> &'static str {
+            "greet_struct"
+        }
+        fn description(&self) -> &'static str {
+            "greets as json"
+        }
+        async fn call_typed(
+            &self,
+            args: GreetArgs,
+            _ctx: &ToolContext,
+        ) -> AgentResult<GreetResult> {
+            Ok(GreetResult {
+                message: format!("Hello, {}!", args.name),
+            })
+        }
+    }
+
+    #[test]
+    fn format_output_json_serializes_struct() {
+        let out = GreetStructTool.format_output(GreetResult {
+            message: "hi".into(),
+        });
+        assert_eq!(content_text(&[out]), r#"{"message":"hi"}"#);
     }
 
     #[tokio::test]

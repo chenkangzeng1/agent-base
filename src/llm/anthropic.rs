@@ -447,11 +447,9 @@ impl LlmClient for AnthropicClient {
                         Some(Err(AgentError::LlmApi { message: err_msg }))
                     }
                     Ok(ev) => {
-                        let event_type = if ev.event.is_empty() {
-                            "message_stop"
-                        } else {
-                            ev.event.as_str()
-                        };
+                        // eventsource-stream normalizes an empty SSE `event:`
+                        // field to "message", so `ev.event` is never empty here.
+                        let event_type = ev.event.as_str();
                         match Self::parse_sse(&ev.data, event_type) {
                             Ok(chunk) => Some(Ok(chunk)),
                             Err(e) => Some(Err(e)),

@@ -378,6 +378,7 @@ impl ToolEngine {
     }
 }
 
+#[derive(Debug)]
 pub struct ToolExecutionResult {
     pub id: String,
     #[allow(dead_code)]
@@ -757,7 +758,7 @@ mod tests {
             .await;
 
         assert!(result.is_err(), "invalid JSON args should fail orchestrate");
-        let err = result.err().expect("just asserted err");
+        let err = result.expect_err("just asserted err");
         assert!(matches!(err, AgentError::ToolArgsInvalid { .. }));
     }
 
@@ -862,8 +863,7 @@ mod tests {
                     },
                 )
                 .await
-                .err()
-                .expect("failing tool should error");
+                .expect_err("failing tool should error");
 
             assert!(
                 matches!(err, AgentError::ToolExecution { .. }),

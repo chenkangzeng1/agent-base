@@ -168,6 +168,16 @@ impl SessionManager {
         let mut sessions = self.sessions.write().await;
         if let Some(session) = sessions.get_mut(session_id) {
             session.allow_action(action_key);
+        } else {
+            // `get_mut` returns None when the session doesn't exist yet — the
+            // approval cache is silently a no-op in that case. Surface it so a
+            // caller caching before session creation isn't left wondering why
+            // approval was re-prompted.
+            tracing::warn!(
+                session_id = session_id.id,
+                action = %action_key,
+                "cache_approval ignored: session not found"
+            );
         }
     }
 
