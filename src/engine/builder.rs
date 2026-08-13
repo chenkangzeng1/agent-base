@@ -274,9 +274,12 @@ impl AgentBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::LlmClient;
-    use crate::llm::StreamChunk;
-    use crate::types::{AgentResult, ChatMessage, ResponseFormat};
+    use crate::engine::DenyAllApprovalHandler;
+    use crate::llm::{LlmClient, ReasoningEffort, StreamChunk};
+    use crate::tool::{Content, ToolContext};
+    use crate::types::{
+        AgentError, AgentResult, ApprovalRequest, ChatMessage, Language, ResponseFormat,
+    };
     use async_trait::async_trait;
     use futures_core::Stream;
     use serde_json::Value;
@@ -324,5 +327,176 @@ mod tests {
         let client = crate::llm::adapt(Arc::new(DummyClient));
         let builder = AgentBuilder::new(client);
         assert_eq!(builder.config.execution.max_turns, None);
+    }
+
+    fn b() -> AgentBuilder {
+        AgentBuilder::new(crate::llm::adapt(Arc::new(DummyClient)))
+    }
+
+    struct NoopTool;
+
+    #[async_trait]
+    impl Tool for NoopTool {
+        fn name(&self) -> &'static str {
+            "noop"
+        }
+        fn description(&self) -> &'static str {
+            "noop tool"
+        }
+        fn schema(&self) -> Value {
+            serde_json::json!({"type": "object"})
+        }
+        async fn call(&self, _args: &Value, _ctx: &ToolContext) -> AgentResult<Vec<Content>> {
+            Ok(vec![Content::text("ok")])
+        }
+    }
+
+    struct AutoApprovePolicy;
+
+    #[async_trait]
+    impl ToolPolicy for AutoApprovePolicy {
+        async fn evaluate_approval(
+            &self,
+            _tool_name: &str,
+            _args: &Value,
+        ) -> Option<ApprovalRequest> {
+            None
+        }
+    }
+
+    struct NoopMiddleware;
+
+    impl Middleware for NoopMiddleware {}
+
+    #[test]
+    fn system_prompt_sets_config() {
+        assert_eq!(
+            b().system_prompt("be helpful")
+                .config
+                .system_prompt
+                .as_deref(),
+            Some("be helpful")
+        );
+    }
+
+    #[test]
+    fn enable_thought_sets_config() {
+        assert!(b().enable_thought(true).config.enable_thought);
+    }
+
+    #[test]
+    fn reasoning_sets_config() {
+        let rc = ReasoningConfig {
+            enabled: Some(true),
+            budget_tokens: Some(64),
+            effort: Some(ReasoningEffort::Medium),
+        };
+        let builder = b().reasoning(rc);
+        let got = builder.config.reasoning.as_ref().unwrap();
+        assert_eq!(got.enabled, Some(true));
+        assert_eq!(got.budget_tokens, Some(64));
+        assert!(matches!(got.effort.as_ref(), Some(ReasoningEffort::Medium)));
+    }
+
+    #[test]
+    fn enable_thinking_and_budget_set_reasoning() {
+        let builder = b().enable_thinking(true).thinking_budget(128);
+        let got = builder.config.reasoning.as_ref().unwrap();
+        assert_eq!(got.enabled, Some(true));
+        assert_eq!(got.budget_tokens, Some(128));
+    }
+
+    #[test]
+    fn tool_limits_set_config() {
+        let builder = b().tool_timeout(5_000).max_tool_output_chars(1_024);
+        assert_eq!(builder.config.tool.tool_timeout_ms, Some(5_000));
+        assert_eq!(builder.config.tool.max_tool_output_chars, Some(1_024));
+    }
+
+    #[test]
+    fn register_tool_adds_to_registry() {
+        assert_eq!(b().register_tool(NoopTool).tools.len(), 1);
+    }
+
+    #[test]
+    fn approval_handler_and_tool_policy_are_set() {
+        let builder = b()
+            .approval_handler(Arc::new(DenyAllApprovalHandler))
+            .tool_policy(Arc::new(AutoApprovePolicy));
+        assert!(builder.approval_handler.is_some());
+        assert!(builder.tool_policy.is_some());
+    }
+
+    #[test]
+    fn middleware_and_context_window_are_set() {
+        let builder = b().middleware(NoopMiddleware).context_window(8_000);
+        assert_eq!(builder.middlewares.len(), 1);
+        assert!(builder.context_manager.is_some());
+    }
+
+    #[test]
+    fn response_format_and_retry_set_config() {
+        let builder = b()
+            .response_format(ResponseFormat::JsonObject)
+            .llm_retry(RetryConfig::default().max_retries(5));
+        assert!(builder.config.llm.response_format.is_some());
+        assert_eq!(
+            builder.config.llm.llm_retry.as_ref().unwrap().max_retries,
+            5
+        );
+    }
+
+    #[test]
+    fn session_store_and_error_recovery_are_set() {
+        let builder = b()
+            .session_store(Arc::new(InMemorySessionStore::new()))
+            .error_recovery(Arc::new(StopOnError));
+        assert!(builder.session_store.is_some());
+        assert!(builder.error_recovery.is_some());
+    }
+
+    #[test]
+    fn session_limits_set_config() {
+        let builder = b()
+            .max_sessions(10)
+            .max_turns_per_session(20)
+            .max_message_tokens(30);
+        assert_eq!(builder.config.session.max_sessions, Some(10));
+        assert_eq!(builder.config.session.max_turns_per_session, Some(20));
+        assert_eq!(builder.config.session.max_message_tokens, Some(30));
+    }
+
+    #[test]
+    fn tool_error_retry_prompt_and_language_set_config() {
+        let builder = b()
+            .tool_error_retry_prompt("try again")
+            .language(Language::Zh);
+        assert_eq!(
+            builder.config.tool.tool_error_retry_prompt.as_deref(),
+            Some("try again")
+        );
+        assert_eq!(builder.config.language, Language::Zh);
+    }
+
+    #[test]
+    fn apply_if_applies_when_some_and_skips_when_none() {
+        let applied = b().apply_if(Some(3_000_u64), |b, t| b.tool_timeout(t));
+        assert_eq!(applied.config.tool.tool_timeout_ms, Some(3_000));
+
+        let skipped = b().apply_if(None, |b, t| b.tool_timeout(t));
+        assert_eq!(skipped.config.tool.tool_timeout_ms, None);
+    }
+
+    #[test]
+    fn build_ok_with_defaults() {
+        assert!(b().build().is_ok());
+    }
+
+    #[test]
+    fn build_err_on_invalid_config() {
+        assert!(matches!(
+            b().execution_max_turns(0).build(),
+            Err(AgentError::ConfigError(_))
+        ));
     }
 }

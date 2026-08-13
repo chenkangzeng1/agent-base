@@ -332,3 +332,220 @@ impl StreamAggregator {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::llm::LlmCapabilities;
+    use crate::types::{AgentError, ResponseFormat};
+    use async_trait::async_trait;
+    use std::pin::Pin;
+
+    struct StubClient(&'static str);
+
+    #[async_trait]
+    impl StreamClient for StubClient {
+        async fn stream(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[Value],
+            _reasoning: Option<&ReasoningConfig>,
+            _response_format: Option<&ResponseFormat>,
+        ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
+            Ok(Box::pin(futures_util::stream::empty()))
+        }
+
+        fn capabilities(&self) -> LlmCapabilities {
+            LlmCapabilities::default()
+        }
+
+        fn model_name(&self) -> &str {
+            self.0
+        }
+    }
+
+    fn engine(model: &'static str) -> LlmEngine {
+        LlmEngine::new(Arc::new(StubClient(model)), EventBus::new(16))
+    }
+
+    #[test]
+    fn get_client_and_set_client_swap() {
+        let engine = engine("model-a");
+        assert_eq!(engine.get_client().model_name(), "model-a");
+        engine.set_client(Arc::new(StubClient("model-b")));
+        assert_eq!(engine.get_client().model_name(), "model-b");
+    }
+
+    #[tokio::test]
+    async fn process_stream_aggregates_text_usage_and_stop() {
+        let bus = EventBus::new(16);
+        let engine = LlmEngine::new(Arc::new(StubClient("x")), bus.clone());
+        let chunks = vec![
+            Ok(StreamChunk::Text("Hello".into())),
+            Ok(StreamChunk::Text(" world".into())),
+            Ok(StreamChunk::Usage(UsageInfo {
+                prompt_tokens: Some(5),
+                completion_tokens: Some(2),
+                total_tokens: Some(7),
+            })),
+            Ok(StreamChunk::Stop {
+                finish_reason: Some("stop".into()),
+            }),
+        ];
+        let stream = Box::pin(futures_util::stream::iter(chunks));
+        let mut rx = bus.subscribe();
+        let mut events = Vec::new();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = engine
+            .process_stream(
+                &SessionId::new(1),
+                stream,
+                tracing::Span::none(),
+                &mut rx,
+                &mut |e| {
+                    events.push(e);
+                    Ok(())
+                },
+                &cancel,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.full_text, "Hello world");
+        assert!(!result.is_tool_call);
+        assert_eq!(result.finish_reason.as_deref(), Some("stop"));
+        let usage = result.usage.unwrap();
+        assert_eq!(usage.prompt_tokens, Some(5));
+        assert_eq!(usage.completion_tokens, Some(2));
+        assert_eq!(usage.total_tokens, Some(7));
+        assert!(result.llm_duration_ms >= result.ttft_ms);
+
+        let texts: Vec<String> = events
+            .iter()
+            .filter_map(|e| match e {
+                RuntimeEvent::TextDelta { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["Hello".to_string(), " world".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn process_stream_aggregates_tool_calls() {
+        let bus = EventBus::new(16);
+        let engine = LlmEngine::new(Arc::new(StubClient("x")), bus.clone());
+        let chunks = vec![
+            Ok(StreamChunk::ToolCall(serde_json::json!({
+                "delta": { "tool_calls": [
+                    { "index": 0, "id": "call_1", "function": { "name": "shell", "arguments": "{\"cmd\":" } }
+                ] }
+            }))),
+            Ok(StreamChunk::ToolCall(serde_json::json!({
+                "delta": { "tool_calls": [
+                    { "index": 0, "function": { "arguments": "\"ls\"" } }
+                ] }
+            }))),
+        ];
+        let stream = Box::pin(futures_util::stream::iter(chunks));
+        let mut rx = bus.subscribe();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = engine
+            .process_stream(
+                &SessionId::new(1),
+                stream,
+                tracing::Span::none(),
+                &mut rx,
+                &mut |_e| Ok(()),
+                &cancel,
+            )
+            .await
+            .unwrap();
+
+        assert!(result.is_tool_call);
+        assert!(result.full_text.is_empty());
+        assert_eq!(result.tool_calls.len(), 1);
+        let tc = &result.tool_calls[0];
+        assert_eq!(tc["id"].as_str(), Some("call_1"));
+        assert_eq!(tc["type"].as_str(), Some("function"));
+        assert_eq!(tc["function"]["name"].as_str(), Some("shell"));
+        assert_eq!(
+            tc["function"]["arguments"].as_str(),
+            Some("{\"cmd\":\"ls\"")
+        );
+    }
+
+    #[tokio::test]
+    async fn process_stream_falls_back_to_reasoning() {
+        let bus = EventBus::new(16);
+        let engine = LlmEngine::new(Arc::new(StubClient("x")), bus.clone());
+        let chunks = vec![Ok(StreamChunk::Thought("deep thought".into()))];
+        let stream = Box::pin(futures_util::stream::iter(chunks));
+        let mut rx = bus.subscribe();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = engine
+            .process_stream(
+                &SessionId::new(1),
+                stream,
+                tracing::Span::none(),
+                &mut rx,
+                &mut |_e| Ok(()),
+                &cancel,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(result.full_text, "deep thought");
+        assert_eq!(result.reasoning_text, "deep thought");
+        assert!(!result.is_tool_call);
+    }
+
+    #[tokio::test]
+    async fn process_stream_propagates_error() {
+        let bus = EventBus::new(16);
+        let engine = LlmEngine::new(Arc::new(StubClient("x")), bus.clone());
+        let chunks = vec![
+            Ok(StreamChunk::Text("partial".into())),
+            Err(AgentError::internal("boom")),
+        ];
+        let stream = Box::pin(futures_util::stream::iter(chunks));
+        let mut rx = bus.subscribe();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let err = engine
+            .process_stream(
+                &SessionId::new(1),
+                stream,
+                tracing::Span::none(),
+                &mut rx,
+                &mut |_e| Ok(()),
+                &cancel,
+            )
+            .await
+            .err()
+            .expect("stream should error");
+        assert!(err.to_string().contains("boom"));
+    }
+
+    #[tokio::test]
+    async fn process_stream_cancelled() {
+        let bus = EventBus::new(16);
+        let engine = LlmEngine::new(Arc::new(StubClient("x")), bus.clone());
+        let stream: Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>> =
+            Box::pin(futures_util::stream::pending());
+        let mut rx = bus.subscribe();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        cancel.cancel();
+        let err = engine
+            .process_stream(
+                &SessionId::new(1),
+                stream,
+                tracing::Span::none(),
+                &mut rx,
+                &mut |_e| Ok(()),
+                &cancel,
+            )
+            .await
+            .err()
+            .expect("stream should error");
+        assert!(matches!(err, AgentError::Cancelled));
+    }
+}

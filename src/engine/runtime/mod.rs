@@ -347,3 +347,137 @@ impl AgentRuntime {
         self.runner.message_queue.set_mode(mode);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::llm::{
+        LlmCapabilities, ReasoningConfig, ReasoningEffort, StreamChunk, StreamClient,
+    };
+    use crate::types::{ChatMessage, ResponseFormat};
+    use async_trait::async_trait;
+    use futures_core::Stream;
+    use serde_json::Value;
+    use std::pin::Pin;
+
+    struct StubClient;
+
+    #[async_trait]
+    impl StreamClient for StubClient {
+        async fn stream(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[Value],
+            _reasoning: Option<&ReasoningConfig>,
+            _response_format: Option<&ResponseFormat>,
+        ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
+            Ok(Box::pin(futures_util::stream::empty()))
+        }
+
+        fn capabilities(&self) -> LlmCapabilities {
+            LlmCapabilities::default()
+        }
+    }
+
+    fn runtime() -> AgentRuntime {
+        crate::engine::AgentBuilder::new(Arc::new(StubClient))
+            .build()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn create_session_and_lookup() {
+        let rt = runtime();
+        let id = rt.create_session().await;
+        assert_eq!(id.id, 1);
+        assert!(rt.session(&id).await.is_some());
+        assert!(rt.session_or_err(&id).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn add_messages_and_get() {
+        let rt = runtime();
+        let id = rt.create_session().await;
+        rt.add_system_message(&id, "sys").await.unwrap();
+        rt.add_user_message(&id, "hello").await.unwrap();
+        let msgs = rt.get_messages(&id).await.unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert!(matches!(msgs[0], ChatMessage::System { .. }));
+        assert!(matches!(msgs[1], ChatMessage::User { .. }));
+    }
+
+    #[tokio::test]
+    async fn add_tool_result_appends_tool_message() {
+        let rt = runtime();
+        let id = rt.create_session().await;
+        rt.add_tool_result(&id, "call_1", "done").await.unwrap();
+        let msgs = rt.get_messages(&id).await.unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert!(matches!(msgs[0], ChatMessage::Tool { .. }));
+    }
+
+    #[tokio::test]
+    async fn set_messages_replaces_history() {
+        let rt = runtime();
+        let id = rt.create_session().await;
+        rt.add_user_message(&id, "old").await.unwrap();
+        rt.set_messages(
+            &id,
+            vec![ChatMessage::system("sys"), ChatMessage::user("new")],
+        )
+        .await
+        .unwrap();
+        let msgs = rt.get_messages(&id).await.unwrap();
+        assert_eq!(msgs.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn validate_session_errors_for_unknown() {
+        let rt = runtime();
+        let id = rt.create_session().await;
+        assert!(rt.validate_session(&id).await.is_ok());
+        let err = rt.validate_session(&SessionId::new(999)).await.unwrap_err();
+        assert!(matches!(err, AgentError::SessionNotFound(_)));
+    }
+
+    #[test]
+    fn config_and_set_reasoning_effort() {
+        let rt = runtime();
+        assert!(rt.config().system_prompt.is_none());
+
+        rt.set_reasoning_effort_sync(ReasoningEffort::High);
+        let cfg = rt.config();
+        let effort = cfg.reasoning.as_ref().and_then(|r| r.effort.as_ref());
+        assert!(matches!(effort, Some(ReasoningEffort::High)));
+    }
+
+    #[tokio::test]
+    async fn session_store_is_available() {
+        let rt = runtime();
+        assert!(rt.session_store().list().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn emit_and_subscribe_event() {
+        let rt = runtime();
+        let mut rx = rt.subscribe_runtime_events();
+        rt.emit_event(RuntimeEvent::TextDelta {
+            session_id: SessionId::new(1),
+            text: "hi".into(),
+            agent_id: None,
+            trace_id: None,
+        });
+        let ev = rx.recv().await.unwrap();
+        assert!(matches!(ev, RuntimeEvent::TextDelta { .. }));
+    }
+
+    #[tokio::test]
+    async fn cancel_reset_and_is_cancelled() {
+        let rt = runtime();
+        assert!(!rt.is_cancelled());
+        rt.cancel();
+        assert!(rt.is_cancelled());
+        rt.reset_cancel();
+        assert!(!rt.is_cancelled());
+    }
+}
