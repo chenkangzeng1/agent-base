@@ -1491,6 +1491,7 @@ mod tests {
     use crate::engine::AgentBuilder;
     use crate::engine::middleware::{Middleware, UserMessageCtx};
     use crate::llm::{LlmCapabilities, LlmClient, StreamChunk};
+    use crate::tool::{Content, Tool, ToolContext};
     use crate::types::{AgentError, AgentResult, ChatMessage, ResponseFormat, SessionId};
     use async_trait::async_trait;
     use futures_core::Stream;
@@ -1873,6 +1874,112 @@ mod tests {
         assert_eq!(
             text_count, 2,
             "both initial and follow-up turns should produce assistant responses"
+        );
+    }
+
+    /// Minimal tool that echoes its `text` argument back as `echo: <text>`.
+    struct EchoTool;
+
+    #[async_trait]
+    impl Tool for EchoTool {
+        fn name(&self) -> &'static str {
+            "echo"
+        }
+
+        fn description(&self) -> &'static str {
+            "Echo back the provided text"
+        }
+
+        fn schema(&self) -> Value {
+            serde_json::json!({
+                "type": "object",
+                "properties": { "text": { "type": "string" } }
+            })
+        }
+
+        async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<Vec<Content>> {
+            let text = args.get("text").and_then(Value::as_str).unwrap_or("");
+            Ok(vec![Content::text(format!("echo: {text}"))])
+        }
+    }
+
+    #[tokio::test]
+    async fn run_turn_executes_tool_call_and_returns_text() {
+        // Turn 1: model requests the echo tool; Turn 2: model emits a final answer.
+        let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![
+            vec![
+                StreamChunk::ToolCall(serde_json::json!({
+                    "delta": {
+                        "tool_calls": [{
+                            "id": "call_1",
+                            "function": {
+                                "name": "echo",
+                                "arguments": "{\"text\":\"hello\"}"
+                            }
+                        }]
+                    }
+                })),
+                StreamChunk::Stop {
+                    finish_reason: Some("tool_calls".to_string()),
+                },
+            ],
+            vec![
+                StreamChunk::Text("final answer".to_string()),
+                StreamChunk::Stop {
+                    finish_reason: Some("stop".to_string()),
+                },
+            ],
+        ])));
+
+        let runtime = AgentBuilder::new(client)
+            .system_prompt("test")
+            .register_tool(EchoTool)
+            .build()
+            .expect("build runtime");
+
+        let sid = runtime.create_session().await;
+
+        let mut events = Vec::new();
+        let result = runtime
+            .run_turn(sid.clone(), "echo hello", |event| {
+                events.push(event);
+                Ok(())
+            })
+            .await;
+
+        assert!(result.is_ok(), "run_turn failed: {:?}", result.err());
+
+        let session = runtime.session(&sid).await.expect("session exists");
+        let messages = session.chat_messages().to_vec();
+
+        assert!(
+            messages
+                .iter()
+                .any(|m| matches!(m, ChatMessage::Tool { content, .. } if content.contains("echo: hello"))),
+            "session should contain the echo tool result: {:#?}",
+            messages
+                .iter()
+                .map(|m| format!("{:?}", m))
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            messages.iter().any(
+                |m| matches!(m, ChatMessage::Assistant { content: Some(c), .. } if c == "final answer")
+            ),
+            "session should contain the final assistant text"
+        );
+
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, RuntimeEvent::ToolCallStarted { .. })),
+            "run_turn should emit ToolCallStarted"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, RuntimeEvent::ToolCallFinished { .. })),
+            "run_turn should emit ToolCallFinished"
         );
     }
 }

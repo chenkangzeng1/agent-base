@@ -399,8 +399,12 @@ pub(crate) struct ExecutionContext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::{InMemorySessionStore, StopOnError};
-    use crate::types::{AtomicU64SessionIdGenerator, SessionConfig};
+    use crate::engine::{
+        AllowAllApprovalHandler, DenyAllApprovalHandler, InMemorySessionStore, StopOnError,
+    };
+    use crate::tool::Tool;
+    use crate::types::{ApprovalRequest, AtomicU64SessionIdGenerator, RiskLevel, SessionConfig};
+    use async_trait::async_trait;
     use tokio_util::sync::CancellationToken;
 
     #[tokio::test]
@@ -455,5 +459,333 @@ mod tests {
             assert_eq!(result.name, "no_such_tool");
             assert_eq!(content_text(&result.output), expected);
         }
+    }
+
+    /// Minimal tool that echoes its `text` argument back as `echo: <text>`.
+    struct EchoTool;
+
+    #[async_trait]
+    impl Tool for EchoTool {
+        fn name(&self) -> &'static str {
+            "echo"
+        }
+
+        fn description(&self) -> &'static str {
+            "Echo back the provided text"
+        }
+
+        fn schema(&self) -> Value {
+            serde_json::json!({
+                "type": "object",
+                "properties": { "text": { "type": "string" } }
+            })
+        }
+
+        async fn call(&self, args: &Value, _ctx: &ToolContext) -> AgentResult<Vec<Content>> {
+            let text = args.get("text").and_then(Value::as_str).unwrap_or("");
+            Ok(vec![Content::text(format!("echo: {text}"))])
+        }
+    }
+
+    /// Policy that always requests approval, so `process_approval` reaches the handler.
+    struct RequireApproval;
+
+    #[async_trait]
+    impl ToolPolicy for RequireApproval {
+        async fn evaluate_approval(
+            &self,
+            tool_name: &str,
+            _args: &Value,
+        ) -> Option<ApprovalRequest> {
+            Some(ApprovalRequest {
+                title: format!("Approve {tool_name}"),
+                message: "Approve this tool call?".to_string(),
+                action_key: Some(format!("approve:{tool_name}")),
+                risk_level: RiskLevel::Sensitive,
+                raw: None,
+            })
+        }
+    }
+
+    fn session_manager() -> SessionManager {
+        SessionManager::new(
+            Arc::new(AtomicU64SessionIdGenerator::default()),
+            Arc::new(InMemorySessionStore::new()),
+            SessionConfig::default(),
+        )
+    }
+
+    fn ctx(session_manager: &SessionManager) -> ExecutionContext {
+        ExecutionContext {
+            session_manager: session_manager.clone(),
+            llm_client: None,
+            language: Language::En,
+            tool_timeout_ms: None,
+            max_output_chars: None,
+            cancel_token: CancellationToken::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn execute_tool_found_runs_and_emits_events() {
+        let mut registry = ToolRegistry::default();
+        registry.register(EchoTool);
+
+        let event_bus = EventBus::new(16);
+        let mut event_rx = event_bus.subscribe();
+        let engine = ToolEngine::new(registry, None, None, Arc::new(StopOnError), event_bus);
+
+        let sm = session_manager();
+        let c = ctx(&sm);
+
+        let mut events = Vec::new();
+        let result = engine
+            .execute_tool(
+                &SessionId::new(1),
+                "call_1",
+                "echo",
+                &serde_json::json!({"text": "hi"}),
+                r#"{"text":"hi"}"#,
+                &c,
+                &mut event_rx,
+                &mut |e| -> AgentResult<()> {
+                    events.push(e);
+                    Ok(())
+                },
+            )
+            .await
+            .expect("echo tool should execute");
+
+        assert_eq!(result.id, "call_1");
+        assert_eq!(result.name, "echo");
+        assert_eq!(content_text(&result.output), "echo: hi");
+
+        let started = events.iter().find_map(|e| match e {
+            RuntimeEvent::ToolCallStarted {
+                tool_name,
+                args_json,
+                ..
+            } => Some((tool_name.as_str(), args_json.as_str())),
+            _ => None,
+        });
+        assert_eq!(started, Some(("echo", r#"{"text":"hi"}"#)));
+
+        assert!(events.iter().any(
+            |e| matches!(e, RuntimeEvent::ToolCallFinished { summary, .. } if summary == "echo: hi")
+        ));
+    }
+
+    #[tokio::test]
+    async fn definitions_returns_registered_tools() {
+        let mut registry = ToolRegistry::default();
+        registry.register(EchoTool);
+        let engine = ToolEngine::new(
+            registry,
+            None,
+            None,
+            Arc::new(StopOnError),
+            EventBus::new(4),
+        );
+
+        let defs = engine.definitions().await;
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0]["function"]["name"], "echo");
+    }
+
+    #[tokio::test]
+    async fn process_approval_without_policy_is_noop() {
+        let event_bus = EventBus::new(16);
+        let mut event_rx = event_bus.subscribe();
+        // No policy → auto-approve → returns Ok even with a deny-all handler.
+        let engine = ToolEngine::new(
+            ToolRegistry::default(),
+            Some(Arc::new(DenyAllApprovalHandler)),
+            None,
+            Arc::new(StopOnError),
+            event_bus,
+        );
+        let sm = session_manager();
+        let c = ctx(&sm);
+
+        engine
+            .process_approval(
+                &SessionId::new(1),
+                "echo",
+                &Value::Null,
+                "{}",
+                &c,
+                &mut event_rx,
+                &mut |_| -> AgentResult<()> { Ok(()) },
+            )
+            .await
+            .expect("no policy should skip approval");
+    }
+
+    #[tokio::test]
+    async fn process_approval_denies_when_handler_denies() {
+        let event_bus = EventBus::new(16);
+        let mut event_rx = event_bus.subscribe();
+        let engine = ToolEngine::new(
+            ToolRegistry::default(),
+            Some(Arc::new(DenyAllApprovalHandler)),
+            Some(Arc::new(RequireApproval)),
+            Arc::new(StopOnError),
+            event_bus,
+        );
+        let sm = session_manager();
+        let c = ctx(&sm);
+        let mut events = Vec::new();
+
+        let err = engine
+            .process_approval(
+                &SessionId::new(1),
+                "echo",
+                &Value::Null,
+                "{}",
+                &c,
+                &mut event_rx,
+                &mut |e| -> AgentResult<()> {
+                    events.push(e);
+                    Ok(())
+                },
+            )
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, AgentError::ApprovalDenied { .. }));
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, RuntimeEvent::AwaitingApproval { .. })),
+            "should emit AwaitingApproval before denial"
+        );
+    }
+
+    #[tokio::test]
+    async fn process_approval_allows_when_handler_allows() {
+        let event_bus = EventBus::new(16);
+        let mut event_rx = event_bus.subscribe();
+        let engine = ToolEngine::new(
+            ToolRegistry::default(),
+            Some(Arc::new(AllowAllApprovalHandler)),
+            Some(Arc::new(RequireApproval)),
+            Arc::new(StopOnError),
+            event_bus,
+        );
+        let sm = session_manager();
+        let c = ctx(&sm);
+
+        engine
+            .process_approval(
+                &SessionId::new(1),
+                "echo",
+                &Value::Null,
+                "{}",
+                &c,
+                &mut event_rx,
+                &mut |_| -> AgentResult<()> { Ok(()) },
+            )
+            .await
+            .expect("allow-all handler should grant approval");
+    }
+
+    #[tokio::test]
+    async fn orchestrate_executes_multiple_tool_calls() {
+        let mut registry = ToolRegistry::default();
+        registry.register(EchoTool);
+
+        let event_bus = EventBus::new(16);
+        let mut event_rx = event_bus.subscribe();
+        let engine = ToolEngine::new(registry, None, None, Arc::new(StopOnError), event_bus);
+
+        let sm = session_manager();
+        let c = ctx(&sm);
+
+        let results = engine
+            .orchestrate(
+                &SessionId::new(1),
+                &[
+                    (
+                        "call_a".to_string(),
+                        "echo".to_string(),
+                        r#"{"text":"a"}"#.to_string(),
+                    ),
+                    (
+                        "call_b".to_string(),
+                        "echo".to_string(),
+                        r#"{"text":"b"}"#.to_string(),
+                    ),
+                ],
+                &c,
+                &mut event_rx,
+                &mut |_| -> AgentResult<()> { Ok(()) },
+            )
+            .await
+            .expect("orchestrate should succeed");
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].id, "call_a");
+        assert_eq!(content_text(&results[0].output), "echo: a");
+        assert_eq!(results[1].id, "call_b");
+        assert_eq!(content_text(&results[1].output), "echo: b");
+    }
+
+    #[tokio::test]
+    async fn orchestrate_rejects_invalid_json_args() {
+        let mut registry = ToolRegistry::default();
+        registry.register(EchoTool);
+
+        let event_bus = EventBus::new(16);
+        let mut event_rx = event_bus.subscribe();
+        let engine = ToolEngine::new(registry, None, None, Arc::new(StopOnError), event_bus);
+
+        let sm = session_manager();
+        let c = ctx(&sm);
+
+        let result = engine
+            .orchestrate(
+                &SessionId::new(1),
+                &[(
+                    "call_x".to_string(),
+                    "echo".to_string(),
+                    "not-json".to_string(),
+                )],
+                &c,
+                &mut event_rx,
+                &mut |_| -> AgentResult<()> { Ok(()) },
+            )
+            .await;
+
+        assert!(result.is_err(), "invalid JSON args should fail orchestrate");
+        let err = result.err().expect("just asserted err");
+        assert!(matches!(err, AgentError::ToolArgsInvalid { .. }));
+    }
+
+    #[tokio::test]
+    async fn getters_expose_engine_state() {
+        let mut registry = ToolRegistry::default();
+        registry.register(EchoTool);
+
+        let approval = Arc::new(AllowAllApprovalHandler);
+        let recovery = Arc::new(StopOnError);
+        let event_bus = EventBus::new(4);
+        let engine = ToolEngine::new(
+            registry,
+            Some(approval.clone()),
+            None,
+            recovery.clone(),
+            event_bus,
+        );
+
+        assert!(engine.approval_handler().is_some());
+        assert!(Arc::ptr_eq(
+            engine.error_recovery(),
+            &(recovery.clone() as Arc<dyn ToolErrorRecovery>)
+        ));
+        assert_eq!(engine.tools_arc().read().await.len(), 1);
+
+        let defs = engine.definitions().await;
+        assert_eq!(defs.len(), 1);
+        assert_eq!(defs[0]["function"]["name"], "echo");
     }
 }
