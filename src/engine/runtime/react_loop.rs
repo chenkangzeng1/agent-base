@@ -250,7 +250,17 @@ impl RuntimeCore {
         // Emit RunFinished on any non-cancelled error so event listeners
         // know the turn ended.
         let (outcome, turn_count) = match result {
-            Ok(tuple) => tuple,
+            Ok(tuple) => {
+                // The loop no longer emits RunFinished on completion; emit it
+                // here once so listeners see a single terminal event.
+                self.event_bus.emit(RuntimeEvent::RunFinished {
+                    session_id: session_id.clone(),
+                    agent_id: None,
+                    trace_id: None,
+                });
+                EventBus::drain_async_events(&mut event_rx, &mut on_event)?;
+                tuple
+            }
             Err(e) if e.is_cancelled() => {
                 return Err(e);
             }
@@ -683,12 +693,6 @@ impl RuntimeCore {
                     0,
                 )
                 .await;
-                self.event_bus.emit(RuntimeEvent::RunFinished {
-                    session_id: session_id.clone(),
-                    agent_id: None,
-                    trace_id: None,
-                });
-                EventBus::drain_async_events(event_rx, on_event)?;
                 return Ok((
                     RunOutcome::MaxTurnsExceeded { turns: turn_count },
                     turn_count,
@@ -1121,12 +1125,6 @@ impl RuntimeCore {
                         1,
                     )
                     .await;
-                    self.event_bus.emit(RuntimeEvent::RunFinished {
-                        session_id: session_id.clone(),
-                        agent_id: None,
-                        trace_id: None,
-                    });
-                    EventBus::drain_async_events(event_rx, on_event)?;
                     return Ok((RunOutcome::Completed, turn_count));
                 }
                 Err(e) => {
@@ -2401,5 +2399,73 @@ mod tests {
         // The middleware incremented nudge_count, which should be written back.
         let session = runtime.session(&sid).await.expect("session exists");
         assert_eq!(session.nudge_count, 1, "nudge_count should be written back");
+    }
+
+    // ── Bug ① regression: exactly one RunFinished per entry point ──────
+
+    #[tokio::test]
+    async fn run_emits_runfinished_exactly_once() {
+        let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+            StreamChunk::Text("answer".to_string()),
+            StreamChunk::Stop {
+                finish_reason: Some("stop".to_string()),
+            },
+        ]])));
+        let runtime = AgentBuilder::new(client)
+            .system_prompt("test")
+            .build()
+            .expect("build runtime");
+        let sid = runtime.create_session().await;
+        runtime.add_user_message(&sid, "question").await.unwrap();
+
+        let mut events = Vec::new();
+        let outcome = runtime
+            .run(sid.clone(), |event| {
+                events.push(event);
+                Ok(())
+            })
+            .await
+            .expect("run");
+
+        assert!(matches!(outcome, RunOutcome::Completed));
+        let finished = events
+            .iter()
+            .filter(|e| matches!(e, RuntimeEvent::RunFinished { .. }))
+            .count();
+        assert_eq!(finished, 1, "run() must emit exactly one RunFinished");
+    }
+
+    #[tokio::test]
+    async fn run_managed_emits_runfinished_exactly_once() {
+        let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+            StreamChunk::Text("done".to_string()),
+            StreamChunk::Stop {
+                finish_reason: Some("stop".to_string()),
+            },
+        ]])));
+        let runtime = AgentBuilder::new(client)
+            .system_prompt("test")
+            .build()
+            .expect("build runtime");
+        let sid = runtime.create_session().await;
+
+        let mut events = Vec::new();
+        let outcome = runtime
+            .run_managed(sid.clone(), "do something", |event| {
+                events.push(event);
+                Ok(())
+            })
+            .await
+            .expect("run_managed");
+
+        assert!(matches!(outcome, RunOutcome::Completed));
+        let finished = events
+            .iter()
+            .filter(|e| matches!(e, RuntimeEvent::RunFinished { .. }))
+            .count();
+        assert_eq!(
+            finished, 1,
+            "run_managed() must emit exactly one RunFinished"
+        );
     }
 }
