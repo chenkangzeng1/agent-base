@@ -10,7 +10,7 @@ use crate::engine::runtime::message_queue::MessageQueue;
 use crate::engine::runtime::session_manager::SessionManager;
 use crate::engine::runtime::tool_engine::ToolEngine;
 use crate::types::ConvertToLlmFn;
-use crate::types::{AgentConfig, TurnContext};
+use crate::types::{AgentConfig, AgentError, AgentResult, SessionId, TurnContext};
 
 /// Turn-end callback type: receives TurnContext, no return value.
 pub type TurnEndCallback = Arc<dyn Fn(&TurnContext) + Send + Sync>;
@@ -83,6 +83,20 @@ impl RuntimeCore {
     /// Get a clone of config (async version)
     pub async fn config_snapshot_async(&self) -> AgentConfig {
         self.config.read().await.clone()
+    }
+
+    pub async fn validate_session(&self, session_id: &SessionId) -> AgentResult<()> {
+        if self.session_manager.session(session_id).await.is_none() {
+            return Err(AgentError::session_not_found(session_id.id));
+        }
+        Ok(())
+    }
+
+    pub async fn with_session_mut<F, R>(&self, session_id: &SessionId, f: F) -> AgentResult<R>
+    where
+        F: FnOnce(&mut crate::engine::AgentSession) -> R,
+    {
+        self.session_manager.with_session_mut(session_id, f).await
     }
 }
 
