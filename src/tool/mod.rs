@@ -238,6 +238,21 @@ impl<T: TypedTool + Send + Sync + 'static> Tool for T {
     }
 }
 
+/// Render a single tool's definition into the OpenAI function-calling
+/// envelope. Tools only provide `name`/`description`/`schema`; the envelope is
+/// assembled here at the LLM boundary (Anthropic gets its own renderer, and
+/// tool authors stay protocol-agnostic).
+pub fn render_tool_definition(tool: &dyn Tool) -> Value {
+    json!({
+        "type": "function",
+        "function": {
+            "name": tool.name(),
+            "description": tool.description(),
+            "parameters": tool.schema(),
+        }
+    })
+}
+
 pub(crate) type ToolRef = Arc<dyn Tool>;
 
 #[derive(Clone, Default)]
@@ -254,10 +269,6 @@ impl ToolRegistry {
         self.tools.insert(tool.name().to_string(), tool);
     }
 
-    pub fn update(&mut self, tool: impl Tool + 'static) {
-        self.tools.insert(tool.name().to_string(), Arc::new(tool));
-    }
-
     /// Remove a tool from the registry by name.
     pub fn remove(&mut self, name: &str) {
         self.tools.remove(name);
@@ -268,18 +279,11 @@ impl ToolRegistry {
     }
 
     pub fn definitions(&self) -> Vec<Value> {
-        self.tools
-            .values()
-            .map(|tool| {
-                json!({
-                    "type": "function",
-                    "function": {
-                        "name": tool.name(),
-                        "description": tool.description(),
-                        "parameters": tool.schema(),
-                    }
-                })
-            })
+        let mut tools: Vec<_> = self.tools.values().collect();
+        tools.sort_by_key(|t| t.name());
+        tools
+            .into_iter()
+            .map(|t| render_tool_definition(t.as_ref()))
             .collect()
     }
 
@@ -347,5 +351,41 @@ mod tests {
         // The derived schema exposes the struct's fields as object properties.
         assert!(j["properties"]["name"].is_object());
         assert!(j["properties"]["times"].is_object());
+    }
+
+    #[test]
+    fn definitions_are_sorted_by_name() {
+        struct NamedTool(&'static str);
+        #[async_trait::async_trait]
+        impl Tool for NamedTool {
+            fn name(&self) -> &'static str {
+                self.0
+            }
+            fn description(&self) -> &'static str {
+                ""
+            }
+            fn schema(&self) -> serde_json::Value {
+                serde_json::Value::Null
+            }
+            async fn call(
+                &self,
+                _args: &serde_json::Value,
+                _ctx: &ToolContext,
+            ) -> crate::types::AgentResult<Vec<Content>> {
+                Ok(vec![])
+            }
+        }
+
+        let mut registry = ToolRegistry::default();
+        registry.register(NamedTool("zeta"));
+        registry.register(NamedTool("alpha"));
+        registry.register(NamedTool("mike"));
+
+        let defs = registry.definitions();
+        let names: Vec<&str> = defs
+            .iter()
+            .map(|d| d["function"]["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["alpha", "mike", "zeta"]);
     }
 }
