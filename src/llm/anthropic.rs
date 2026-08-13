@@ -508,3 +508,407 @@ impl super::StreamClient for AnthropicClient {
         <Self as super::LlmClient>::model_name(self)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{ChatMessage, ImageAttachment};
+    use futures_util::TryStreamExt;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    // ---- pure helpers ----
+
+    #[test]
+    fn convert_messages_handles_all_variants() {
+        let msgs = vec![
+            ChatMessage::system("sys"),
+            ChatMessage::user("hi"),
+            ChatMessage::user_with_images(
+                "pic",
+                vec![
+                    ImageAttachment::Url {
+                        url: "http://x/a.png".into(),
+                        detail: None,
+                    },
+                    ImageAttachment::Base64 {
+                        data: "abc".into(),
+                        media_type: Some("image/png".into()),
+                        detail: None,
+                    },
+                ],
+            ),
+            ChatMessage::assistant("hi back"),
+            ChatMessage::assistant_tool_call("tc1", "echo", "{\"x\":1}"),
+            ChatMessage::tool("tc1", "done"),
+            ChatMessage::Custom {
+                role: "artifact".into(),
+                data: serde_json::json!({"x": 1}),
+            },
+        ];
+
+        let (sys, out) = AnthropicClient::convert_messages(&msgs);
+        assert_eq!(sys.as_deref(), Some("sys"));
+        assert_eq!(out.len(), 6);
+
+        assert_eq!(
+            out[0],
+            serde_json::json!({"role": "user", "content": [{"type": "text", "text": "hi"}]})
+        );
+
+        assert_eq!(out[1]["role"], "user");
+        assert_eq!(
+            out[1]["content"][0],
+            serde_json::json!({"type": "text", "text": "pic"})
+        );
+        assert_eq!(out[1]["content"][1]["type"], "image");
+        assert_eq!(out[1]["content"][1]["source"]["type"], "url");
+        assert_eq!(out[1]["content"][2]["source"]["type"], "base64");
+        assert_eq!(out[1]["content"][2]["source"]["media_type"], "image/png");
+
+        assert_eq!(
+            out[2],
+            serde_json::json!({"role": "assistant", "content": [{"type": "text", "text": "hi back"}]})
+        );
+
+        assert_eq!(out[3]["role"], "assistant");
+        assert_eq!(out[3]["content"][0]["type"], "tool_use");
+        assert_eq!(out[3]["content"][0]["id"], "tc1");
+        assert_eq!(out[3]["content"][0]["name"], "echo");
+        assert_eq!(out[3]["content"][0]["input"], serde_json::json!({"x": 1}));
+
+        assert_eq!(out[4]["role"], "user");
+        assert_eq!(out[4]["content"][0]["type"], "tool_result");
+        assert_eq!(out[4]["content"][0]["tool_use_id"], "tc1");
+        assert_eq!(out[4]["content"][0]["content"], "done");
+
+        assert_eq!(out[5]["role"], "user");
+        assert_eq!(out[5]["content"][0]["type"], "text");
+        assert_eq!(out[5]["content"][0]["text"], "{\"x\":1}");
+    }
+
+    #[test]
+    fn convert_tools_maps_openai_to_anthropic() {
+        let tools = vec![
+            serde_json::json!({"type": "function", "function": {"name": "echo", "description": "echo back", "parameters": {"type": "object", "properties": {}}}}),
+            serde_json::json!({"function": {"name": "bare"}}),
+            serde_json::json!({"type": "function"}),
+            serde_json::json!({"function": {"description": "no name"}}),
+        ];
+        let out = AnthropicClient::convert_tools(&tools);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0]["name"], "echo");
+        assert_eq!(out[0]["description"], "echo back");
+        assert_eq!(out[0]["input_schema"]["type"], "object");
+        assert_eq!(out[1]["name"], "bare");
+        assert_eq!(out[1]["description"], "");
+        assert_eq!(
+            out[1]["input_schema"],
+            serde_json::json!({"type": "object"})
+        );
+    }
+
+    #[test]
+    fn build_body_basic() {
+        let body =
+            AnthropicClient::build_body(&[ChatMessage::user("hi")], &[], "claude-sonnet", None);
+        assert_eq!(body["model"], "claude-sonnet");
+        assert_eq!(body["max_tokens"], 8192);
+        assert_eq!(body["messages"][0]["role"], "user");
+        assert!(body.get("system").is_none());
+        assert!(body.get("tools").is_none());
+    }
+
+    #[test]
+    fn build_body_includes_system_and_tools() {
+        let msgs = vec![ChatMessage::system("sys"), ChatMessage::user("hi")];
+        let tools = vec![serde_json::json!({"function": {"name": "echo"}})];
+        let body = AnthropicClient::build_body(&msgs, &tools, "m", None);
+        assert_eq!(body["system"], "sys");
+        assert_eq!(body["tools"][0]["name"], "echo");
+    }
+
+    #[test]
+    fn build_body_reasoning_variants() {
+        let msgs = vec![ChatMessage::user("hi")];
+
+        let rc = ReasoningConfig {
+            enabled: Some(true),
+            budget_tokens: None,
+            effort: None,
+        };
+        let body = AnthropicClient::build_body(&msgs, &[], "m", Some(&rc));
+        assert_eq!(body["thinking"]["type"], "enabled");
+
+        let rc = ReasoningConfig {
+            enabled: None,
+            budget_tokens: Some(500),
+            effort: None,
+        };
+        let body = AnthropicClient::build_body(&msgs, &[], "m", Some(&rc));
+        assert_eq!(body["thinking"]["type"], "enabled");
+        assert_eq!(body["thinking"]["budget_tokens"], 500);
+
+        let rc = ReasoningConfig {
+            enabled: Some(false),
+            budget_tokens: None,
+            effort: None,
+        };
+        let body = AnthropicClient::build_body(&msgs, &[], "m", Some(&rc));
+        assert_eq!(body["thinking"]["type"], "disabled");
+    }
+
+    #[test]
+    fn parse_sse_empty_data() {
+        let c = AnthropicClient::parse_sse("", "message_start").unwrap();
+        assert!(matches!(c, StreamChunk::Text(t) if t.is_empty()));
+    }
+
+    #[test]
+    fn parse_sse_message_start_usage() {
+        let c = AnthropicClient::parse_sse(
+            r#"{"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":5}}}"#,
+            "message_start",
+        )
+        .unwrap();
+        assert!(
+            matches!(c, StreamChunk::Usage(u) if u.prompt_tokens == Some(10) && u.completion_tokens == Some(5))
+        );
+    }
+
+    #[test]
+    fn parse_sse_content_block_start_tool_use() {
+        let c = AnthropicClient::parse_sse(
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"echo"}}"#,
+            "content_block_start",
+        )
+        .unwrap();
+        match c {
+            StreamChunk::ToolCall(v) => {
+                assert_eq!(v["delta"]["tool_calls"][0]["index"], 0);
+                assert_eq!(v["delta"]["tool_calls"][0]["id"], "toolu_1");
+                assert_eq!(v["delta"]["tool_calls"][0]["function"]["name"], "echo");
+            }
+            other => panic!("expected ToolCall, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_sse_content_block_start_text() {
+        let c = AnthropicClient::parse_sse(
+            r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
+            "content_block_start",
+        )
+        .unwrap();
+        assert!(matches!(c, StreamChunk::Text(t) if t.is_empty()));
+    }
+
+    #[test]
+    fn parse_sse_content_block_delta_variants() {
+        let text = AnthropicClient::parse_sse(
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}"#,
+            "content_block_delta",
+        )
+        .unwrap();
+        assert!(matches!(text, StreamChunk::Text(t) if t == "hello"));
+
+        let tj = AnthropicClient::parse_sse(
+            r#"{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"x=1"}}"#,
+            "content_block_delta",
+        )
+        .unwrap();
+        match tj {
+            StreamChunk::ToolCall(v) => {
+                assert_eq!(v["delta"]["tool_calls"][0]["index"], 1);
+                assert_eq!(v["delta"]["tool_calls"][0]["function"]["arguments"], "x=1");
+            }
+            other => panic!("expected ToolCall, got {other:?}"),
+        }
+
+        let th = AnthropicClient::parse_sse(
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm"}}"#,
+            "content_block_delta",
+        )
+        .unwrap();
+        assert!(matches!(th, StreamChunk::Thought(t) if t == "hmm"));
+
+        let unk = AnthropicClient::parse_sse(
+            r#"{"type":"content_block_delta","index":0,"delta":{"type":"whatever"}}"#,
+            "content_block_delta",
+        )
+        .unwrap();
+        assert!(matches!(unk, StreamChunk::Text(t) if t.is_empty()));
+
+        let nd = AnthropicClient::parse_sse(
+            r#"{"type":"content_block_delta","index":0}"#,
+            "content_block_delta",
+        )
+        .unwrap();
+        assert!(matches!(nd, StreamChunk::Text(t) if t.is_empty()));
+    }
+
+    #[test]
+    fn parse_sse_message_delta_usage() {
+        let c = AnthropicClient::parse_sse(
+            r#"{"type":"message_delta","usage":{"output_tokens":12}}"#,
+            "message_delta",
+        )
+        .unwrap();
+        assert!(
+            matches!(c, StreamChunk::Usage(u) if u.completion_tokens == Some(12) && u.prompt_tokens.is_none())
+        );
+    }
+
+    #[test]
+    fn parse_sse_message_stop() {
+        let c = AnthropicClient::parse_sse(
+            r#"{"type":"message_stop","message":{"stop_reason":"end_turn"}}"#,
+            "message_stop",
+        )
+        .unwrap();
+        assert!(matches!(c, StreamChunk::Stop { finish_reason: Some(r) } if r == "end_turn"));
+
+        let c = AnthropicClient::parse_sse(r#"{"type":"message_stop"}"#, "message_stop").unwrap();
+        assert!(matches!(
+            c,
+            StreamChunk::Stop {
+                finish_reason: None
+            }
+        ));
+    }
+
+    #[test]
+    fn parse_sse_ping_unknown_and_invalid() {
+        assert!(matches!(
+            AnthropicClient::parse_sse(r#"{"type":"ping"}"#, "ping").unwrap(),
+            StreamChunk::Text(_)
+        ));
+        assert!(matches!(
+            AnthropicClient::parse_sse(r#"{}"#, "something_else").unwrap(),
+            StreamChunk::Text(_)
+        ));
+        assert!(AnthropicClient::parse_sse("not-json", "message_stop").is_err());
+    }
+
+    #[test]
+    fn capabilities_and_model_name() {
+        let c = AnthropicClient::new("k".into(), "claude-sonnet".into(), None);
+        let caps = c.capabilities();
+        assert!(caps.supports_streaming);
+        assert!(caps.supports_tools);
+        assert!(caps.supports_vision);
+        assert!(caps.supports_thinking);
+        assert_eq!(caps.max_context_tokens, Some(200_000));
+        assert_eq!(caps.max_output_tokens, Some(8_192));
+        assert_eq!(c.model_name(), "claude-sonnet");
+    }
+
+    // ---- mock HTTP ----
+
+    #[tokio::test]
+    async fn chat_posts_and_parses_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "msg_1",
+                "type": "message",
+                "content": [{"type": "text", "text": "hello"}],
+            })))
+            .mount(&server)
+            .await;
+
+        let client = AnthropicClient::new("k".into(), "claude-sonnet".into(), Some(server.uri()));
+        let resp = client
+            .chat(&[ChatMessage::user("hi")], &[], None, None)
+            .await
+            .unwrap();
+        assert_eq!(resp["id"], "msg_1");
+    }
+
+    #[tokio::test]
+    async fn chat_returns_llm_api_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "type": "error",
+                "error": {"type": "invalid_request_error", "message": "bad request"},
+            })))
+            .mount(&server)
+            .await;
+
+        let client = AnthropicClient::new("bad".into(), "claude-sonnet".into(), Some(server.uri()));
+        let resp = client
+            .chat(&[ChatMessage::user("hi")], &[], None, None)
+            .await;
+        assert!(resp.is_err());
+    }
+
+    #[tokio::test]
+    async fn chat_stream_parses_full_event_sequence() {
+        let server = MockServer::start().await;
+        let sse = concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":10,\"output_tokens\":5}}}\n\n",
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"echo\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"abc\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"hello\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"hmm\"}}\n\n",
+            "event: message_delta\n",
+            "data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":12}}\n\n",
+            "event: message_stop\n",
+            "data: {\"type\":\"message_stop\",\"message\":{\"stop_reason\":\"end_turn\"}}\n\n",
+        );
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let client = AnthropicClient::new("k".into(), "claude-sonnet".into(), Some(server.uri()));
+        let stream = client
+            .chat_stream(&[ChatMessage::user("hi")], &[], None, None)
+            .await
+            .unwrap();
+        let chunks: Vec<StreamChunk> = stream.try_collect().await.unwrap();
+
+        assert!(
+            matches!(&chunks[0], StreamChunk::Usage(u) if u.prompt_tokens == Some(10) && u.completion_tokens == Some(5))
+        );
+        assert!(matches!(&chunks[1], StreamChunk::ToolCall(_)));
+        assert!(matches!(&chunks[2], StreamChunk::ToolCall(_)));
+        assert!(matches!(&chunks[3], StreamChunk::Text(t) if t == "hello"));
+        assert!(matches!(&chunks[4], StreamChunk::Thought(t) if t == "hmm"));
+        assert!(matches!(&chunks[5], StreamChunk::Usage(u) if u.completion_tokens == Some(12)));
+        assert!(
+            matches!(&chunks[6], StreamChunk::Stop { finish_reason: Some(r) } if r == "end_turn")
+        );
+    }
+
+    #[tokio::test]
+    async fn chat_stream_returns_error_on_error_event() {
+        let server = MockServer::start().await;
+        let sse = concat!(
+            "event: error\n",
+            "data: {\"type\":\"error\",\"error\":{\"message\":\"overloaded\"}}\n\n",
+        );
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let client = AnthropicClient::new("k".into(), "claude-sonnet".into(), Some(server.uri()));
+        let stream = client
+            .chat_stream(&[ChatMessage::user("hi")], &[], None, None)
+            .await
+            .unwrap();
+        let result: Result<Vec<_>, _> = stream.try_collect().await;
+        assert!(result.is_err());
+    }
+}

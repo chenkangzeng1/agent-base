@@ -40,6 +40,7 @@ dotenvy = "0.15"
 insta = { version = "1", features = ["json"] }
 serial_test = "3"
 tempfile = "3"
+wiremock = "0.6"
 
 [[bench]]
 name = "tool_registry"

@@ -512,3 +512,368 @@ impl super::StreamClient for OpenAiClient {
         <Self as super::LlmClient>::model_name(self)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{ChatMessage, ImageAttachment, ImageDetail, ToolCallMessage};
+    use futures_util::TryStreamExt;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn client(model: &str) -> OpenAiClient {
+        OpenAiClient::new("test-key".into(), model.into(), None)
+    }
+
+    // ---- pure helpers ----
+
+    #[test]
+    fn chat_message_to_json_all_variants() {
+        let v = OpenAiClient::chat_message_to_json(&ChatMessage::system("be helpful"));
+        assert_eq!(
+            v,
+            serde_json::json!({"role": "system", "content": "be helpful"})
+        );
+
+        let v = OpenAiClient::chat_message_to_json(&ChatMessage::user("hi"));
+        assert_eq!(v, serde_json::json!({"role": "user", "content": "hi"}));
+
+        let v = OpenAiClient::chat_message_to_json(&ChatMessage::user_with_images(
+            "look",
+            vec![ImageAttachment::Url {
+                url: "http://x/a.png".into(),
+                detail: None,
+            }],
+        ));
+        assert_eq!(v["role"], "user");
+        assert_eq!(
+            v["content"][0],
+            serde_json::json!({"type": "text", "text": "look"})
+        );
+        assert_eq!(v["content"][1]["type"], "image_url");
+
+        let v = OpenAiClient::chat_message_to_json(&ChatMessage::assistant("hello"));
+        assert_eq!(v["role"], "assistant");
+        assert_eq!(v["content"], "hello");
+
+        let v = OpenAiClient::chat_message_to_json(&ChatMessage::assistant_with_reasoning(
+            "answer",
+            "let me think",
+        ));
+        assert_eq!(v["reasoning_content"], "let me think");
+
+        let v = OpenAiClient::chat_message_to_json(&ChatMessage::assistant_tool_call(
+            "call_1", "echo", "{}",
+        ));
+        assert_eq!(v["tool_calls"][0]["function"]["name"], "echo");
+        assert_eq!(v["tool_calls"][0]["type"], "function");
+
+        let v = OpenAiClient::chat_message_to_json(&ChatMessage::tool("tid", "result"));
+        assert_eq!(
+            v,
+            serde_json::json!({"role": "tool", "tool_call_id": "tid", "content": "result"})
+        );
+
+        let v = OpenAiClient::chat_message_to_json(&ChatMessage::Custom {
+            role: "artifact".into(),
+            data: serde_json::json!({"x": 1}),
+        });
+        assert_eq!(v["role"], "artifact");
+        assert_eq!(v["content"], "{\"x\":1}");
+    }
+
+    #[test]
+    fn image_to_json_url_and_base64() {
+        let v = OpenAiClient::image_to_json(&ImageAttachment::Url {
+            url: "http://x/a.png".into(),
+            detail: None,
+        });
+        assert_eq!(
+            v,
+            serde_json::json!({"type": "image_url", "image_url": {"url": "http://x/a.png"}})
+        );
+
+        let v = OpenAiClient::image_to_json(&ImageAttachment::Url {
+            url: "http://x/a.png".into(),
+            detail: Some(ImageDetail::High),
+        });
+        assert_eq!(v["image_url"]["detail"], "high");
+
+        let v = OpenAiClient::image_to_json(&ImageAttachment::Base64 {
+            data: "abc".into(),
+            media_type: Some("image/png".into()),
+            detail: None,
+        });
+        assert_eq!(v["image_url"]["url"], "data:image/png;base64,abc");
+
+        let v = OpenAiClient::image_to_json(&ImageAttachment::Base64 {
+            data: "abc".into(),
+            media_type: None,
+            detail: Some(ImageDetail::Low),
+        });
+        assert_eq!(v["image_url"]["url"], "data:image/jpeg;base64,abc");
+        assert_eq!(v["image_url"]["detail"], "low");
+    }
+
+    #[test]
+    fn tool_call_to_json_shape() {
+        let tc = ToolCallMessage {
+            id: "call_1".into(),
+            name: "echo".into(),
+            arguments: "{\"x\":1}".into(),
+        };
+        let v = OpenAiClient::tool_call_to_json(&tc);
+        assert_eq!(v["id"], "call_1");
+        assert_eq!(v["type"], "function");
+        assert_eq!(v["function"]["name"], "echo");
+        assert_eq!(v["function"]["arguments"], "{\"x\":1}");
+    }
+
+    #[test]
+    fn apply_reasoning_config_none_is_noop() {
+        let c = client("gpt-4o");
+        let mut body = serde_json::json!({"model": "gpt-4o"});
+        c.apply_reasoning_config(&mut body, None);
+        assert_eq!(body, serde_json::json!({"model": "gpt-4o"}));
+    }
+
+    #[test]
+    fn apply_reasoning_config_qwen_flags() {
+        let c = client("qwen-max");
+        let mut body = serde_json::json!({"model": "qwen-max"});
+        let rc = ReasoningConfig {
+            enabled: Some(true),
+            budget_tokens: Some(1000),
+            effort: None,
+        };
+        c.apply_reasoning_config(&mut body, Some(&rc));
+        assert_eq!(body["enable_thinking"], serde_json::json!(true));
+        assert_eq!(body["thinking_budget"], serde_json::json!(1000));
+    }
+
+    #[test]
+    fn apply_reasoning_config_qwen_effort_maps_budget() {
+        let c = client("qwen-max");
+        let mut body = serde_json::json!({"model": "qwen-max"});
+        let rc = ReasoningConfig {
+            enabled: None,
+            budget_tokens: None,
+            effort: Some(ReasoningEffort::High),
+        };
+        c.apply_reasoning_config(&mut body, Some(&rc));
+        assert_eq!(body["thinking_budget"], serde_json::json!(5000));
+        assert_eq!(body["enable_thinking"], serde_json::json!(true));
+
+        let mut body = serde_json::json!({"model": "qwen-max"});
+        let rc = ReasoningConfig {
+            enabled: None,
+            budget_tokens: None,
+            effort: Some(ReasoningEffort::Low),
+        };
+        c.apply_reasoning_config(&mut body, Some(&rc));
+        assert_eq!(body["enable_thinking"], serde_json::json!(false));
+    }
+
+    #[test]
+    fn apply_reasoning_config_deepseek_effort() {
+        let c = client("deepseek-chat");
+        let mut body = serde_json::json!({"model": "deepseek-chat"});
+        let rc = ReasoningConfig {
+            enabled: None,
+            budget_tokens: None,
+            effort: Some(ReasoningEffort::Medium),
+        };
+        c.apply_reasoning_config(&mut body, Some(&rc));
+        assert_eq!(body["reasoning_effort"], serde_json::json!("medium"));
+    }
+
+    #[test]
+    fn apply_reasoning_config_deepseek_thinking_extra_body() {
+        let c = client("deepseek-chat");
+        let mut body = serde_json::json!({"model": "deepseek-chat"});
+        let rc = ReasoningConfig {
+            enabled: Some(true),
+            budget_tokens: Some(2000),
+            effort: None,
+        };
+        c.apply_reasoning_config(&mut body, Some(&rc));
+        assert_eq!(
+            body["extra_body"]["thinking"]["type"],
+            serde_json::json!("enabled")
+        );
+        assert_eq!(
+            body["extra_body"]["thinking_budget"],
+            serde_json::json!(2000)
+        );
+    }
+
+    #[test]
+    fn apply_reasoning_config_other_effort() {
+        let c = client("gpt-4o");
+        let mut body = serde_json::json!({"model": "gpt-4o"});
+        let rc = ReasoningConfig {
+            enabled: None,
+            budget_tokens: None,
+            effort: Some(ReasoningEffort::XHigh),
+        };
+        c.apply_reasoning_config(&mut body, Some(&rc));
+        assert_eq!(body["reasoning_effort"], serde_json::json!("high"));
+    }
+
+    #[test]
+    fn with_model_and_capabilities() {
+        let c = OpenAiClient::new("k".into(), "gpt-4o".into(), Some("http://x".into()));
+        let c2 = c.with_model("gpt-4o-mini");
+        assert_eq!(c2.model_name(), "gpt-4o-mini");
+        assert_eq!(c.model_name(), "gpt-4o");
+
+        let caps = c.capabilities();
+        assert!(caps.supports_streaming);
+        assert!(caps.supports_tools);
+        assert!(caps.supports_vision);
+        assert!(caps.supports_thinking);
+        assert_eq!(caps.max_context_tokens, Some(128_000));
+        assert_eq!(caps.max_output_tokens, Some(16_384));
+    }
+
+    // ---- mock HTTP ----
+
+    #[tokio::test]
+    async fn chat_posts_and_parses_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "cmpl-1",
+                "choices": [{"message": {"role": "assistant", "content": "hi there"}}],
+            })))
+            .mount(&server)
+            .await;
+
+        let client = OpenAiClient::new("test-key".into(), "gpt-4o".into(), Some(server.uri()));
+        let resp = client
+            .chat(&[ChatMessage::user("hello")], &[], None, None)
+            .await
+            .unwrap();
+        assert_eq!(resp["choices"][0]["message"]["content"], "hi there");
+    }
+
+    #[tokio::test]
+    async fn chat_returns_llm_api_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+                "error": {"message": "invalid api key", "type": "invalid_request_error"},
+            })))
+            .mount(&server)
+            .await;
+
+        let client = OpenAiClient::new("bad-key".into(), "gpt-4o".into(), Some(server.uri()));
+        let resp = client
+            .chat(&[ChatMessage::user("hello")], &[], None, None)
+            .await;
+        assert!(resp.is_err());
+    }
+
+    #[tokio::test]
+    async fn chat_stream_parses_text_thought_toolcall_and_stop() {
+        let server = MockServer::start().await;
+        let sse = concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Hello\"},\"finish_reason\":\"\"}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"hmm\"},\"finish_reason\":\"\"}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"echo\",\"arguments\":\"\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            "data: [DONE]\n\n",
+        );
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let client = OpenAiClient::new("k".into(), "gpt-4o".into(), Some(server.uri()));
+        let stream = client
+            .chat_stream(&[ChatMessage::user("hi")], &[], None, None)
+            .await
+            .unwrap();
+        let chunks: Vec<StreamChunk> = stream.try_collect().await.unwrap();
+
+        assert!(matches!(&chunks[0], StreamChunk::Text(t) if t == "Hello"));
+        assert!(matches!(&chunks[1], StreamChunk::Thought(t) if t == "hmm"));
+        assert!(matches!(&chunks[2], StreamChunk::ToolCall(_)));
+        assert!(matches!(&chunks[3], StreamChunk::Stop { finish_reason: Some(r) } if r == "stop"));
+        assert!(matches!(
+            &chunks[4],
+            StreamChunk::Stop {
+                finish_reason: None
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn chat_stream_parses_usage_chunk() {
+        let server = MockServer::start().await;
+        let sse = concat!(
+            "data: {\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":20,\"total_tokens\":30}}\n\n",
+            "data: [DONE]\n\n",
+        );
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let client = OpenAiClient::new("k".into(), "gpt-4o".into(), Some(server.uri()));
+        let stream = client
+            .chat_stream(&[ChatMessage::user("hi")], &[], None, None)
+            .await
+            .unwrap();
+        let chunks: Vec<StreamChunk> = stream.try_collect().await.unwrap();
+
+        assert!(
+            matches!(&chunks[0], StreamChunk::Usage(u) if u.prompt_tokens == Some(10) && u.completion_tokens == Some(20) && u.total_tokens == Some(30))
+        );
+        assert!(matches!(
+            &chunks[1],
+            StreamChunk::Stop {
+                finish_reason: None
+            }
+        ));
+    }
+
+    #[tokio::test]
+    async fn chat_stream_returns_error_on_non_success() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(401).set_body_string("unauthorized"))
+            .mount(&server)
+            .await;
+
+        let client = OpenAiClient::new("bad".into(), "gpt-4o".into(), Some(server.uri()));
+        let resp = client
+            .chat_stream(&[ChatMessage::user("hi")], &[], None, None)
+            .await;
+        assert!(resp.is_err());
+    }
+
+    #[tokio::test]
+    async fn chat_stream_errors_on_invalid_json() {
+        let server = MockServer::start().await;
+        let sse = "data: not-json\n\n";
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let client = OpenAiClient::new("k".into(), "gpt-4o".into(), Some(server.uri()));
+        let stream = client
+            .chat_stream(&[ChatMessage::user("hi")], &[], None, None)
+            .await
+            .unwrap();
+        let result: Result<Vec<_>, _> = stream.try_collect().await;
+        assert!(result.is_err());
+    }
+}
