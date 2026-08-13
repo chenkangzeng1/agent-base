@@ -1488,11 +1488,14 @@ fn truncate_for_context(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::AgentBuilder;
-    use crate::engine::middleware::{Middleware, UserMessageCtx};
+    use crate::engine::middleware::{Middleware, PostLlmCtx, PreLlmCtx, UserMessageCtx};
+    use crate::engine::{AgentBuilder, DenyAllApprovalHandler, RetryOnError};
     use crate::llm::{LlmCapabilities, LlmClient, StreamChunk};
-    use crate::tool::{Content, Tool, ToolContext};
-    use crate::types::{AgentError, AgentResult, ChatMessage, ResponseFormat, SessionId};
+    use crate::tool::{Content, Tool, ToolContext, ToolPolicy};
+    use crate::types::{
+        AgentError, AgentResult, ApprovalRequest, ChatMessage, CheckpointData, CheckpointStep,
+        ResponseFormat, RiskLevel, RunOutcome, SessionId,
+    };
     use async_trait::async_trait;
     use futures_core::Stream;
     use serde_json::Value;
@@ -1981,5 +1984,422 @@ mod tests {
                 .any(|e| matches!(e, RuntimeEvent::ToolCallFinished { .. })),
             "run_turn should emit ToolCallFinished"
         );
+    }
+
+    // ── B1: core error / edge paths ──────────────────────────────────────
+
+    /// Tool that always fails — exercises the error-recovery (Stop / Retry) paths.
+    struct FailingTool;
+
+    #[async_trait]
+    impl Tool for FailingTool {
+        fn name(&self) -> &'static str {
+            "fail"
+        }
+
+        fn description(&self) -> &'static str {
+            "Always fails"
+        }
+
+        fn schema(&self) -> Value {
+            serde_json::json!({"type": "object", "properties": {}})
+        }
+
+        async fn call(&self, _args: &Value, _ctx: &ToolContext) -> AgentResult<Vec<Content>> {
+            Err(AgentError::internal("simulated tool failure"))
+        }
+    }
+
+    /// Tool that cancels the current run's token — exercises the cancellation path.
+    struct CancelTool;
+
+    #[async_trait]
+    impl Tool for CancelTool {
+        fn name(&self) -> &'static str {
+            "cancel"
+        }
+
+        fn description(&self) -> &'static str {
+            "Cancel the current run"
+        }
+
+        fn schema(&self) -> Value {
+            serde_json::json!({"type": "object", "properties": {}})
+        }
+
+        async fn call(&self, _args: &Value, ctx: &ToolContext) -> AgentResult<Vec<Content>> {
+            ctx.cancel_token.cancel();
+            Ok(vec![Content::text("cancelled")])
+        }
+    }
+
+    /// Policy that always requests approval, so `process_approval` reaches the handler.
+    struct RequireApproval;
+
+    #[async_trait]
+    impl ToolPolicy for RequireApproval {
+        async fn evaluate_approval(
+            &self,
+            tool_name: &str,
+            _args: &Value,
+        ) -> Option<ApprovalRequest> {
+            Some(ApprovalRequest {
+                title: format!("Approve {tool_name}"),
+                message: "Approve this tool call?".to_string(),
+                action_key: Some(format!("approve:{tool_name}")),
+                risk_level: RiskLevel::Sensitive,
+                raw: None,
+            })
+        }
+    }
+
+    /// Middleware recording the `on_pre_llm` / `on_post_llm` hooks, and nudging
+    /// `nudge_count` so the write-back branch is exercised.
+    struct HookMiddleware {
+        pre_called: Arc<AtomicBool>,
+        post_called: Arc<AtomicBool>,
+    }
+
+    #[async_trait]
+    impl Middleware for HookMiddleware {
+        async fn on_pre_llm(&self, _ctx: &mut PreLlmCtx) -> AgentResult<()> {
+            self.pre_called.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+
+        async fn on_post_llm(&self, ctx: &mut PostLlmCtx) -> AgentResult<()> {
+            self.post_called.store(true, Ordering::SeqCst);
+            ctx.nudge_count += 1;
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn run_emits_run_finished_on_session_not_found() {
+        let client = crate::llm::adapt(Arc::new(DummyClient));
+        let runtime = AgentBuilder::new(client)
+            .system_prompt("test")
+            .build()
+            .expect("build runtime");
+
+        let nonexistent = SessionId::new(99999);
+        let event_fired = Arc::new(AtomicBool::new(false));
+        let event_fired_clone = event_fired.clone();
+
+        let result = runtime
+            .run(nonexistent.clone(), move |event| {
+                if matches!(event, RuntimeEvent::RunFinished { .. }) {
+                    event_fired_clone.store(true, Ordering::SeqCst);
+                }
+                Ok(())
+            })
+            .await;
+
+        assert!(
+            result.is_err(),
+            "run should return Err for a nonexistent session"
+        );
+        assert!(
+            event_fired.load(Ordering::SeqCst),
+            "run must emit RunFinished before returning Err on session not found"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_completes_with_text_response() {
+        let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+            StreamChunk::Text("answer".to_string()),
+            StreamChunk::Stop {
+                finish_reason: Some("stop".to_string()),
+            },
+        ]])));
+        let runtime = AgentBuilder::new(client)
+            .system_prompt("test")
+            .build()
+            .expect("build runtime");
+
+        let sid = runtime.create_session().await;
+        runtime.add_user_message(&sid, "question").await.unwrap();
+
+        let mut events = Vec::new();
+        let result = runtime
+            .run(sid.clone(), |event| {
+                events.push(event);
+                Ok(())
+            })
+            .await;
+
+        assert!(
+            matches!(result, Ok(RunOutcome::Completed)),
+            "run failed: {:?}",
+            result.err()
+        );
+
+        let session = runtime.session(&sid).await.expect("session exists");
+        assert!(
+            session.chat_messages().iter().any(
+                |m| matches!(m, ChatMessage::Assistant { content: Some(c), .. } if c == "answer")
+            ),
+            "run should push the assistant text response into the session"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_turn_emits_run_cancelled_when_cancelled_mid_run() {
+        let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+            StreamChunk::ToolCall(serde_json::json!({
+                "delta": {
+                    "tool_calls": [{
+                        "id": "call_cancel",
+                        "function": { "name": "cancel", "arguments": "{}" }
+                    }]
+                }
+            })),
+            StreamChunk::Stop {
+                finish_reason: Some("tool_calls".to_string()),
+            },
+        ]])));
+        let runtime = AgentBuilder::new(client)
+            .system_prompt("test")
+            .register_tool(CancelTool)
+            .build()
+            .expect("build runtime");
+
+        let sid = runtime.create_session().await;
+        let mut events = Vec::new();
+        let result = runtime
+            .run_turn(sid.clone(), "cancel now", |event| {
+                events.push(event);
+                Ok(())
+            })
+            .await;
+
+        assert!(
+            matches!(result, Ok(RunOutcome::Cancelled)),
+            "run_turn should return Cancelled outcome: {:?}",
+            result
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, RuntimeEvent::RunCancelled { .. })),
+            "run_turn should emit RunCancelled when cancelled mid-run"
+        );
+    }
+
+    #[tokio::test]
+    async fn run_turn_failing_tool_stops_with_failed_outcome() {
+        // Default recovery is StopOnError — a failing tool should stop the run.
+        let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+            StreamChunk::ToolCall(serde_json::json!({
+                "delta": {
+                    "tool_calls": [{
+                        "id": "call_fail",
+                        "function": { "name": "fail", "arguments": "{}" }
+                    }]
+                }
+            })),
+            StreamChunk::Stop {
+                finish_reason: Some("tool_calls".to_string()),
+            },
+        ]])));
+        let runtime = AgentBuilder::new(client)
+            .system_prompt("test")
+            .register_tool(FailingTool)
+            .build()
+            .expect("build runtime");
+
+        let sid = runtime.create_session().await;
+        let result = runtime
+            .run_turn(sid.clone(), "do something", |_| Ok(()))
+            .await;
+
+        assert!(
+            matches!(result, Ok(RunOutcome::Failed { .. })),
+            "failing tool with StopOnError should yield Failed outcome: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn run_turn_failing_tool_retries_then_completes() {
+        // RetryOnError recovery: first turn fails, second turn (after retry prompt) completes.
+        let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![
+            vec![
+                StreamChunk::ToolCall(serde_json::json!({
+                    "delta": {
+                        "tool_calls": [{
+                            "id": "call_fail",
+                            "function": { "name": "fail", "arguments": "{}" }
+                        }]
+                    }
+                })),
+                StreamChunk::Stop {
+                    finish_reason: Some("tool_calls".to_string()),
+                },
+            ],
+            vec![
+                StreamChunk::Text("recovered".to_string()),
+                StreamChunk::Stop {
+                    finish_reason: Some("stop".to_string()),
+                },
+            ],
+        ])));
+        let runtime = AgentBuilder::new(client)
+            .system_prompt("test")
+            .register_tool(FailingTool)
+            .error_recovery(Arc::new(RetryOnError))
+            .build()
+            .expect("build runtime");
+
+        let sid = runtime.create_session().await;
+        let result = runtime
+            .run_turn(sid.clone(), "do something", |_| Ok(()))
+            .await;
+
+        assert!(
+            matches!(result, Ok(RunOutcome::Completed)),
+            "failing tool with RetryOnError should eventually complete: {:?}",
+            result
+        );
+    }
+
+    #[tokio::test]
+    async fn run_turn_approval_denied_completes_without_executing() {
+        let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+            StreamChunk::ToolCall(serde_json::json!({
+                "delta": {
+                    "tool_calls": [{
+                        "id": "call_denied",
+                        "function": { "name": "echo", "arguments": "{\"text\":\"hello\"}" }
+                    }]
+                }
+            })),
+            StreamChunk::Stop {
+                finish_reason: Some("tool_calls".to_string()),
+            },
+        ]])));
+        let runtime = AgentBuilder::new(client)
+            .system_prompt("test")
+            .register_tool(EchoTool)
+            .approval_handler(Arc::new(DenyAllApprovalHandler))
+            .tool_policy(Arc::new(RequireApproval))
+            .build()
+            .expect("build runtime");
+
+        let sid = runtime.create_session().await;
+        let result = runtime
+            .run_turn(sid.clone(), "echo hello", |_| Ok(()))
+            .await;
+
+        assert!(
+            matches!(result, Ok(RunOutcome::Completed)),
+            "approval denial should stop the run cleanly (Completed): {:?}",
+            result
+        );
+
+        // The denied tool must NOT have executed.
+        let session = runtime.session(&sid).await.expect("session exists");
+        assert!(
+            !session
+                .chat_messages()
+                .iter()
+                .any(|m| matches!(m, ChatMessage::Tool { content, .. } if content.contains("echo: hello"))),
+            "denied tool call must not execute"
+        );
+    }
+
+    #[tokio::test]
+    async fn resume_from_checkpoint_executes_pending_tool_calls() {
+        let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+            StreamChunk::Text("resumed answer".to_string()),
+            StreamChunk::Stop {
+                finish_reason: Some("stop".to_string()),
+            },
+        ]])));
+        let runtime = AgentBuilder::new(client)
+            .system_prompt("test")
+            .register_tool(EchoTool)
+            .build()
+            .expect("build runtime");
+
+        let sid = runtime.create_session().await;
+
+        let checkpoint = CheckpointData {
+            session_id: sid.clone(),
+            user_input: "resume".to_string(),
+            step: CheckpointStep::BeforeToolCalls {
+                tool_calls: vec![(
+                    "call_resume".to_string(),
+                    "echo".to_string(),
+                    r#"{"text":"resume"}"#.to_string(),
+                )],
+            },
+            turn_count: 0,
+        };
+
+        let mut events = Vec::new();
+        let result = runtime
+            .runner
+            .resume_from_checkpoint(checkpoint, |event| {
+                events.push(event);
+                Ok(())
+            })
+            .await;
+
+        assert!(
+            matches!(result, Ok(RunOutcome::Completed)),
+            "resume_from_checkpoint should complete: {:?}",
+            result.err()
+        );
+
+        let session = runtime.session(&sid).await.expect("session exists");
+        assert!(
+            session
+                .chat_messages()
+                .iter()
+                .any(|m| matches!(m, ChatMessage::Tool { content, .. } if content.contains("echo: resume"))),
+            "resumed tool call should have executed"
+        );
+    }
+
+    #[tokio::test]
+    async fn middleware_on_pre_and_post_llm_hooks_fire() {
+        let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+            StreamChunk::Text("hello".to_string()),
+            StreamChunk::Stop {
+                finish_reason: Some("stop".to_string()),
+            },
+        ]])));
+
+        let pre_called = Arc::new(AtomicBool::new(false));
+        let post_called = Arc::new(AtomicBool::new(false));
+        let mw = HookMiddleware {
+            pre_called: pre_called.clone(),
+            post_called: post_called.clone(),
+        };
+
+        let runtime = AgentBuilder::new(client)
+            .system_prompt("test")
+            .middleware(mw)
+            .build()
+            .expect("build runtime");
+
+        let sid = runtime.create_session().await;
+        let result = runtime.run_turn(sid.clone(), "hi", |_| Ok(())).await;
+
+        assert!(result.is_ok(), "run_turn failed: {:?}", result.err());
+        assert!(
+            pre_called.load(Ordering::SeqCst),
+            "on_pre_llm hook should fire"
+        );
+        assert!(
+            post_called.load(Ordering::SeqCst),
+            "on_post_llm hook should fire"
+        );
+
+        // The middleware incremented nudge_count, which should be written back.
+        let session = runtime.session(&sid).await.expect("session exists");
+        assert_eq!(session.nudge_count, 1, "nudge_count should be written back");
     }
 }
