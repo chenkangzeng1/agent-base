@@ -337,7 +337,7 @@ impl StreamAggregator {
 mod tests {
     use super::*;
     use crate::llm::LlmCapabilities;
-    use crate::types::{AgentError, ResponseFormat};
+    use crate::types::{AgentError, ResponseFormat, RetryConfig};
     use async_trait::async_trait;
     use std::pin::Pin;
 
@@ -547,5 +547,269 @@ mod tests {
             .err()
             .expect("stream should error");
         assert!(matches!(err, AgentError::Cancelled));
+    }
+
+    // ── B5: chat_stream + retry + remaining process_stream branches ────────
+
+    /// A client whose `stream()` always fails.
+    struct AlwaysFail;
+
+    #[async_trait]
+    impl StreamClient for AlwaysFail {
+        async fn stream(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[Value],
+            _reasoning: Option<&ReasoningConfig>,
+            _response_format: Option<&ResponseFormat>,
+        ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
+            Err(AgentError::internal("api down"))
+        }
+
+        fn capabilities(&self) -> LlmCapabilities {
+            LlmCapabilities::default()
+        }
+
+        fn model_name(&self) -> &str {
+            "always-fail"
+        }
+    }
+
+    /// A client that fails the first `n` `stream()` calls, then succeeds.
+    struct FailThenSucceed {
+        remaining: std::sync::Mutex<usize>,
+    }
+
+    impl FailThenSucceed {
+        fn new(failures: usize) -> Self {
+            Self {
+                remaining: std::sync::Mutex::new(failures),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl StreamClient for FailThenSucceed {
+        async fn stream(
+            &self,
+            _messages: &[ChatMessage],
+            _tools: &[Value],
+            _reasoning: Option<&ReasoningConfig>,
+            _response_format: Option<&ResponseFormat>,
+        ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
+            let mut remaining = self.remaining.lock().unwrap();
+            if *remaining > 0 {
+                *remaining -= 1;
+                Err(AgentError::internal("transient"))
+            } else {
+                Ok(Box::pin(futures_util::stream::empty()))
+            }
+        }
+
+        fn capabilities(&self) -> LlmCapabilities {
+            LlmCapabilities::default()
+        }
+
+        fn model_name(&self) -> &str {
+            "fail-then-succeed"
+        }
+    }
+
+    #[tokio::test]
+    async fn chat_stream_returns_stream_on_ok() {
+        let engine = LlmEngine::new(Arc::new(StubClient("x")), EventBus::new(16));
+        let mut stream = engine.chat_stream(&[], &[], None, None).await.unwrap();
+        let next = futures_util::StreamExt::next(&mut stream).await;
+        assert!(next.is_none());
+    }
+
+    #[tokio::test]
+    async fn chat_stream_forwards_error() {
+        let engine = LlmEngine::new(Arc::new(AlwaysFail), EventBus::new(16));
+        let err = engine
+            .chat_stream(&[], &[], None, None)
+            .await
+            .err()
+            .expect("should fail");
+        assert!(err.to_string().contains("api down"));
+    }
+
+    #[tokio::test]
+    async fn run_llm_turn_retries_then_succeeds() {
+        let engine = LlmEngine::new(Arc::new(FailThenSucceed::new(2)), EventBus::new(16));
+        let cfg = RetryConfig {
+            max_retries: 3,
+            initial_backoff_ms: 1,
+            max_backoff_ms: 1000,
+            backoff_multiplier: 2.0,
+            jitter: false,
+        };
+        let _stream = engine
+            .run_llm_turn_with_retry(&SessionId::new(1), &[], &[], None, None, cfg)
+            .await
+            .expect("should succeed after retries");
+    }
+
+    #[tokio::test]
+    async fn run_llm_turn_retries_exhausted() {
+        let engine = LlmEngine::new(Arc::new(FailThenSucceed::new(100)), EventBus::new(16));
+        let cfg = RetryConfig {
+            max_retries: 2,
+            initial_backoff_ms: 1,
+            max_backoff_ms: 1,
+            backoff_multiplier: 2.0,
+            jitter: false,
+        };
+        let err = engine
+            .run_llm_turn_with_retry(&SessionId::new(1), &[], &[], None, None, cfg)
+            .await
+            .err()
+            .expect("should be exhausted");
+        assert!(err.to_string().contains("transient"));
+    }
+
+    #[tokio::test]
+    async fn process_stream_tool_call_missing_delta_continues() {
+        let bus = EventBus::new(16);
+        let engine = LlmEngine::new(Arc::new(StubClient("x")), bus.clone());
+        let chunks = vec![
+            Ok(StreamChunk::ToolCall(
+                serde_json::json!({ "no_delta": true }),
+            )),
+            Ok(StreamChunk::Stop {
+                finish_reason: Some("stop".into()),
+            }),
+        ];
+        let stream = Box::pin(futures_util::stream::iter(chunks));
+        let mut rx = bus.subscribe();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = engine
+            .process_stream(
+                &SessionId::new(1),
+                stream,
+                tracing::Span::none(),
+                &mut rx,
+                &mut |_e| Ok(()),
+                &cancel,
+            )
+            .await
+            .unwrap();
+        assert!(result.is_tool_call);
+        assert!(result.tool_calls.is_empty());
+    }
+
+    #[tokio::test]
+    async fn process_stream_tool_call_empty_id_and_name_ignored() {
+        let bus = EventBus::new(16);
+        let engine = LlmEngine::new(Arc::new(StubClient("x")), bus.clone());
+        let chunks = vec![Ok(StreamChunk::ToolCall(serde_json::json!({
+            "delta": { "tool_calls": [
+                { "index": 0, "id": "", "function": { "name": "", "arguments": "{}" } }
+            ] }
+        })))];
+        let stream = Box::pin(futures_util::stream::iter(chunks));
+        let mut rx = bus.subscribe();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = engine
+            .process_stream(
+                &SessionId::new(1),
+                stream,
+                tracing::Span::none(),
+                &mut rx,
+                &mut |_e| Ok(()),
+                &cancel,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.tool_calls.len(), 1);
+        assert_eq!(result.tool_calls[0]["id"].as_str(), Some(""));
+        assert_eq!(result.tool_calls[0]["function"]["name"].as_str(), Some(""));
+        assert_eq!(
+            result.tool_calls[0]["function"]["arguments"].as_str(),
+            Some("{}")
+        );
+    }
+
+    #[tokio::test]
+    async fn process_stream_stop_none_finish_reason_ignored() {
+        let bus = EventBus::new(16);
+        let engine = LlmEngine::new(Arc::new(StubClient("x")), bus.clone());
+        let chunks = vec![
+            Ok(StreamChunk::Stop {
+                finish_reason: Some("length".into()),
+            }),
+            Ok(StreamChunk::Stop {
+                finish_reason: None,
+            }),
+        ];
+        let stream = Box::pin(futures_util::stream::iter(chunks));
+        let mut rx = bus.subscribe();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = engine
+            .process_stream(
+                &SessionId::new(1),
+                stream,
+                tracing::Span::none(),
+                &mut rx,
+                &mut |_e| Ok(()),
+                &cancel,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result.finish_reason.as_deref(), Some("length"));
+    }
+
+    #[tokio::test]
+    async fn process_stream_text_and_thought_while_tool_call_skip_emit() {
+        let bus = EventBus::new(16);
+        let engine = LlmEngine::new(Arc::new(StubClient("x")), bus.clone());
+        let chunks = vec![
+            Ok(StreamChunk::ToolCall(serde_json::json!({
+                "delta": { "tool_calls": [
+                    { "index": 0, "id": "c1", "function": { "name": "t", "arguments": "{}" } }
+                ] }
+            }))),
+            Ok(StreamChunk::Text("ignored".into())),
+            Ok(StreamChunk::Thought("thinking".into())),
+        ];
+        let stream = Box::pin(futures_util::stream::iter(chunks));
+        let mut rx = bus.subscribe();
+        let mut events = Vec::new();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = engine
+            .process_stream(
+                &SessionId::new(1),
+                stream,
+                tracing::Span::none(),
+                &mut rx,
+                &mut |e| {
+                    events.push(e);
+                    Ok(())
+                },
+                &cancel,
+            )
+            .await
+            .unwrap();
+
+        // Text/Thought are accumulated but NOT emitted once a tool call started.
+        assert_eq!(result.full_text, "ignored");
+        assert_eq!(result.reasoning_text, "thinking");
+        assert!(
+            events.iter().all(|e| !matches!(
+                e,
+                RuntimeEvent::TextDelta { .. } | RuntimeEvent::ThoughtDelta { .. }
+            )),
+            "no Text/Thought deltas expected, got {events:?}"
+        );
+    }
+
+    #[test]
+    fn emit_text_delta_emits_event() {
+        let bus = EventBus::new(16);
+        let engine = LlmEngine::new(Arc::new(StubClient("x")), bus.clone());
+        let mut rx = bus.subscribe();
+        engine.emit_text_delta(&SessionId::new(1), "hello".into());
+        let ev = rx.try_recv().expect("event should be emitted");
+        assert!(matches!(ev, RuntimeEvent::TextDelta { text, .. } if text == "hello"));
     }
 }

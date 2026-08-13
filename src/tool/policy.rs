@@ -86,3 +86,33 @@ pub trait ToolPolicy: Send + Sync {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Minimal policy that auto-approves everything; exercises the default
+    /// no-op `before_call` / `after_call` hooks.
+    struct NoopPolicy;
+
+    #[async_trait]
+    impl ToolPolicy for NoopPolicy {
+        async fn evaluate_approval(
+            &self,
+            _tool_name: &str,
+            _args: &Value,
+        ) -> Option<ApprovalRequest> {
+            None
+        }
+    }
+
+    #[test]
+    fn default_hooks_are_noop() {
+        let p = NoopPolicy;
+        let ctx = ToolContext::for_test();
+        let args = json!({ "x": 1 });
+        assert!(p.before_call("echo", &args, &ctx).is_ok());
+        assert!(p.after_call("echo", &args, &[], &ctx).is_ok());
+    }
+}
