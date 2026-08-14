@@ -159,6 +159,7 @@ impl ToolEngine {
                             summary: error_summary,
                             agent_id: None,
                             trace_id: None,
+                            denied: false,
                         });
                         // Use `let _ =` to avoid masking the original tool error
                         // if the event callback fails
@@ -191,6 +192,7 @@ impl ToolEngine {
             summary: content_text(&tool_result),
             agent_id: None,
             trace_id: None,
+            denied: false,
         });
         EventBus::drain_async_events(event_rx, on_event)?;
 
@@ -317,6 +319,7 @@ impl ToolEngine {
                     summary: denial_summary,
                     agent_id: None,
                     trace_id: None,
+                    denied: true,
                 });
                 let _ = EventBus::drain_async_events(event_rx, on_event);
                 return Err(AgentError::ApprovalDenied {
@@ -663,6 +666,12 @@ mod tests {
                 .iter()
                 .any(|e| matches!(e, RuntimeEvent::AwaitingApproval { .. })),
             "should emit AwaitingApproval before denial"
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| matches!(e, RuntimeEvent::ToolCallFinished { denied: true, .. })),
+            "should emit a denied ToolCallFinished"
         );
     }
 

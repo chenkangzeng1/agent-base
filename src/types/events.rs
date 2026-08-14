@@ -76,6 +76,10 @@ pub enum RuntimeEvent {
         agent_id: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         trace_id: Option<String>,
+        /// `true` when this finish is the result of an approval denial (not a
+        /// normal tool result or execution error).
+        #[serde(default)]
+        denied: bool,
     },
     AwaitingApproval {
         session_id: SessionId,
@@ -254,6 +258,7 @@ mod tests {
                 summary: "ok".into(),
                 agent_id: Some("a".into()),
                 trace_id: Some("t".into()),
+                denied: false,
             },
             RuntimeEvent::AwaitingApproval {
                 session_id: sid(5),
@@ -332,6 +337,7 @@ mod tests {
                 summary: "ok".into(),
                 agent_id: None,
                 trace_id: None,
+                denied: false,
             },
             RuntimeEvent::AwaitingApproval {
                 session_id: sid(5),
