@@ -305,6 +305,83 @@ mod tests {
     }
 
     #[test]
+    fn with_agent_id_sets_id_on_all_variants() {
+        let events: Vec<RuntimeEvent> = vec![
+            RuntimeEvent::TextDelta {
+                session_id: sid(1),
+                text: "hi".into(),
+                agent_id: None,
+                trace_id: None,
+            },
+            RuntimeEvent::ThoughtDelta {
+                session_id: sid(2),
+                text: "hmm".into(),
+                agent_id: None,
+                trace_id: None,
+            },
+            RuntimeEvent::ToolCallStarted {
+                session_id: sid(3),
+                tool_name: "read".into(),
+                args_json: "{}".into(),
+                agent_id: None,
+                trace_id: None,
+            },
+            RuntimeEvent::ToolCallFinished {
+                session_id: sid(4),
+                tool_name: "read".into(),
+                summary: "ok".into(),
+                agent_id: None,
+                trace_id: None,
+            },
+            RuntimeEvent::AwaitingApproval {
+                session_id: sid(5),
+                request: approval_request(),
+                agent_id: None,
+                trace_id: None,
+            },
+            RuntimeEvent::Checkpoint {
+                session_id: sid(6),
+                checkpoint: checkpoint(),
+                agent_id: None,
+                trace_id: None,
+            },
+            RuntimeEvent::RunFinished {
+                session_id: sid(7),
+                agent_id: None,
+                trace_id: None,
+            },
+            RuntimeEvent::RunCancelled {
+                session_id: sid(8),
+                agent_id: None,
+                trace_id: None,
+            },
+            RuntimeEvent::PlanUpdated {
+                session_id: sid(9),
+                objective: "goal".into(),
+                explanation: None,
+                plan: vec![PlanItem {
+                    step: "s".into(),
+                    status: PlanStepStatus::Pending,
+                }],
+                agent_id: None,
+                trace_id: None,
+            },
+            RuntimeEvent::UserEvent {
+                session_id: sid(10),
+                event: UserEvent::Progress { text: "p".into() },
+                agent_id: None,
+                trace_id: None,
+            },
+        ];
+
+        for (i, ev) in events.into_iter().enumerate() {
+            let tagged = ev.with_agent_id("sub/1");
+            assert_eq!(tagged.agent_id(), Some("sub/1"), "variant {i}");
+            assert_eq!(tagged.session_id(), &sid(i as u64 + 1), "variant {i}");
+        }
+    }
+
+    #[test]
     fn accessors_return_none_when_ids_absent() {
         let ev = RuntimeEvent::RunFinished {
             session_id: sid(1),
