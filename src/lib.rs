@@ -14,8 +14,8 @@ pub mod prelude {
         AnthropicClient, LlmClient, LlmClientBuilder, OpenAiClient, StreamClient,
     };
     pub use crate::tool::{
-        AutoContinueTool, Content, Tool, ToolContext, ToolMetadata, ToolPolicy, ToolRegistry,
-        TypedTool,
+        AutoContinueTool, Content, DenyAllToolPolicy, Tool, ToolContext, ToolMetadata, ToolPolicy,
+        ToolRegistry, TypedTool,
     };
     pub use crate::types::{
         AgentConfig, AgentError, AgentResult, ChatMessage, Language, Message, MessageRole,
@@ -54,8 +54,8 @@ pub use engine::{
 // Tools
 // ---------------------------------------------------------------------------
 pub use tool::{
-    AutoContinueTool, Content, Tool, ToolContext, ToolMetadata, ToolPolicy, ToolRegistry,
-    TypedTool, UpdatePlanTool,
+    AutoContinueTool, Content, DenyAllToolPolicy, Tool, ToolContext, ToolMetadata, ToolPolicy,
+    ToolRegistry, TypedTool, UpdatePlanTool,
 };
 
 // ---------------------------------------------------------------------------

@@ -373,6 +373,10 @@ impl ToolEngine {
         self.approval_handler.as_ref()
     }
 
+    pub fn tool_policy(&self) -> Option<&Arc<dyn ToolPolicy>> {
+        self.tool_policy.as_ref()
+    }
+
     pub fn tools_arc(&self) -> Arc<RwLock<ToolRegistry>> {
         self.tools.clone()
     }

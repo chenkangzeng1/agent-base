@@ -16,7 +16,7 @@ pub mod update_plan;
 pub use auto_continue::AutoContinueTool;
 pub use update_plan::UpdatePlanTool;
 
-pub use policy::ToolPolicy;
+pub use policy::{DenyAllToolPolicy, ToolPolicy};
 
 /// Structured content returned by a tool, aligned with the MCP `content`
 /// array shape (no envelope, no orchestration/failure/truncation semantics).

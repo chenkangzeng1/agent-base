@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use super::{Content, ToolContext};
-use crate::types::{AgentResult, ApprovalRequest};
+use crate::types::{AgentResult, ApprovalRequest, RiskLevel};
 
 /// Policy-based control over tool execution.
 ///
@@ -87,6 +87,28 @@ pub trait ToolPolicy: Send + Sync {
     }
 }
 
+/// A [`ToolPolicy`] that requires approval for every tool call.
+///
+/// Combined with a deny-all approval handler, this denies every tool for the
+/// agent that carries it. Used by multi-agent runtimes as a fallback when a
+/// child should have "no permission" but its parent has no [`ToolPolicy`] of
+/// its own to inherit (so there is no notion of which tools are "dangerous").
+#[derive(Debug, Clone, Default)]
+pub struct DenyAllToolPolicy;
+
+#[async_trait]
+impl ToolPolicy for DenyAllToolPolicy {
+    async fn evaluate_approval(&self, tool_name: &str, _args: &Value) -> Option<ApprovalRequest> {
+        Some(ApprovalRequest {
+            title: format!("Permission required: {tool_name}"),
+            message: format!("This agent has no permission to call `{tool_name}`."),
+            action_key: None,
+            risk_level: RiskLevel::Destructive,
+            raw: None,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -114,5 +136,16 @@ mod tests {
         let args = json!({ "x": 1 });
         assert!(p.before_call("echo", &args, &ctx).is_ok());
         assert!(p.after_call("echo", &args, &[], &ctx).is_ok());
+    }
+
+    #[tokio::test]
+    async fn deny_all_policy_requires_approval_for_every_tool() {
+        let p = DenyAllToolPolicy;
+        let req = p
+            .evaluate_approval("any_tool", &json!({}))
+            .await
+            .expect("every tool should require approval");
+        assert_eq!(req.risk_level, RiskLevel::Destructive);
+        assert!(req.title.contains("any_tool"));
     }
 }

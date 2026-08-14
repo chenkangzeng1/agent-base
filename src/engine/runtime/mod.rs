@@ -10,6 +10,7 @@ use crate::types::{
 };
 
 use super::approval::ApprovalHandler;
+use crate::tool::ToolPolicy;
 
 mod event_bus;
 pub(crate) use event_bus::EventBus;
@@ -125,6 +126,10 @@ impl AgentRuntime {
 
     pub fn approval_handler(&self) -> Option<&Arc<dyn ApprovalHandler>> {
         self.runner.tool_engine.approval_handler()
+    }
+
+    pub fn tool_policy(&self) -> Option<&Arc<dyn ToolPolicy>> {
+        self.runner.tool_engine.tool_policy()
     }
 
     pub async fn cached_approval(&self, session_id: &SessionId, action_key: &str) -> bool {
