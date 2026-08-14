@@ -480,9 +480,6 @@ async fn main() -> AgentResult<()> {
                                 serde_json::to_string_pretty(&data).unwrap_or_default()
                             );
                         }
-                        UserEvent::SubAgentEvent { subagent, event } => {
-                            println!("  🤖 [SubAgent:{}] {:?}", subagent, event);
-                        }
                     },
                     RuntimeEvent::RunFinished { .. } if assistant_started => {
                         println!();

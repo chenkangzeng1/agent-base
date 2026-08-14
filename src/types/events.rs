@@ -20,11 +20,6 @@ use super::session::SessionId;
 pub enum UserEvent {
     /// Tool progress notification.
     Progress { text: String },
-    /// Sub-agent event forwarding (emitted by the multi-agent runtime).
-    SubAgentEvent {
-        subagent: String,
-        event: Box<RuntimeEvent>,
-    },
     /// User-defined structured event for custom business semantics.
     Structured { event_type: String, data: Value },
     /// Tool partial result — emitted during long-running tool execution.
@@ -182,6 +177,24 @@ impl RuntimeEvent {
             RuntimeEvent::PlanUpdated { trace_id, .. } => trace_id.as_deref(),
             RuntimeEvent::UserEvent { trace_id, .. } => trace_id.as_deref(),
         }
+    }
+
+    /// Set the agent ID (sub-agent path) on this event.
+    pub fn with_agent_id(mut self, id: impl Into<String>) -> Self {
+        let id = id.into();
+        match &mut self {
+            RuntimeEvent::TextDelta { agent_id, .. }
+            | RuntimeEvent::ThoughtDelta { agent_id, .. }
+            | RuntimeEvent::ToolCallStarted { agent_id, .. }
+            | RuntimeEvent::ToolCallFinished { agent_id, .. }
+            | RuntimeEvent::AwaitingApproval { agent_id, .. }
+            | RuntimeEvent::Checkpoint { agent_id, .. }
+            | RuntimeEvent::RunFinished { agent_id, .. }
+            | RuntimeEvent::RunCancelled { agent_id, .. }
+            | RuntimeEvent::PlanUpdated { agent_id, .. }
+            | RuntimeEvent::UserEvent { agent_id, .. } => *agent_id = Some(id),
+        }
+        self
     }
 }
 
