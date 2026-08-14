@@ -554,7 +554,6 @@ cargo run
 | `ToolErrorRecovery` | What happens when a tool fails | `StopOnError` (default) or `RetryOnError` |
 | `RuntimeEvent` stream | Real-time events from the runtime | UI updates, logging, debugging |
 | `SessionId` | Multi-turn conversation handle | Every REPL or chat UI |
-| `SubAgentTool` | Wrap another agent as a tool | Delegation, specialist agents |
 
 ---
 

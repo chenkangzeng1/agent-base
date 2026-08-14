@@ -20,7 +20,7 @@ use super::session::SessionId;
 pub enum UserEvent {
     /// Tool progress notification.
     Progress { text: String },
-    /// Sub-agent event forwarding (used by `SubAgentTool`).
+    /// Sub-agent event forwarding (emitted by the multi-agent runtime).
     SubAgentEvent {
         subagent: String,
         event: Box<RuntimeEvent>,

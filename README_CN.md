@@ -34,7 +34,6 @@ agent-base = "0.2.0"
 - **事件流** — 结构化 `RuntimeEvent` 流，可配置 `EventBus` 容量
 - **多轮会话** — `AgentSession` 管理消息历史；`SessionStore` 可选持久化；支持 `max_sessions` / `max_turns_per_session` 限制
 - **SQLite 会话存储** — `SqliteSessionStore`，通过 `sqlite-session` feature flag 开启持久化会话存储
-- **子 Agent** — `SubAgentTool`，支持 `Ephemeral`（默认）或 `Persistent` 会话策略
 - **上下文管理** — 可配置的 `ContextWindowManager` 控制 token 预算；`max_message_tokens` 上限
 - **中间件** — `on_user_message`、`on_pre_llm`、`on_post_llm` 三个钩子用于扩展
 - **临时消息（Ephemeral Messages）** — 消息可标记为临时，LLM 本轮可见，turn 结束后自动从内存清理且不持久化
@@ -213,32 +212,6 @@ let runtime = AgentBuilder::new(llm)
     .approval_handler(Arc::new(MyApprovalHandler))
     .build()?;
 ```
-
-### 5. 使用子 Agent
-
-```rust
-use agent_base::SubAgentTool;
-
-// 构建子 Agent 运行时
-let sub_llm = Arc::new(OpenAiClient::new(key, model, None));
-let sub_runtime = AgentBuilder::new(sub_llm)
-    .system_prompt("你是一个数学专家。")
-    .build()?;
-
-// 包装为工具
-let math_tool = SubAgentTool::new(
-    "calculate",
-    "将数学问题委派给数学专家",
-    sub_runtime,
-);
-
-// 注册到父 Agent
-let parent = AgentBuilder::new(parent_llm)
-    .register_tool(math_tool)
-    .build()?;
-```
-
-每次子 Agent 调用默认创建新会话。使用 `SubAgentTool::with_persistent()` 可跨调用共享上下文。
 
 ## 示例
 

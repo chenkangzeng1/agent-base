@@ -11,11 +11,9 @@ use crate::types::{AgentError, AgentResult, SessionId, UserEvent};
 
 pub mod auto_continue;
 pub mod policy;
-pub mod subagent;
 pub mod update_plan;
 
 pub use auto_continue::AutoContinueTool;
-pub use subagent::{SubAgentSessionPolicy, SubAgentTool};
 pub use update_plan::UpdatePlanTool;
 
 pub use policy::ToolPolicy;

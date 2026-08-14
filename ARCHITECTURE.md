@@ -204,7 +204,6 @@ src/
 ├── tool/                        ─── Tool system
 │   ├── mod.rs                   ─── Tool trait, TypedTool, ToolRegistry, Content
 │   ├── policy.rs                ─── ToolPolicy trait (approval evaluation)
-│   ├── subagent.rs              ─── SubAgentTool + SubAgentSessionPolicy
 │   ├── auto_continue.rs         ─── AutoContinueTool
 │   └── update_plan.rs           ─── UpdatePlanTool (display-only checklist)
 │

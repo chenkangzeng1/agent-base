@@ -554,7 +554,6 @@ cargo run
 | `ToolErrorRecovery` | 工具失败后的行为策略 | `StopOnError`（默认）或 `RetryOnError` |
 | `RuntimeEvent` 流 | 运行时实时事件 | UI 更新、日志、调试 |
 | `SessionId` | 多轮对话句柄 | REPL 或聊天 UI |
-| `SubAgentTool` | 把另一个 Agent 包装成工具 | 任务委派、专家 Agent |
 
 ---
 

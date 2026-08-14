@@ -34,7 +34,6 @@ agent-base = "0.2.0"
 - **Event Streaming** — Structured `RuntimeEvent` stream with configurable `EventBus` capacity
 - **Multi-turn Sessions** — `AgentSession` manages message history; `SessionStore` for optional persistence; `max_sessions` / `max_turns_per_session` limits
 - **SQLite Session Store** — `SqliteSessionStore` behind `sqlite-session` feature flag for persistent session storage
-- **Sub-Agents** — `SubAgentTool` with `Ephemeral` (default) or `Persistent` session policies
 - **Context Management** — Configurable `ContextWindowManager` for token budget control; `max_message_tokens` cap
 - **Middleware** — Hooks at `on_user_message`, `on_pre_llm`, and `on_post_llm` for extensions
 - **Ephemeral Messages** — Messages can be marked ephemeral; visible to LLM during the current turn, automatically cleaned from memory after turn ends, excluded from persistence
@@ -213,32 +212,6 @@ let runtime = AgentBuilder::new(llm)
     .approval_handler(Arc::new(MyApprovalHandler))
     .build()?;
 ```
-
-### 5. Use a Sub-Agent
-
-```rust
-use agent_base::SubAgentTool;
-
-// Build a sub-agent runtime
-let sub_llm = Arc::new(OpenAiClient::new(key, model, None));
-let sub_runtime = AgentBuilder::new(sub_llm)
-    .system_prompt("You are a math expert.")
-    .build()?;
-
-// Wrap it as a tool
-let math_tool = SubAgentTool::new(
-    "calculate",
-    "Delegate math problems to a math expert",
-    sub_runtime,
-);
-
-// Register in the parent agent
-let parent = AgentBuilder::new(parent_llm)
-    .register_tool(math_tool)
-    .build()?;
-```
-
-Each sub-agent call creates a fresh session by default. Use `SubAgentTool::with_persistent()` to share context across calls.
 
 ## Examples
 
