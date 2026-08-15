@@ -58,6 +58,8 @@ impl RuntimeCore {
         self.with_session_mut(&session_id, |session| {
             session.nudge_count = 0;
             session.turn_tool_calls = 0;
+            session.reasoning_only_strikes = 0;
+            session.empty_response_strikes = 0;
         })
         .await?;
 
@@ -161,6 +163,8 @@ impl RuntimeCore {
             .with_session_mut(&session_id, |session| {
                 session.nudge_count = 0;
                 session.turn_tool_calls = 0;
+                session.reasoning_only_strikes = 0;
+                session.empty_response_strikes = 0;
             })
             .await
         {
@@ -447,6 +451,8 @@ impl RuntimeCore {
         self.with_session_mut(&session_id, |session| {
             session.nudge_count = 0;
             session.turn_tool_calls = 0;
+            session.reasoning_only_strikes = 0;
+            session.empty_response_strikes = 0;
         })
         .await?;
 

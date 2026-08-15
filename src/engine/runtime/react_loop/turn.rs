@@ -26,6 +26,15 @@ enum TurnFlow {
     Done(RunOutcome),
 }
 
+/// Max consecutive reasoning-only turns (no text, no tool call) before the
+/// react loop gives up and fails instead of looping on a reasoning-model runaway.
+const REASONING_ONLY_MAX_STRIKES: usize = 3;
+
+/// Max consecutive completely-empty responses (no text, no reasoning, no tool
+/// call) before the react loop fails instead of looping forever. Mirrors the
+/// bounded-retry budget of the reference harnesses (2 retries after the first).
+const EMPTY_RESPONSE_MAX_STRIKES: usize = 3;
+
 impl RuntimeCore {
     async fn apply_pre_llm_mw(
         &self,
@@ -332,6 +341,7 @@ impl RuntimeCore {
                 finish_reason,
                 ttft_ms,
                 llm_duration_ms,
+                reasoning_only,
             }) => {
                 tracing::info!(
                     session_id = session_id.id,
@@ -378,6 +388,63 @@ impl RuntimeCore {
                     })
                     .collect();
 
+                // Degenerate state: the model emitted reasoning_content but no
+                // `content` and no tool call. We never promote reasoning into the
+                // answer, so this is a no-output turn: the model "thought" but
+                // neither committed to a tool call nor wrote an answer. Nudge it to
+                // decide, and fail after a few consecutive strikes.
+                if reasoning_only {
+                    let strikes = self
+                        .with_session_mut(session_id, |session| {
+                            session.reasoning_only_strikes += 1;
+                            session.reasoning_only_strikes
+                        })
+                        .await?;
+                    tracing::warn!(
+                        session_id = session_id.id,
+                        turn = turn_count,
+                        strikes,
+                        "reasoning-only response with tools available — nudging the model to commit"
+                    );
+                    if strikes >= REASONING_ONLY_MAX_STRIKES {
+                        let error = "model produced only reasoning (no tool call or answer) \
+                                     across multiple turns despite tools being available";
+                        self.fire_turn_end(TurnEndCtx {
+                            ttft_ms,
+                            llm_duration_ms,
+                            usage: &usage,
+                            text_length: text_len,
+                            has_thinking,
+                            llm_calls: 1,
+                            error_message: Some(error),
+                            ..TurnEndCtx::new(
+                                session_id,
+                                turn_count,
+                                turn_start,
+                                model,
+                                user_input_owned,
+                                RunOutcome::Failed {
+                                    error: error.to_string(),
+                                },
+                            )
+                        })
+                        .await;
+                        return Ok(TurnFlow::Done(RunOutcome::Failed {
+                            error: error.to_string(),
+                        }));
+                    }
+                    self.with_session_mut(session_id, |session| {
+                        session.push_message(
+                            MessageRole::User,
+                            "You produced internal reasoning but no tool call and no final answer. \
+                             Make a decision now: call a tool to make progress, or write your \
+                             final answer as plain text.",
+                        );
+                    })
+                    .await?;
+                    return Ok(TurnFlow::Continue);
+                }
+
                 let result = self
                     .apply_post_llm_mw(
                         session_id,
@@ -412,11 +479,58 @@ impl RuntimeCore {
                 }
 
                 if result.full_text.is_empty() && !result.is_tool_call {
-                    tracing::debug!(
+                    // Degenerate state: the model returned nothing — no text, no
+                    // reasoning, no tool call. This is an EMPTY_RESPONSE. Retry a
+                    // bounded number of times (nudging the model to produce output),
+                    // then fail loudly instead of looping forever.
+                    let strikes = self
+                        .with_session_mut(session_id, |session| {
+                            session.empty_response_strikes += 1;
+                            session.empty_response_strikes
+                        })
+                        .await?;
+                    tracing::warn!(
                         session_id = session_id.id,
                         turn = turn_count,
-                        "empty LLM response, continuing"
+                        strikes,
+                        "empty LLM response (no text, no reasoning, no tool call)"
                     );
+                    if strikes >= EMPTY_RESPONSE_MAX_STRIKES {
+                        let error = "model returned empty responses repeatedly \
+                                     (no text, no reasoning, no tool call)";
+                        self.fire_turn_end(TurnEndCtx {
+                            ttft_ms,
+                            llm_duration_ms,
+                            usage: &usage,
+                            text_length: text_len,
+                            has_thinking,
+                            llm_calls: 1,
+                            error_message: Some(error),
+                            ..TurnEndCtx::new(
+                                session_id,
+                                turn_count,
+                                turn_start,
+                                model,
+                                user_input_owned,
+                                RunOutcome::Failed {
+                                    error: error.to_string(),
+                                },
+                            )
+                        })
+                        .await;
+                        return Ok(TurnFlow::Done(RunOutcome::Failed {
+                            error: error.to_string(),
+                        }));
+                    }
+                    self.with_session_mut(session_id, |session| {
+                        session.push_message(
+                            MessageRole::User,
+                            "You returned an empty response with no tool call and no \
+                             answer. Produce output now: call a tool to make progress, \
+                             or write your final answer as plain text.",
+                        );
+                    })
+                    .await?;
                     return Ok(TurnFlow::Continue);
                 }
 

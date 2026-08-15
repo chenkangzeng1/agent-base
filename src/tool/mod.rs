@@ -81,6 +81,11 @@ pub struct ToolContext {
     pub language: crate::types::Language,
     /// Cancellation token for checking if the operation should be cancelled.
     pub cancel_token: tokio_util::sync::CancellationToken,
+    /// Output budget for this call, in characters (set from the engine's
+    /// `max_tool_output_chars`). Tools that can return large results (e.g.
+    /// `read_file`) should self-truncate to this bound and mark the cut, so
+    /// the engine's hard reject (§6.5) never fires for a paginated read.
+    pub max_output_chars: Option<usize>,
     /// Internal runtime event bus (framework tools emit `RuntimeEvent`s here).
     /// `pub(crate)` — engine-internal; user tools should use `emit_user_event()`.
     pub(crate) event_bus: crate::engine::EventBus,
@@ -124,6 +129,7 @@ impl ToolContext {
             session_store: None,
             language: crate::types::Language::En,
             cancel_token: tokio_util::sync::CancellationToken::new(),
+            max_output_chars: None,
             event_bus: crate::engine::EventBus::new(1),
         }
     }
@@ -491,6 +497,7 @@ mod tests {
             session_store: None,
             language: crate::types::Language::En,
             cancel_token: tokio_util::sync::CancellationToken::new(),
+            max_output_chars: None,
             event_bus: crate::engine::EventBus::new(1),
         };
         ctx.emit_partial_result("tc1", "partial", true);

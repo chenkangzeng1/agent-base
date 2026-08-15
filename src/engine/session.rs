@@ -24,6 +24,16 @@ pub struct AgentSession {
     /// Reset to 0 at the start of each turn (when a new user message arrives).
     /// Used by `TurnToolLimitMiddleware` to enforce per-turn tool call limits.
     pub turn_tool_calls: usize,
+    /// Number of consecutive LLM turns that produced only reasoning_content
+    /// (no text, no tool call). Reset to 0 at the start of each turn. Used by
+    /// the react loop to fail instead of looping forever on a reasoning-model
+    /// runaway.
+    pub reasoning_only_strikes: usize,
+    /// Number of consecutive LLM turns that produced a completely empty response
+    /// (no text, no reasoning, no tool call). Reset to 0 at the start of each
+    /// turn. Used by the react loop to retry a bounded number of times, then fail
+    /// instead of looping forever.
+    pub empty_response_strikes: usize,
 }
 
 impl AgentSession {
@@ -35,6 +45,8 @@ impl AgentSession {
             total_tool_calls: 0,
             nudge_count: 0,
             turn_tool_calls: 0,
+            reasoning_only_strikes: 0,
+            empty_response_strikes: 0,
         }
     }
 

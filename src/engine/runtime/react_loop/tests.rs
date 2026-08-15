@@ -1175,6 +1175,93 @@ async fn run_turn_text_only_event_order() {
     );
 }
 
+/// Reasoning-only turn: the model emits reasoning_content but no text and no
+/// tool call. Mirrors the deepseek-v4-pro "thinking runaway" on long
+/// multi-agent contexts.
+fn reasoning_script() -> Vec<Vec<StreamChunk>> {
+    (0..10)
+        .map(|_| {
+            vec![
+                StreamChunk::Thought("thinking but never committing".to_string()),
+                StreamChunk::Stop {
+                    finish_reason: Some("stop".to_string()),
+                },
+            ]
+        })
+        .collect()
+}
+
+/// When a tool is registered but the model keeps producing reasoning-only
+/// responses, the react loop must NOT report a fake completion — it nudges,
+/// then fails after `REASONING_ONLY_MAX_STRIKES` consecutive strikes.
+#[tokio::test]
+async fn reasoning_only_with_tools_fails_instead_of_fake_completing() {
+    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(reasoning_script())));
+    let runtime = AgentBuilder::new(client)
+        .system_prompt("test")
+        .register_tool(EchoTool)
+        .build()
+        .expect("build runtime");
+
+    let sid = runtime.create_session().await;
+    let result = runtime.run_turn(sid.clone(), "do the thing", |_| Ok(())).await;
+
+    assert!(
+        matches!(result, Ok(RunOutcome::Failed { .. })),
+        "reasoning-only with tools must fail, not complete: {:?}",
+        result
+    );
+}
+
+/// Reasoning-only responses must never be promoted into the answer — even when
+/// no tools are registered, a model that keeps "thinking" without producing a
+/// final answer must be nudged and eventually fail, not silently completed.
+#[tokio::test]
+async fn reasoning_only_without_tools_fails_instead_of_promoting() {
+    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(reasoning_script())));
+    let runtime = AgentBuilder::new(client)
+        .system_prompt("test")
+        .build()
+        .expect("build runtime");
+
+    let sid = runtime.create_session().await;
+    let result = runtime.run_turn(sid.clone(), "do the thing", |_| Ok(())).await;
+
+    assert!(
+        matches!(result, Ok(RunOutcome::Failed { .. })),
+        "reasoning-only without tools must fail, not promote reasoning to the answer: {:?}",
+        result
+    );
+}
+
+/// A completely empty response (no text, no reasoning, no tool call) must be
+/// retried a bounded number of times, then fail — not loop forever.
+#[tokio::test]
+async fn empty_response_fails_after_bounded_retries() {
+    let script = (0..5)
+        .map(|_| {
+            vec![StreamChunk::Stop {
+                finish_reason: Some("stop".to_string()),
+            }]
+        })
+        .collect();
+    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(script)));
+    let runtime = AgentBuilder::new(client)
+        .system_prompt("test")
+        .register_tool(EchoTool)
+        .build()
+        .expect("build runtime");
+
+    let sid = runtime.create_session().await;
+    let result = runtime.run_turn(sid.clone(), "do the thing", |_| Ok(())).await;
+
+    assert!(
+        matches!(result, Ok(RunOutcome::Failed { .. })),
+        "empty response must fail after bounded retries, not loop forever: {:?}",
+        result
+    );
+}
+
 #[tokio::test]
 async fn run_turn_tool_call_then_text_event_order() {
     let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![

@@ -219,25 +219,22 @@ impl LlmEngine {
         let total_elapsed = start.elapsed();
         let _ttft_ms = aggregator.ttft_ms;
 
-        // Fallback: some models (e.g. qwen3.7-max) put the final answer in
-        // reasoning_content instead of content when thinking is enabled.
-        // If we got reasoning but no text and no tool calls, use reasoning as the response.
-        // NOTE: this usually means tools were not provided — the model "thinks" about calling
-        // a tool but can't, so it only produces reasoning. Check your tool configuration.
-        let mut full_text = aggregator.full_text;
+        // Reasoning is a separate channel from the final answer. We NEVER promote
+        // reasoning_content into `content`: some models (e.g. qwen3.7-max) answer
+        // entirely in the reasoning channel, but papering over that masks a stuck
+        // agent as a completed run. Instead we classify and let the react loop route
+        // it — `reasoning_only` (reasoning but no text and no tool call) is always a
+        // degenerate state the loop nudges and eventually fails, never a fake answer.
+        let full_text = aggregator.full_text;
         let reasoning_len = aggregator.reasoning_text.len();
-        if full_text.is_empty() && reasoning_len > 0 && !aggregator.is_tool_call {
+        let reasoning_only = full_text.is_empty() && reasoning_len > 0 && !aggregator.is_tool_call;
+        if reasoning_only {
             tracing::warn!(
                 session_id = session_id.id,
                 reasoning_len,
-                "content empty but reasoning_content present — this usually means no tools were defined. \
-                 Using reasoning as fallback response. Check that tools are correctly passed to the LLM."
+                "content empty but reasoning_content present — model produced reasoning only; \
+                 not promoting it to the answer, the react loop will nudge/fail"
             );
-            // Use reasoning as the response text so react_loop doesn't treat it as empty.
-            // Do NOT emit TextDelta here — the frontend already received the content as
-            // ThoughtDelta events during streaming. Emitting TextDelta would duplicate it.
-            // The session push in react_loop will persist the content for reload.
-            full_text = aggregator.reasoning_text.clone();
         }
 
         tracing::info!(
@@ -274,6 +271,7 @@ impl LlmEngine {
             finish_reason: aggregator.finish_reason,
             ttft_ms: aggregator.ttft_ms,
             llm_duration_ms: total_elapsed.as_millis() as u64,
+            reasoning_only,
         })
     }
 
@@ -302,13 +300,17 @@ pub struct LlmTurnResult {
     pub ttft_ms: u64,
     /// LLM stream duration in milliseconds (from stream start to end).
     pub llm_duration_ms: u64,
+    /// True when the model emitted reasoning_content but no `content` and no tool
+    /// call. This is always a degenerate state (the model "thought" but neither
+    /// committed to a tool call nor produced an answer); the react loop nudges and
+    /// eventually fails rather than promoting the reasoning into `full_text`.
+    pub reasoning_only: bool,
 }
 
 struct StreamAggregator {
     pub full_text: String,
     /// Accumulated reasoning/thinking content (from StreamChunk::Thought).
-    /// Some models (e.g. qwen3.7-max) put the final answer in reasoning_content
-    /// instead of content when thinking is enabled.
+    /// Kept separate from `full_text`; never promoted into the final answer.
     pub reasoning_text: String,
     pub is_tool_call: bool,
     pub partials: std::collections::HashMap<usize, (String, String, String)>,
@@ -475,7 +477,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn process_stream_falls_back_to_reasoning() {
+    async fn process_stream_flags_reasoning_only_without_promoting() {
         let bus = EventBus::new(16);
         let engine = LlmEngine::new(Arc::new(StubClient("x")), bus.clone());
         let chunks = vec![Ok(StreamChunk::Thought("deep thought".into()))];
@@ -494,9 +496,11 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(result.full_text, "deep thought");
+        // Reasoning must NOT be promoted into the answer text.
+        assert_eq!(result.full_text, "");
         assert_eq!(result.reasoning_text, "deep thought");
         assert!(!result.is_tool_call);
+        assert!(result.reasoning_only, "reasoning-only should be flagged");
     }
 
     #[tokio::test]

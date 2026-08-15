@@ -84,6 +84,7 @@ impl ToolEngine {
             session_store: Some(ctx.session_manager.session_store().clone()),
             language: ctx.language.clone(),
             cancel_token: ctx.cancel_token.clone(),
+            max_output_chars: ctx.max_output_chars,
             event_bus: self.event_bus.clone(),
         };
 
