@@ -371,3 +371,135 @@ mod sqlite_tests {
         assert_eq!(loaded.total_tool_calls, 3);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_session(id: u64) -> AgentSession {
+        let mut s = AgentSession::new(SessionId::new(id));
+        s.push_message(crate::types::MessageRole::User, "hello");
+        s.push_message(crate::types::MessageRole::Assistant, "hi");
+        s
+    }
+
+    #[tokio::test]
+    async fn save_and_load_roundtrips_fields() {
+        let store = InMemorySessionStore::new();
+        let mut session = make_session(1);
+        session.allow_action("read_file");
+        session.total_tool_calls = 2;
+        store.save(&session).await.unwrap();
+
+        let loaded = store.load(&SessionId::new(1)).await.unwrap();
+        assert!(loaded.is_some());
+        let loaded = loaded.unwrap();
+        assert_eq!(loaded.id(), Some(SessionId::new(1)));
+        assert_eq!(loaded.chat_messages().len(), 2);
+        assert!(loaded.is_action_allowed("read_file"));
+        assert_eq!(loaded.total_tool_calls, 2);
+    }
+
+    #[tokio::test]
+    async fn load_nonexistent_returns_none() {
+        let store = InMemorySessionStore::new();
+        let result = store.load(&SessionId::new(999)).await.unwrap();
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn list_returns_all_saved_ids() {
+        let store = InMemorySessionStore::new();
+        store.save(&make_session(1)).await.unwrap();
+        store.save(&make_session(2)).await.unwrap();
+        store.save(&make_session(3)).await.unwrap();
+
+        let ids = store.list().await.unwrap();
+        assert_eq!(ids.len(), 3);
+        let mut sorted = ids.clone();
+        sorted.sort_by_key(|id| id.id);
+        assert_eq!(
+            sorted.iter().map(|id| id.id).collect::<Vec<_>>(),
+            vec![1, 2, 3]
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_removes_session() {
+        let store = InMemorySessionStore::new();
+        store.save(&make_session(1)).await.unwrap();
+        assert!(store.load(&SessionId::new(1)).await.unwrap().is_some());
+
+        store.delete(&SessionId::new(1)).await.unwrap();
+        assert!(store.load(&SessionId::new(1)).await.unwrap().is_none());
+        assert!(store.list().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn delete_nonexistent_is_noop() {
+        let store = InMemorySessionStore::new();
+        // Deleting an unknown session must succeed without error.
+        store.delete(&SessionId::new(999)).await.unwrap();
+        assert!(store.list().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn save_overwrites_existing_session() {
+        let store = InMemorySessionStore::new();
+        let mut session = make_session(1);
+        store.save(&session).await.unwrap();
+
+        session.push_message(crate::types::MessageRole::User, "another");
+        store.save(&session).await.unwrap();
+
+        let loaded = store.load(&SessionId::new(1)).await.unwrap().unwrap();
+        assert_eq!(loaded.chat_messages().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn save_without_id_errors() {
+        let store = InMemorySessionStore::new();
+        let session = AgentSession::default(); // id is None
+        let err = store.save(&session).await.unwrap_err();
+        assert!(err.to_string().contains("no id"));
+    }
+
+    #[tokio::test]
+    async fn save_with_external_id_roundtrips() {
+        let store = InMemorySessionStore::new();
+        let mut s = AgentSession::new(SessionId::with_external_id(42, "my-ext-id"));
+        s.push_message(crate::types::MessageRole::User, "test");
+        store.save(&s).await.unwrap();
+
+        let loaded = store
+            .load(&SessionId::with_external_id(42, "my-ext-id"))
+            .await
+            .unwrap();
+        assert!(loaded.is_some());
+    }
+
+    #[tokio::test]
+    async fn list_empty_store() {
+        let store = InMemorySessionStore::new();
+        assert!(store.list().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn append_event_default_noop() {
+        let store = InMemorySessionStore::new();
+        store
+            .append_event(
+                &SessionId::new(1),
+                &RuntimeEvent::UserEvent {
+                    session_id: SessionId::new(1),
+                    event: crate::types::UserEvent::Progress {
+                        text: "test".into(),
+                    },
+                    agent_id: None,
+                    trace_id: None,
+                },
+            )
+            .await
+            .unwrap();
+    }
+}
