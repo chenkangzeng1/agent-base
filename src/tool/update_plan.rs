@@ -120,21 +120,26 @@ impl Tool for UpdatePlanTool {
     fn description(&self) -> &'static str {
         self.custom_description.unwrap_or(
             "Record and display a structured plan / checklist to track progress on a complex task.\n\n\
-            Use this to show the user what steps you plan to take and update step statuses as you go.\n\n\
-            Rules:\n\
-            - Always include the user's goal as `objective`\n\
-            - Plan must have at least one step\n\
-            - At most one step may be in_progress at a time\n\
-            - Step descriptions should be concise and human-readable\n\
-            - Call this again whenever step statuses change\n\
-            - Skip this for simple/trivial tasks\n\n\
-            When creating a plan, follow these principles:\n\
-            1. 探查先行 — 第一步先确认相关组件和依赖是否就绪\n\
-            2. 依赖排序 — 被依赖的先执行，独立步骤可并行但不强制\n\
-            3. 每步闭环 — 一步做完可独立验证结果，不等下步才知道成败\n\
-            4. 标注风险 — 涉及 rm、kill、restart、改配置文件时注明\n\
-            5. 粒度适中 — 不过细也不过大，每步是独立可验证的最小逻辑单元\n\
-            6. 收敛止步 — 步骤过多说明任务需要拆分或先讨论再定",
+            This is a presentation-only protocol: it shows the user what you intend to do and \
+            updates step statuses as you work. It does not store or execute anything.\n\n\
+            [When to Use]\n\
+            - Complex tasks (usually 3+ steps): call update_plan first to show the plan, then execute step by step.\n\
+            - Simple tasks, Q&A, one-shot operations: do NOT call — handle directly.\n\n\
+            [Requirements]\n\
+            - Always include the user's goal as `objective` (mandatory on the first call).\n\
+            - `plan` is a full snapshot, not an incremental patch; call again whenever step statuses change.\n\
+            - At most one step may be `in_progress` at a time.\n\
+            - Step text should be concise, human-readable task descriptions.\n\n\
+            [Update Conventions]\n\
+            - Update status promptly as you progress: pending → in_progress → completed.\n\
+            - If blocked, explain the reason honestly in `explanation`.\n\n\
+            [Planning Principles]\n\
+            1. Investigate first — confirm the relevant components and dependencies are ready.\n\
+            2. Order by dependency — run what others depend on first; independent steps may parallelize.\n\
+            3. Close each step — a step should be verifiable on its own, not need the next step to know it worked.\n\
+            4. Flag risk — note when a step touches rm/kill/restart or config changes.\n\
+            5. Right granularity — each step is a minimal, independently-verifiable unit.\n\
+            6. Stop converging — too many steps means the task should be split or discussed first.",
         )
     }
 
