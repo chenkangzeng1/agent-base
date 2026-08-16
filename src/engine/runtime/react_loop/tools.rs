@@ -37,7 +37,7 @@ impl RuntimeCore {
             return Err(e);
         }
 
-        let names: Vec<String> = tool_calls.iter().map(|(_, n, _)| n.clone()).collect();
+        let names = failing_tool_names(tool_calls, &e);
         let error_text = e.to_string();
         let retry_prompt_template: Option<String> = config.tool.tool_error_retry_prompt.clone();
 
@@ -168,7 +168,7 @@ impl RuntimeCore {
         // Orchestrate: approval check + execution for all tool calls.
         // Approval denial is handled inside process_approval (pushes fake tool state
         // and returns Err). We only push real tool calls on success.
-        let results = self
+        let outcome = self
             .tool_engine
             .orchestrate(session_id, tool_calls, &ctx, event_rx, on_event)
             .await?;
@@ -187,14 +187,96 @@ impl RuntimeCore {
             .await?;
         }
 
-        // Process results: push to session.
-        for result in results {
+        // Process successful results: push to session.
+        for result in &outcome.results {
             self.with_session_mut(session_id, |session| {
                 session.push_tool_result(&result.id, content_text(&result.output));
             })
             .await?;
         }
 
+        // Push each failure's own error text so the model sees exactly what broke
+        // (not just the first failure's message) and every tool call has a result.
+        for failure in &outcome.failures {
+            let summary = failure.error.to_string();
+            self.with_session_mut(session_id, |session| {
+                session.push_tool_result(&failure.id, summary);
+            })
+            .await?;
+        }
+
+        // Surface the first per-call failure back to the caller so the existing
+        // `handle_tool_error` path can run recovery and feed the model a retry prompt.
+        // Recovery only counts this first failing tool here — an undercount in the
+        // rare multi-failure batch, which errs on the lenient (never false-Stop) side.
+        if let Some(first) = outcome.failures.into_iter().next() {
+            return Err(first.error);
+        }
+
         Ok(())
+    }
+}
+
+/// Names of the tools that actually failed in a batch of tool calls.
+///
+/// Tool-level errors carry the failing tool's name on the error itself, so a single
+/// bad call in a large batch yields exactly one name (not every tool in the batch,
+/// which would inflate the consecutive-failure counter and trip the Stop threshold).
+/// Unknown error types conservatively fall back to the full batch.
+fn failing_tool_names(tool_calls: &[(String, String, String)], error: &AgentError) -> Vec<String> {
+    match error {
+        AgentError::ToolArgsInvalid { name, .. } => vec![name.clone()],
+        AgentError::ToolExecution { name, .. } => vec![name.clone()],
+        _ => tool_calls.iter().map(|(_, n, _)| n.clone()).collect(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn failing_tool_names_isolates_single_failing_tool() {
+        let tool_calls = vec![
+            ("id1".to_string(), "write_file".to_string(), "{}".to_string()),
+            ("id2".to_string(), "write_file".to_string(), "{}".to_string()),
+            ("id3".to_string(), "write_file".to_string(), "{}".to_string()),
+        ];
+
+        // One bad call in a batch of three must yield one name, not three.
+        let err = AgentError::ToolArgsInvalid {
+            name: "write_file".to_string(),
+            raw: "truncated-json".to_string(),
+        };
+        assert_eq!(
+            failing_tool_names(&tool_calls, &err),
+            vec!["write_file".to_string()]
+        );
+    }
+
+    #[test]
+    fn failing_tool_names_extracts_execution_failure_name() {
+        let tool_calls = vec![
+            ("id1".to_string(), "bash".to_string(), "{}".to_string()),
+            ("id2".to_string(), "bash".to_string(), "{}".to_string()),
+        ];
+        let err = AgentError::ToolExecution {
+            name: "bash".to_string(),
+            source: Box::new(AgentError::internal("boom")),
+        };
+        assert_eq!(failing_tool_names(&tool_calls, &err), vec!["bash".to_string()]);
+    }
+
+    #[test]
+    fn failing_tool_names_falls_back_to_full_batch_for_unknown_error() {
+        let tool_calls = vec![
+            ("id1".to_string(), "a".to_string(), "{}".to_string()),
+            ("id2".to_string(), "b".to_string(), "{}".to_string()),
+        ];
+        let err = AgentError::internal("unexpected");
+        assert_eq!(
+            failing_tool_names(&tool_calls, &err),
+            vec!["a".to_string(), "b".to_string()]
+        );
     }
 }

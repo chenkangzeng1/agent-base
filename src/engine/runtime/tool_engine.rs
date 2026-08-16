@@ -197,6 +197,9 @@ impl ToolEngine {
         });
         EventBus::drain_async_events(event_rx, on_event)?;
 
+        // A successful execution breaks any consecutive-failure streak for this tool.
+        self.error_recovery.on_success(session_id, name);
+
         Ok(ToolExecutionResult {
             id: id.to_string(),
             name: name.to_string(),
@@ -333,7 +336,12 @@ impl ToolEngine {
     }
 
     /// Orchestrate a batch of tool calls: parse args, check approval, execute.
-    /// Returns results in order. The caller handles session push and control flow.
+    ///
+    /// A single bad tool call (invalid args or a tool execution failure) does NOT
+    /// abort the whole batch — it is recorded in [`OrchestrateOutcome::failures`] and
+    /// the remaining calls keep executing. Approval denial and cancellation still
+    /// hard-abort (return `Err`) since they represent a user/interrupt decision, not a
+    /// per-call failure that the model can recover from mid-batch.
     pub async fn orchestrate<F>(
         &self,
         session_id: &SessionId,
@@ -341,32 +349,47 @@ impl ToolEngine {
         ctx: &ExecutionContext,
         event_rx: &mut broadcast::Receiver<RuntimeEvent>,
         on_event: &mut F,
-    ) -> AgentResult<Vec<ToolExecutionResult>>
+    ) -> AgentResult<OrchestrateOutcome>
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
     {
         let mut results = Vec::with_capacity(tool_calls.len());
+        let mut failures = Vec::new();
 
         for (id, name, args_str) in tool_calls {
-            let args: Value =
-                serde_json::from_str(args_str).map_err(|_| AgentError::ToolArgsInvalid {
-                    name: name.clone(),
-                    raw: args_str.clone(),
-                })?;
+            let args: Value = match serde_json::from_str(args_str) {
+                Ok(args) => args,
+                Err(_) => {
+                    failures.push(ToolFailure {
+                        id: id.clone(),
+                        error: AgentError::ToolArgsInvalid {
+                            name: name.clone(),
+                            raw: args_str.clone(),
+                        },
+                    });
+                    continue;
+                }
+            };
 
             self.process_approval(session_id, name, &args, args_str, ctx, event_rx, on_event)
                 .await?;
 
-            let result = self
+            match self
                 .execute_tool(
                     session_id, id, name, &args, args_str, ctx, event_rx, on_event,
                 )
-                .await?;
-
-            results.push(result);
+                .await
+            {
+                Ok(result) => results.push(result),
+                Err(e) if e.is_cancelled() => return Err(e),
+                Err(e) => failures.push(ToolFailure {
+                    id: id.clone(),
+                    error: e,
+                }),
+            }
         }
 
-        Ok(results)
+        Ok(OrchestrateOutcome { results, failures })
     }
 
     pub fn error_recovery(&self) -> &Arc<dyn ToolErrorRecovery> {
@@ -392,6 +415,21 @@ pub struct ToolExecutionResult {
     #[allow(dead_code)]
     pub name: String,
     pub output: Vec<Content>,
+}
+
+/// One failed tool call within an orchestrated batch.
+#[derive(Debug)]
+pub struct ToolFailure {
+    pub id: String,
+    pub error: AgentError,
+}
+
+/// Result of [`ToolEngine::orchestrate`]: successful tool calls plus any per-call
+/// failures collected without aborting the rest of the batch.
+#[derive(Debug)]
+pub struct OrchestrateOutcome {
+    pub results: Vec<ToolExecutionResult>,
+    pub failures: Vec<ToolFailure>,
 }
 
 /// Grouped context passed through the tool execution call chain.
@@ -716,7 +754,7 @@ mod tests {
         let sm = session_manager();
         let c = ctx(&sm);
 
-        let results = engine
+        let outcome = engine
             .orchestrate(
                 &SessionId::new(1),
                 &[
@@ -738,15 +776,16 @@ mod tests {
             .await
             .expect("orchestrate should succeed");
 
-        assert_eq!(results.len(), 2);
-        assert_eq!(results[0].id, "call_a");
-        assert_eq!(content_text(&results[0].output), "echo: a");
-        assert_eq!(results[1].id, "call_b");
-        assert_eq!(content_text(&results[1].output), "echo: b");
+        assert_eq!(outcome.results.len(), 2);
+        assert!(outcome.failures.is_empty());
+        assert_eq!(outcome.results[0].id, "call_a");
+        assert_eq!(content_text(&outcome.results[0].output), "echo: a");
+        assert_eq!(outcome.results[1].id, "call_b");
+        assert_eq!(content_text(&outcome.results[1].output), "echo: b");
     }
 
     #[tokio::test]
-    async fn orchestrate_rejects_invalid_json_args() {
+    async fn orchestrate_collects_invalid_json_args_as_failure() {
         let mut registry = ToolRegistry::default();
         registry.register(EchoTool);
 
@@ -757,7 +796,7 @@ mod tests {
         let sm = session_manager();
         let c = ctx(&sm);
 
-        let result = engine
+        let outcome = engine
             .orchestrate(
                 &SessionId::new(1),
                 &[(
@@ -769,11 +808,106 @@ mod tests {
                 &mut event_rx,
                 &mut |_| -> AgentResult<()> { Ok(()) },
             )
-            .await;
+            .await
+            .expect("orchestrate should not hard-fail on bad args");
 
-        assert!(result.is_err(), "invalid JSON args should fail orchestrate");
-        let err = result.expect_err("just asserted err");
-        assert!(matches!(err, AgentError::ToolArgsInvalid { .. }));
+        assert!(
+            outcome.results.is_empty(),
+            "no tool should execute for bad args"
+        );
+        assert_eq!(outcome.failures.len(), 1);
+        assert!(matches!(&outcome.failures[0].error, AgentError::ToolArgsInvalid { .. }));
+    }
+
+    #[tokio::test]
+    async fn orchestrate_continues_past_bad_args_call() {
+        let mut registry = ToolRegistry::default();
+        registry.register(EchoTool);
+
+        let event_bus = EventBus::new(16);
+        let mut event_rx = event_bus.subscribe();
+        let engine = ToolEngine::new(registry, None, None, Arc::new(StopOnError), event_bus);
+
+        let sm = session_manager();
+        let c = ctx(&sm);
+
+        // [good, bad-args, good] — the bad call in the middle must not stop the
+        // trailing good call from executing.
+        let outcome = engine
+            .orchestrate(
+                &SessionId::new(1),
+                &[
+                    (
+                        "call_a".to_string(),
+                        "echo".to_string(),
+                        r#"{"text":"a"}"#.to_string(),
+                    ),
+                    ("call_b".to_string(), "echo".to_string(), "not-json".to_string()),
+                    (
+                        "call_c".to_string(),
+                        "echo".to_string(),
+                        r#"{"text":"c"}"#.to_string(),
+                    ),
+                ],
+                &c,
+                &mut event_rx,
+                &mut |_| -> AgentResult<()> { Ok(()) },
+            )
+            .await
+            .expect("orchestrate should succeed even with a bad call in the middle");
+
+        assert_eq!(outcome.results.len(), 2, "both good calls should execute");
+        assert_eq!(outcome.results[0].id, "call_a");
+        assert_eq!(content_text(&outcome.results[0].output), "echo: a");
+        assert_eq!(outcome.results[1].id, "call_c");
+        assert_eq!(content_text(&outcome.results[1].output), "echo: c");
+
+        assert_eq!(outcome.failures.len(), 1, "only the bad call should fail");
+        assert_eq!(outcome.failures[0].id, "call_b");
+        assert!(matches!(&outcome.failures[0].error, AgentError::ToolArgsInvalid { .. }));
+    }
+
+    #[tokio::test]
+    async fn orchestrate_continues_past_execution_failure() {
+        let mut registry = ToolRegistry::default();
+        registry.register(EchoTool);
+        registry.register(FailingTool);
+
+        let event_bus = EventBus::new(16);
+        let mut event_rx = event_bus.subscribe();
+        let engine = ToolEngine::new(registry, None, None, Arc::new(StopOnError), event_bus);
+
+        let sm = session_manager();
+        let c = ctx(&sm);
+
+        let outcome = engine
+            .orchestrate(
+                &SessionId::new(1),
+                &[
+                    (
+                        "call_a".to_string(),
+                        "echo".to_string(),
+                        r#"{"text":"a"}"#.to_string(),
+                    ),
+                    ("call_fail".to_string(), "failing".to_string(), "{}".to_string()),
+                    (
+                        "call_b".to_string(),
+                        "echo".to_string(),
+                        r#"{"text":"b"}"#.to_string(),
+                    ),
+                ],
+                &c,
+                &mut event_rx,
+                &mut |_| -> AgentResult<()> { Ok(()) },
+            )
+            .await
+            .expect("orchestrate should succeed even with a tool execution failure");
+
+        assert_eq!(outcome.results.len(), 2);
+        assert_eq!(outcome.results[0].id, "call_a");
+        assert_eq!(outcome.results[1].id, "call_b");
+        assert_eq!(outcome.failures.len(), 1);
+        assert!(matches!(&outcome.failures[0].error, AgentError::ToolExecution { .. }));
     }
 
     #[tokio::test]

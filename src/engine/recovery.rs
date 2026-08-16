@@ -24,6 +24,13 @@ pub trait ToolErrorRecovery: Send + Sync {
         _tool_names: &[String],
         _error: &AgentError,
     ) -> AgentResult<ToolErrorAction>;
+
+    /// Called when a tool executes successfully.
+    ///
+    /// Default no-op. Strategies that track consecutive failures (e.g.
+    /// [`ConsecutiveFailureRecovery`]) override this to reset that tool's counter so
+    /// the "consecutive" semantics hold: a success breaks the failure streak.
+    fn on_success(&self, _session_id: &SessionId, _tool_name: &str) {}
 }
 
 /// Default strategy: stop on tool failure.
@@ -151,6 +158,10 @@ impl ToolErrorRecovery for ConsecutiveFailureRecovery {
 
         Ok(ToolErrorAction::Retry)
     }
+
+    fn on_success(&self, session_id: &SessionId, tool_name: &str) {
+        self.reset_failures(session_id, tool_name);
+    }
 }
 
 #[cfg(test)]
@@ -220,6 +231,29 @@ mod tests {
         recovery.reset_failures(&session_id, "tool_a");
 
         // Should retry again (counter reset)
+        assert_eq!(
+            recovery.on_error(&session_id, &names, &error).unwrap(),
+            ToolErrorAction::Retry
+        );
+    }
+
+    #[test]
+    fn consecutive_failure_on_success_resets_via_trait() {
+        let recovery = ConsecutiveFailureRecovery::new(2);
+        let session_id = SessionId::new(1);
+        let names = vec!["tool_a".to_string()];
+        let error = AgentError::internal("test error");
+
+        // One failure (below the threshold of 2)
+        assert_eq!(
+            recovery.on_error(&session_id, &names, &error).unwrap(),
+            ToolErrorAction::Retry
+        );
+
+        // A successful execution breaks the streak (this is what the react loop calls).
+        recovery.on_success(&session_id, "tool_a");
+
+        // The next failure starts a fresh streak: retry again, not stop.
         assert_eq!(
             recovery.on_error(&session_id, &names, &error).unwrap(),
             ToolErrorAction::Retry
