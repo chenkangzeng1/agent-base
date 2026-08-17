@@ -60,7 +60,7 @@ impl AgentBuilder {
     /// Set a callback to transform messages before they are sent to the LLM.
     ///
     /// The default behavior (when `None`) is to filter out
-    /// [`ChatMessage::Custom`] variants, which most providers don't understand.
+    /// `ChatMessage::Custom` variants, which most providers don't understand.
     /// Override this to inject custom serialization logic for application-specific
     /// message types.
     pub fn convert_to_llm(mut self, cb: ConvertToLlmFn) -> Self {

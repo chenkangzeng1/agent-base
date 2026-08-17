@@ -61,7 +61,7 @@ async fn run_turn_emits_run_finished_on_session_not_found() {
 
     let result = runtime
         .run_turn(nonexistent.clone(), "test input", move |event| {
-            if let RuntimeEvent::RunFinished { session_id: _, .. } = &event {
+            if let RuntimeEvent::RunFinished { .. } = &event {
                 event_fired_clone.store(true, Ordering::SeqCst);
             }
             Ok(())
@@ -107,7 +107,7 @@ async fn run_turn_emits_run_finished_on_middleware_failure() {
 
     let result = runtime
         .run_turn(sid, "test input", move |event| {
-            if let RuntimeEvent::RunFinished { session_id: _, .. } = &event {
+            if let RuntimeEvent::RunFinished { .. } = &event {
                 event_fired_clone.store(true, Ordering::SeqCst);
             }
             Ok(())
@@ -215,7 +215,7 @@ async fn run_turn_emits_run_finished_on_llm_error() {
 
     let result = runtime
         .run_turn(sid, "test input", move |event| {
-            if let RuntimeEvent::RunFinished { session_id: _, .. } = &event {
+            if let RuntimeEvent::RunFinished { .. } = &event {
                 event_fired_clone.store(true, Ordering::SeqCst);
             }
             Ok(())

@@ -142,7 +142,7 @@ impl ToolContext {
 pub struct ToolMetadata {
     /// Tool name (matches [`Tool::name`]).
     pub name: String,
-    /// Human-readable description (matches the description in [`Tool::definition`]).
+    /// Human-readable description (matches the description in [`Tool::description`]).
     pub description: String,
     /// Where this tool comes from: a crate name (e.g. `"phi-tools"`), a
     /// framework identifier (`"agent-base"`, `"agent-works"`), or

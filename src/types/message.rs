@@ -59,7 +59,7 @@ pub enum ChatMessage {
     ///
     /// Consumers can inject custom message types (e.g., artifacts, notifications)
     /// into the conversation transcript. Custom messages are preserved in the
-    /// transcript but filtered out by the default [`convert_to_llm`] callback
+    /// transcript but filtered out by the default `convert_to_llm` callback
     /// before being sent to the LLM provider.
     Custom {
         role: String,
