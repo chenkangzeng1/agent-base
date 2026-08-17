@@ -14,7 +14,7 @@ A lightweight **Agent Runtime Kernel** for building AI agents in Rust.
 
 ```toml
 [dependencies]
-agent-base = "0.2.0"
+agent-base = "0.2.1"
 ```
 
 ## Design Principles
@@ -60,7 +60,7 @@ agent-base = "0.2.0"
 
 ```toml
 [dependencies]
-agent-base = { version = "0.2.0", features = ["sqlite-session"] }
+agent-base = { version = "0.2.1", features = ["sqlite-session"] }
 ```
 
 ## Quick Start
@@ -276,7 +276,7 @@ This project draws inspiration from the [OpenAI Codex CLI](https://github.com/op
 
 ## Stability
 
-This project is in early development (v0.2.0). The core abstractions are settling but not yet frozen. Expect minor API changes as the ecosystem evolves.
+This project is in early development (v0.2.1). The core abstractions are settling but not yet frozen. Expect minor API changes as the ecosystem evolves.
 
 ## License
 
