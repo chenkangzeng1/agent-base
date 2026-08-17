@@ -238,9 +238,21 @@ mod tests {
     #[test]
     fn failing_tool_names_isolates_single_failing_tool() {
         let tool_calls = vec![
-            ("id1".to_string(), "write_file".to_string(), "{}".to_string()),
-            ("id2".to_string(), "write_file".to_string(), "{}".to_string()),
-            ("id3".to_string(), "write_file".to_string(), "{}".to_string()),
+            (
+                "id1".to_string(),
+                "write_file".to_string(),
+                "{}".to_string(),
+            ),
+            (
+                "id2".to_string(),
+                "write_file".to_string(),
+                "{}".to_string(),
+            ),
+            (
+                "id3".to_string(),
+                "write_file".to_string(),
+                "{}".to_string(),
+            ),
         ];
 
         // One bad call in a batch of three must yield one name, not three.
@@ -264,7 +276,10 @@ mod tests {
             name: "bash".to_string(),
             source: Box::new(AgentError::internal("boom")),
         };
-        assert_eq!(failing_tool_names(&tool_calls, &err), vec!["bash".to_string()]);
+        assert_eq!(
+            failing_tool_names(&tool_calls, &err),
+            vec!["bash".to_string()]
+        );
     }
 
     #[test]

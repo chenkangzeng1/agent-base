@@ -816,7 +816,10 @@ mod tests {
             "no tool should execute for bad args"
         );
         assert_eq!(outcome.failures.len(), 1);
-        assert!(matches!(&outcome.failures[0].error, AgentError::ToolArgsInvalid { .. }));
+        assert!(matches!(
+            &outcome.failures[0].error,
+            AgentError::ToolArgsInvalid { .. }
+        ));
     }
 
     #[tokio::test]
@@ -842,7 +845,11 @@ mod tests {
                         "echo".to_string(),
                         r#"{"text":"a"}"#.to_string(),
                     ),
-                    ("call_b".to_string(), "echo".to_string(), "not-json".to_string()),
+                    (
+                        "call_b".to_string(),
+                        "echo".to_string(),
+                        "not-json".to_string(),
+                    ),
                     (
                         "call_c".to_string(),
                         "echo".to_string(),
@@ -864,7 +871,10 @@ mod tests {
 
         assert_eq!(outcome.failures.len(), 1, "only the bad call should fail");
         assert_eq!(outcome.failures[0].id, "call_b");
-        assert!(matches!(&outcome.failures[0].error, AgentError::ToolArgsInvalid { .. }));
+        assert!(matches!(
+            &outcome.failures[0].error,
+            AgentError::ToolArgsInvalid { .. }
+        ));
     }
 
     #[tokio::test]
@@ -889,7 +899,11 @@ mod tests {
                         "echo".to_string(),
                         r#"{"text":"a"}"#.to_string(),
                     ),
-                    ("call_fail".to_string(), "failing".to_string(), "{}".to_string()),
+                    (
+                        "call_fail".to_string(),
+                        "failing".to_string(),
+                        "{}".to_string(),
+                    ),
                     (
                         "call_b".to_string(),
                         "echo".to_string(),
@@ -907,7 +921,10 @@ mod tests {
         assert_eq!(outcome.results[0].id, "call_a");
         assert_eq!(outcome.results[1].id, "call_b");
         assert_eq!(outcome.failures.len(), 1);
-        assert!(matches!(&outcome.failures[0].error, AgentError::ToolExecution { .. }));
+        assert!(matches!(
+            &outcome.failures[0].error,
+            AgentError::ToolExecution { .. }
+        ));
     }
 
     #[tokio::test]

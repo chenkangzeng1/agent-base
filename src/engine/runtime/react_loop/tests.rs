@@ -1204,7 +1204,9 @@ async fn reasoning_only_with_tools_fails_instead_of_fake_completing() {
         .expect("build runtime");
 
     let sid = runtime.create_session().await;
-    let result = runtime.run_turn(sid.clone(), "do the thing", |_| Ok(())).await;
+    let result = runtime
+        .run_turn(sid.clone(), "do the thing", |_| Ok(()))
+        .await;
 
     assert!(
         matches!(result, Ok(RunOutcome::Failed { .. })),
@@ -1225,7 +1227,9 @@ async fn reasoning_only_without_tools_fails_instead_of_promoting() {
         .expect("build runtime");
 
     let sid = runtime.create_session().await;
-    let result = runtime.run_turn(sid.clone(), "do the thing", |_| Ok(())).await;
+    let result = runtime
+        .run_turn(sid.clone(), "do the thing", |_| Ok(()))
+        .await;
 
     assert!(
         matches!(result, Ok(RunOutcome::Failed { .. })),
@@ -1253,7 +1257,9 @@ async fn empty_response_fails_after_bounded_retries() {
         .expect("build runtime");
 
     let sid = runtime.create_session().await;
-    let result = runtime.run_turn(sid.clone(), "do the thing", |_| Ok(())).await;
+    let result = runtime
+        .run_turn(sid.clone(), "do the thing", |_| Ok(()))
+        .await;
 
     assert!(
         matches!(result, Ok(RunOutcome::Failed { .. })),
