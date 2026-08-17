@@ -438,7 +438,9 @@ impl LlmClient for OpenAiClient {
                     let delta = &choice["delta"];
                     let finish_reason = choice["finish_reason"].as_str().unwrap_or("");
 
-                    if finish_reason == "tool_calls" || delta.get("tool_calls").is_some() {
+                    if finish_reason == "tool_calls"
+                        || delta.get("tool_calls").is_some_and(|v| !v.is_null())
+                    {
                         return Ok(StreamChunk::ToolCall(choice.clone()));
                     }
 
