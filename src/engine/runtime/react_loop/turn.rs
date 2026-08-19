@@ -6,7 +6,7 @@ use crate::engine::runtime::llm_engine::LlmTurnResult;
 use crate::engine::runtime::plan_runner::RuntimeCore;
 use crate::types::{
     AgentResult, CheckpointData, CheckpointStep, MessageRole, RunOutcome, RuntimeEvent, SessionId,
-    default_convert_to_llm,
+    UserEvent, default_convert_to_llm,
 };
 
 use super::turn_end::TurnEndCtx;
@@ -46,6 +46,18 @@ impl RuntimeCore {
             session_id: session_id.clone(),
             messages,
             tools,
+            user_event_fn: {
+                let eb = self.event_bus.clone();
+                let sid = session_id.clone();
+                Some(std::sync::Arc::new(move |ev: UserEvent| {
+                    eb.emit(RuntimeEvent::UserEvent {
+                        session_id: sid.clone(),
+                        event: ev,
+                        agent_id: None,
+                        trace_id: None,
+                    });
+                }))
+            },
         };
         for mw in &self.middlewares {
             mw.on_pre_llm(&mut ctx).await?;

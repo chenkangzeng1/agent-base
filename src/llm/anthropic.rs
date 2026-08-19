@@ -34,7 +34,7 @@ impl AnthropicClient {
     ) -> Self {
         let client = Client::builder()
             .connect_timeout(config.connect_timeout)
-            .timeout(config.request_timeout)
+            .read_timeout(config.request_timeout)
             .pool_max_idle_per_host(config.pool_max_idle_per_host)
             .pool_idle_timeout(config.pool_idle_timeout)
             .build()

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 
-use crate::types::{AgentResult, ChatMessage, SessionId};
+use crate::types::{AgentResult, ChatMessage, SessionId, UserEvent};
 
 #[derive(Clone)]
 pub struct UserMessageCtx {
@@ -16,6 +16,11 @@ pub struct PreLlmCtx {
     pub session_id: SessionId,
     pub messages: Vec<ChatMessage>,
     pub tools: Vec<Value>,
+    /// Optional closure for middleware to emit [`UserEvent`]s (progress, structured).
+    /// Injected by the react loop when constructing the context. The closure
+    /// wraps the event into [`RuntimeEvent::UserEvent`] and pushes it to the
+    /// EventBus — middleware never touches framework-level events directly.
+    pub user_event_fn: Option<Arc<dyn Fn(UserEvent) + Send + Sync>>,
 }
 
 #[derive(Clone)]
