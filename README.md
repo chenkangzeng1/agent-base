@@ -130,12 +130,14 @@ async fn main() -> AgentResult<()> {
             match event {
                 RuntimeEvent::TextDelta { text, .. } => print!("{}", text),
                 RuntimeEvent::ToolCallStarted { tool_name, .. } => {
-                    println!("\n[Calling tool: {}]", tool_name);
+                    println!("
+[Calling tool: {}]", tool_name);
                 }
                 RuntimeEvent::ToolCallFinished { summary, .. } => {
                     println!("[Tool result: {}]", summary);
                 }
-                RuntimeEvent::RunFinished { .. } => println!("\n[Done]"),
+                RuntimeEvent::RunFinished { .. } => println!("
+[Done]"),
                 _ => {}
             }
             Ok(())
@@ -269,6 +271,24 @@ phi-agent / agent-works / ...              ← Framework / Enhanced toolkits
 | Tool failure → defaults to `StopOnError` | Inject `RetryOnError` for self-healing agents |
 | SubAgent → defaults to `Ephemeral` | Use `with_persistent()` for shared context |
 | Session → memory is source of truth | `SessionStore` is an optional persistence adapter |
+
+
+## Contributors
+
+<!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
+<!-- prettier-ignore-start -->
+<!-- markdownlint-disable -->
+<table>
+  <tbody>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/aryansk"><img src="https://avatars.githubusercontent.com/u/70511529?v=4?s=100" width="100px;" alt="Aryan Singh K."/><br /><sub><b>Aryan Singh K.</b></sub></a><br /><a href="https://github.com/hibuka-labs/agent-base/commits?author=aryansk" title="Tests">✅</a></td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- markdownlint-restore -->
+<!-- prettier-ignore-end -->
+<!-- ALL-CONTRIBUTORS-LIST:END -->
 
 ## Acknowledgments
 
