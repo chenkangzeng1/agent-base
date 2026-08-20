@@ -429,14 +429,16 @@ async fn main() -> AgentResult<()> {
             continue;
         }
 
-        let mut assistant_started = false;
+        let assistant_started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let assistant_started_clone = assistant_started.clone();
         runtime
-            .run_turn(session_id.clone(), &input, |event| {
+            .run_turn(session_id.clone(), &input, move |event| {
                 match event {
                     RuntimeEvent::TextDelta { text, .. } => {
-                        if !assistant_started {
+                        if !assistant_started_clone.load(std::sync::atomic::Ordering::Relaxed) {
                             print!("Assistant > ");
-                            assistant_started = true;
+                            assistant_started_clone
+                                .store(true, std::sync::atomic::Ordering::Relaxed);
                         }
                         print!("{}", text);
                     }
@@ -445,9 +447,10 @@ async fn main() -> AgentResult<()> {
                         args_json,
                         ..
                     } => {
-                        if assistant_started {
+                        if assistant_started_clone.load(std::sync::atomic::Ordering::Relaxed) {
                             println!();
-                            assistant_started = false;
+                            assistant_started_clone
+                                .store(false, std::sync::atomic::Ordering::Relaxed);
                         }
                         println!("[Tool Call] {} ({})", tool_name, args_json);
                     }
@@ -481,7 +484,9 @@ async fn main() -> AgentResult<()> {
                             );
                         }
                     },
-                    RuntimeEvent::RunFinished { .. } if assistant_started => {
+                    RuntimeEvent::RunFinished { .. }
+                        if assistant_started_clone.load(std::sync::atomic::Ordering::Relaxed) =>
+                    {
                         println!();
                     }
                     _ => {}

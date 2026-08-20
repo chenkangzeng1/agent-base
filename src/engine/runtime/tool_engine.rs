@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 use tokio::sync::{RwLock, broadcast, mpsc};
@@ -53,7 +53,7 @@ impl ToolEngine {
         tool_args_json: &str,
         ctx: &ExecutionContext,
         event_rx: &mut broadcast::Receiver<RuntimeEvent>,
-        on_event: &mut F,
+        on_event: Arc<Mutex<F>>,
     ) -> AgentResult<ToolExecutionResult>
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
@@ -73,7 +73,10 @@ impl ToolEngine {
             agent_id: None,
             trace_id: None,
         });
-        EventBus::drain_async_events(event_rx, on_event)?;
+        {
+            let mut cb = on_event.lock().unwrap();
+            EventBus::drain_async_events(event_rx, &mut *cb)?;
+        }
 
         // Build ToolContext with UserEvent channel for tool-produced events
         let (user_event_tx, mut user_event_rx) = mpsc::unbounded_channel::<UserEvent>();
@@ -120,12 +123,14 @@ impl ToolEngine {
                     tokio::select! {
                         result = &mut future => break result,
                         Some(user_event) = user_event_rx.recv() => {
-                            on_event(RuntimeEvent::UserEvent {
-                                session_id: session_id.clone(),
-                                event: user_event,
-                                agent_id: None,
-                                trace_id: None,
-                            })?;
+                            if let Ok(mut cb) = on_event.lock() {
+                                cb(RuntimeEvent::UserEvent {
+                                    session_id: session_id.clone(),
+                                    event: user_event,
+                                    agent_id: None,
+                                    trace_id: None,
+                                })?;
+                            }
                         }
                         _ = ctx.cancel_token.cancelled() => {
                             tracing::info!(session_id = session_id.id, tool = name, "tool execution cancelled");
@@ -136,12 +141,14 @@ impl ToolEngine {
 
                 // Drain remaining UserEvents after tool completes
                 while let Ok(user_event) = user_event_rx.try_recv() {
-                    on_event(RuntimeEvent::UserEvent {
-                        session_id: session_id.clone(),
-                        event: user_event,
-                        agent_id: None,
-                        trace_id: None,
-                    })?;
+                    if let Ok(mut cb) = on_event.lock() {
+                        cb(RuntimeEvent::UserEvent {
+                            session_id: session_id.clone(),
+                            event: user_event,
+                            agent_id: None,
+                            trace_id: None,
+                        })?;
+                    }
                 }
 
                 match output {
@@ -164,7 +171,10 @@ impl ToolEngine {
                         });
                         // Use `let _ =` to avoid masking the original tool error
                         // if the event callback fails
-                        let _ = EventBus::drain_async_events(event_rx, on_event);
+                        let _ = {
+                            let mut cb = on_event.lock().unwrap();
+                            EventBus::drain_async_events(event_rx, &mut *cb)
+                        };
                         return Err(AgentError::ToolExecution {
                             name: name.to_string(),
                             source: Box::new(e),
@@ -195,7 +205,10 @@ impl ToolEngine {
             trace_id: None,
             denied: false,
         });
-        EventBus::drain_async_events(event_rx, on_event)?;
+        {
+            let mut cb = on_event.lock().unwrap();
+            EventBus::drain_async_events(event_rx, &mut *cb)?;
+        }
 
         // A successful execution breaks any consecutive-failure streak for this tool.
         self.error_recovery.on_success(session_id, name);
@@ -216,7 +229,7 @@ impl ToolEngine {
         _tool_args_json: &str,
         ctx: &ExecutionContext,
         event_rx: &mut broadcast::Receiver<RuntimeEvent>,
-        on_event: &mut F,
+        on_event: Arc<Mutex<F>>,
     ) -> AgentResult<()>
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
@@ -253,7 +266,10 @@ impl ToolEngine {
             agent_id: None,
             trace_id: None,
         });
-        EventBus::drain_async_events(event_rx, on_event)?;
+        {
+            let mut cb = on_event.lock().unwrap();
+            EventBus::drain_async_events(event_rx, &mut *cb)?;
+        }
 
         let decision = match self.approval_handler.as_ref() {
             Some(handler) => {
@@ -325,7 +341,10 @@ impl ToolEngine {
                     trace_id: None,
                     denied: true,
                 });
-                let _ = EventBus::drain_async_events(event_rx, on_event);
+                let _ = {
+                    let mut cb = on_event.lock().unwrap();
+                    EventBus::drain_async_events(event_rx, &mut *cb)
+                };
                 return Err(AgentError::ApprovalDenied {
                     tool_name: tool_name.to_string(),
                 });
@@ -348,7 +367,7 @@ impl ToolEngine {
         tool_calls: &[(String, String, String)],
         ctx: &ExecutionContext,
         event_rx: &mut broadcast::Receiver<RuntimeEvent>,
-        on_event: &mut F,
+        on_event: Arc<Mutex<F>>,
     ) -> AgentResult<OrchestrateOutcome>
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
@@ -371,12 +390,27 @@ impl ToolEngine {
                 }
             };
 
-            self.process_approval(session_id, name, &args, args_str, ctx, event_rx, on_event)
-                .await?;
+            self.process_approval(
+                session_id,
+                name,
+                &args,
+                args_str,
+                ctx,
+                event_rx,
+                on_event.clone(),
+            )
+            .await?;
 
             match self
                 .execute_tool(
-                    session_id, id, name, &args, args_str, ctx, event_rx, on_event,
+                    session_id,
+                    id,
+                    name,
+                    &args,
+                    args_str,
+                    ctx,
+                    event_rx,
+                    on_event.clone(),
                 )
                 .await
             {
@@ -497,7 +531,7 @@ mod tests {
                     "{}",
                     &ctx,
                     &mut event_rx,
-                    &mut |_| -> AgentResult<()> { Ok(()) },
+                    std::sync::Arc::new(std::sync::Mutex::new(|_| -> AgentResult<()> { Ok(()) })),
                 )
                 .await
                 .expect("unknown tool should not error");
@@ -585,7 +619,8 @@ mod tests {
         let sm = session_manager();
         let c = ctx(&sm);
 
-        let mut events = Vec::new();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let events_clone = events.clone();
         let result = engine
             .execute_tool(
                 &SessionId::new(1),
@@ -595,13 +630,15 @@ mod tests {
                 r#"{"text":"hi"}"#,
                 &c,
                 &mut event_rx,
-                &mut |e| -> AgentResult<()> {
-                    events.push(e);
+                Arc::new(Mutex::new(move |e| -> AgentResult<()> {
+                    events_clone.lock().unwrap().push(e);
                     Ok(())
-                },
+                })),
             )
             .await
             .expect("echo tool should execute");
+
+        let events = events.lock().unwrap();
 
         assert_eq!(result.id, "call_1");
         assert_eq!(result.name, "echo");
@@ -662,7 +699,7 @@ mod tests {
                 "{}",
                 &c,
                 &mut event_rx,
-                &mut |_| -> AgentResult<()> { Ok(()) },
+                std::sync::Arc::new(std::sync::Mutex::new(|_| -> AgentResult<()> { Ok(()) })),
             )
             .await
             .expect("no policy should skip approval");
@@ -681,7 +718,8 @@ mod tests {
         );
         let sm = session_manager();
         let c = ctx(&sm);
-        let mut events = Vec::new();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let events_clone = events.clone();
 
         let err = engine
             .process_approval(
@@ -691,13 +729,15 @@ mod tests {
                 "{}",
                 &c,
                 &mut event_rx,
-                &mut |e| -> AgentResult<()> {
-                    events.push(e);
+                Arc::new(Mutex::new(move |e| -> AgentResult<()> {
+                    events_clone.lock().unwrap().push(e);
                     Ok(())
-                },
+                })),
             )
             .await
             .unwrap_err();
+
+        let events = events.lock().unwrap();
 
         assert!(matches!(err, AgentError::ApprovalDenied { .. }));
         assert!(
@@ -736,7 +776,7 @@ mod tests {
                 "{}",
                 &c,
                 &mut event_rx,
-                &mut |_| -> AgentResult<()> { Ok(()) },
+                std::sync::Arc::new(std::sync::Mutex::new(|_| -> AgentResult<()> { Ok(()) })),
             )
             .await
             .expect("allow-all handler should grant approval");
@@ -771,7 +811,7 @@ mod tests {
                 ],
                 &c,
                 &mut event_rx,
-                &mut |_| -> AgentResult<()> { Ok(()) },
+                std::sync::Arc::new(std::sync::Mutex::new(|_| -> AgentResult<()> { Ok(()) })),
             )
             .await
             .expect("orchestrate should succeed");
@@ -806,7 +846,7 @@ mod tests {
                 )],
                 &c,
                 &mut event_rx,
-                &mut |_| -> AgentResult<()> { Ok(()) },
+                std::sync::Arc::new(std::sync::Mutex::new(|_| -> AgentResult<()> { Ok(()) })),
             )
             .await
             .expect("orchestrate should not hard-fail on bad args");
@@ -858,7 +898,7 @@ mod tests {
                 ],
                 &c,
                 &mut event_rx,
-                &mut |_| -> AgentResult<()> { Ok(()) },
+                std::sync::Arc::new(std::sync::Mutex::new(|_| -> AgentResult<()> { Ok(()) })),
             )
             .await
             .expect("orchestrate should succeed even with a bad call in the middle");
@@ -912,7 +952,7 @@ mod tests {
                 ],
                 &c,
                 &mut event_rx,
-                &mut |_| -> AgentResult<()> { Ok(()) },
+                std::sync::Arc::new(std::sync::Mutex::new(|_| -> AgentResult<()> { Ok(()) })),
             )
             .await
             .expect("orchestrate should succeed even with a tool execution failure");
@@ -1012,7 +1052,8 @@ mod tests {
                 max_output_chars: None,
                 cancel_token: CancellationToken::new(),
             };
-            let mut events = Vec::new();
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let events_clone = events.clone();
             let err = engine
                 .execute_tool(
                     &SessionId::new(1),
@@ -1022,13 +1063,15 @@ mod tests {
                     "{}",
                     &c,
                     &mut event_rx,
-                    &mut |e| -> AgentResult<()> {
-                        events.push(e);
+                    Arc::new(Mutex::new(move |e| -> AgentResult<()> {
+                        events_clone.lock().unwrap().push(e);
                         Ok(())
-                    },
+                    })),
                 )
                 .await
                 .expect_err("failing tool should error");
+
+            let events = events.lock().unwrap();
 
             assert!(
                 matches!(err, AgentError::ToolExecution { .. }),
@@ -1056,7 +1099,8 @@ mod tests {
         let sm = session_manager();
         let c = ctx(&sm);
 
-        let mut forwarded = Vec::new();
+        let forwarded = Arc::new(Mutex::new(Vec::new()));
+        let forwarded_clone = forwarded.clone();
         let result = engine
             .execute_tool(
                 &SessionId::new(1),
@@ -1066,13 +1110,15 @@ mod tests {
                 "{}",
                 &c,
                 &mut event_rx,
-                &mut |e| -> AgentResult<()> {
-                    forwarded.push(e);
+                Arc::new(Mutex::new(move |e| -> AgentResult<()> {
+                    forwarded_clone.lock().unwrap().push(e);
                     Ok(())
-                },
+                })),
             )
             .await
             .expect("progress tool should execute");
+
+        let forwarded = forwarded.lock().unwrap();
 
         assert_eq!(content_text(&result.output), "done");
         assert!(
@@ -1114,7 +1160,7 @@ mod tests {
                 "{}",
                 &c,
                 &mut event_rx,
-                &mut |_| -> AgentResult<()> { Ok(()) },
+                std::sync::Arc::new(std::sync::Mutex::new(|_| -> AgentResult<()> { Ok(()) })),
             )
             .await
             .expect("cached approval should skip");
@@ -1142,7 +1188,7 @@ mod tests {
                 "{}",
                 &c,
                 &mut event_rx,
-                &mut |_| -> AgentResult<()> { Ok(()) },
+                std::sync::Arc::new(std::sync::Mutex::new(|_| -> AgentResult<()> { Ok(()) })),
             )
             .await
             .unwrap_err();

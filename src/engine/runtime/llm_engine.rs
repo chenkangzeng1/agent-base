@@ -98,7 +98,7 @@ impl LlmEngine {
         mut stream: Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>,
         span: Span,
         event_rx: &mut tokio::sync::broadcast::Receiver<RuntimeEvent>,
-        on_event: &mut F,
+        on_event: Arc<std::sync::Mutex<F>>,
         cancel_token: &tokio_util::sync::CancellationToken,
     ) -> AgentResult<LlmTurnResult>
     where
@@ -110,11 +110,34 @@ impl LlmEngine {
         let mut aggregator = StreamAggregator::new();
         tracing::info!(session_id = session_id.id, "LLM process_stream start");
 
+        // Skip UserEvents that were already rendered by drain_fn during middleware
+        // execution (compression Progress/Started/Completed). drain_fn has its own
+        // broadcast subscriber and forwarded these to on_event — processing them
+        // again here would duplicate. Only skip UserEvent; keep Checkpoint and others.
+        loop {
+            match event_rx.try_recv() {
+                Ok(RuntimeEvent::UserEvent { .. }) => continue,
+                Ok(event) => {
+                    // Non-UserEvent (e.g. Checkpoint) — push back by processing
+                    // and let the main loop handle the next ones normally.
+                    if let Ok(mut cb) = on_event.lock() {
+                        cb(event)?;
+                    }
+                    continue;
+                }
+                Err(_) => break,
+            }
+        }
+
         loop {
             tokio::select! {
                 recv_result = event_rx.recv() => {
                     match recv_result {
-                        Ok(event) => on_event(event)?,
+                        Ok(event) => {
+                            if let Ok(mut cb) = on_event.lock() {
+                                cb(event)?;
+                            }
+                        }
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                     }
@@ -211,7 +234,10 @@ impl LlmEngine {
                         }
                     }
 
-                    EventBus::drain_async_events(event_rx, on_event)?;
+                    {
+                        let mut cb = on_event.lock().unwrap();
+                        EventBus::drain_async_events(event_rx, &mut *cb)?;
+                    }
                 }
             }
         }
@@ -396,7 +422,8 @@ mod tests {
         ];
         let stream = Box::pin(futures_util::stream::iter(chunks));
         let mut rx = bus.subscribe();
-        let mut events = Vec::new();
+        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = events.clone();
         let cancel = tokio_util::sync::CancellationToken::new();
         let result = engine
             .process_stream(
@@ -404,10 +431,10 @@ mod tests {
                 stream,
                 tracing::Span::none(),
                 &mut rx,
-                &mut |e| {
-                    events.push(e);
+                std::sync::Arc::new(std::sync::Mutex::new(move |e| {
+                    events_clone.lock().unwrap().push(e);
                     Ok(())
-                },
+                })),
                 &cancel,
             )
             .await
@@ -422,6 +449,7 @@ mod tests {
         assert_eq!(usage.total_tokens, Some(7));
         assert!(result.llm_duration_ms >= result.ttft_ms);
 
+        let events = events.lock().unwrap();
         let texts: Vec<String> = events
             .iter()
             .filter_map(|e| match e {
@@ -457,7 +485,7 @@ mod tests {
                 stream,
                 tracing::Span::none(),
                 &mut rx,
-                &mut |_e| Ok(()),
+                std::sync::Arc::new(std::sync::Mutex::new(|_e| Ok(()))),
                 &cancel,
             )
             .await
@@ -490,7 +518,7 @@ mod tests {
                 stream,
                 tracing::Span::none(),
                 &mut rx,
-                &mut |_e| Ok(()),
+                std::sync::Arc::new(std::sync::Mutex::new(|_e| Ok(()))),
                 &cancel,
             )
             .await
@@ -520,7 +548,7 @@ mod tests {
                 stream,
                 tracing::Span::none(),
                 &mut rx,
-                &mut |_e| Ok(()),
+                std::sync::Arc::new(std::sync::Mutex::new(|_e| Ok(()))),
                 &cancel,
             )
             .await
@@ -544,7 +572,7 @@ mod tests {
                 stream,
                 tracing::Span::none(),
                 &mut rx,
-                &mut |_e| Ok(()),
+                std::sync::Arc::new(std::sync::Mutex::new(|_e| Ok(()))),
                 &cancel,
             )
             .await
@@ -693,7 +721,7 @@ mod tests {
                 stream,
                 tracing::Span::none(),
                 &mut rx,
-                &mut |_e| Ok(()),
+                std::sync::Arc::new(std::sync::Mutex::new(|_e| Ok(()))),
                 &cancel,
             )
             .await
@@ -720,7 +748,7 @@ mod tests {
                 stream,
                 tracing::Span::none(),
                 &mut rx,
-                &mut |_e| Ok(()),
+                std::sync::Arc::new(std::sync::Mutex::new(|_e| Ok(()))),
                 &cancel,
             )
             .await
@@ -755,7 +783,7 @@ mod tests {
                 stream,
                 tracing::Span::none(),
                 &mut rx,
-                &mut |_e| Ok(()),
+                std::sync::Arc::new(std::sync::Mutex::new(|_e| Ok(()))),
                 &cancel,
             )
             .await
@@ -778,7 +806,8 @@ mod tests {
         ];
         let stream = Box::pin(futures_util::stream::iter(chunks));
         let mut rx = bus.subscribe();
-        let mut events = Vec::new();
+        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = events.clone();
         let cancel = tokio_util::sync::CancellationToken::new();
         let result = engine
             .process_stream(
@@ -786,10 +815,10 @@ mod tests {
                 stream,
                 tracing::Span::none(),
                 &mut rx,
-                &mut |e| {
-                    events.push(e);
+                std::sync::Arc::new(std::sync::Mutex::new(move |e| {
+                    events_clone.lock().unwrap().push(e);
                     Ok(())
-                },
+                })),
                 &cancel,
             )
             .await
@@ -798,6 +827,7 @@ mod tests {
         // Text/Thought are accumulated but NOT emitted once a tool call started.
         assert_eq!(result.full_text, "ignored");
         assert_eq!(result.reasoning_text, "thinking");
+        let events = events.lock().unwrap();
         assert!(
             events.iter().all(|e| !matches!(
                 e,

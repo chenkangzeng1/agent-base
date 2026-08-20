@@ -1,15 +1,51 @@
+use std::sync::{Arc, Mutex};
+
+use tokio::sync::broadcast;
+
 use crate::engine::middleware::UserMessageCtx;
-use crate::engine::runtime::event_bus::EventBus;
 use crate::engine::runtime::plan_runner::RuntimeCore;
 use crate::types::{
-    AgentError, AgentResult, CheckpointData, CheckpointStep, MessageRole, RunOutcome, RuntimeEvent,
-    SessionId,
+    AgentResult, CheckpointData, CheckpointStep, MessageRole, RunOutcome, RuntimeEvent, SessionId,
 };
 
+/// Drain events from a `broadcast::Receiver` and invoke a `Mutex<FnMut>` callback
+/// for each one.
+pub(super) fn drain_locked<F>(
+    event_rx: &mut broadcast::Receiver<RuntimeEvent>,
+    on_event: &Mutex<F>,
+) -> AgentResult<()>
+where
+    F: FnMut(RuntimeEvent) -> AgentResult<()>,
+{
+    let events: Vec<RuntimeEvent> = {
+        let mut buf = Vec::new();
+        loop {
+            match event_rx.try_recv() {
+                Ok(ev) => buf.push(ev),
+                Err(broadcast::error::TryRecvError::Empty) => break,
+                Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                    tracing::warn!(skipped = n, "EventBus consumer lagged, events dropped");
+                    continue;
+                }
+                Err(broadcast::error::TryRecvError::Closed) => break,
+            }
+        }
+        buf
+    };
+    if !events.is_empty()
+        && let Ok(mut cb) = on_event.lock()
+    {
+        for ev in events {
+            cb(ev)?;
+        }
+    }
+    Ok(())
+}
+
 impl RuntimeCore {
-    pub async fn run<F>(&self, session_id: SessionId, mut on_event: F) -> AgentResult<RunOutcome>
+    pub async fn run<F>(&self, session_id: SessionId, on_event: F) -> AgentResult<RunOutcome>
     where
-        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send + 'static,
     {
         // Reset cancel token for this run
         self.reset_cancel();
@@ -18,6 +54,7 @@ impl RuntimeCore {
         let _enter = span.enter();
 
         let mut event_rx = self.event_bus.subscribe();
+        let on_event = Arc::new(Mutex::new(on_event));
 
         if let Err(e) = self.validate_session(&session_id).await {
             tracing::warn!(session_id = session_id.id, error = %e, "session validation failed");
@@ -26,7 +63,7 @@ impl RuntimeCore {
                 agent_id: None,
                 trace_id: None,
             });
-            EventBus::drain_async_events(&mut event_rx, &mut on_event)?;
+            drain_locked(&mut event_rx, &on_event)?;
             return Err(e);
         }
 
@@ -70,25 +107,29 @@ impl RuntimeCore {
                 &tool_definitions,
                 0,
                 &mut event_rx,
-                &mut on_event,
+                on_event.clone(),
             )
             .await;
 
         // Emit RunCancelled if cancelled, RunFinished otherwise (same as run_turn)
         match &result {
             Ok((RunOutcome::Cancelled, _)) => {
-                on_event(RuntimeEvent::RunCancelled {
-                    session_id: session_id.clone(),
-                    agent_id: None,
-                    trace_id: None,
-                })?;
+                if let Ok(mut cb) = on_event.lock() {
+                    cb(RuntimeEvent::RunCancelled {
+                        session_id: session_id.clone(),
+                        agent_id: None,
+                        trace_id: None,
+                    })?;
+                }
             }
             Err(e) if e.is_cancelled() => {
-                on_event(RuntimeEvent::RunCancelled {
-                    session_id: session_id.clone(),
-                    agent_id: None,
-                    trace_id: None,
-                })?;
+                if let Ok(mut cb) = on_event.lock() {
+                    cb(RuntimeEvent::RunCancelled {
+                        session_id: session_id.clone(),
+                        agent_id: None,
+                        trace_id: None,
+                    })?;
+                }
             }
             _ => {
                 self.event_bus.emit(RuntimeEvent::RunFinished {
@@ -96,7 +137,7 @@ impl RuntimeCore {
                     agent_id: None,
                     trace_id: None,
                 });
-                EventBus::drain_async_events(&mut event_rx, &mut on_event)?;
+                drain_locked(&mut event_rx, &on_event)?;
             }
         }
 
@@ -118,23 +159,11 @@ impl RuntimeCore {
         &self,
         session_id: SessionId,
         user_input: &str,
-        mut on_event: F,
+        on_event: F,
     ) -> AgentResult<RunOutcome>
     where
-        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send + 'static,
     {
-        // Helper: emit RunFinished and return the error, so event
-        // listeners (e.g. serve.rs) don't hang on session/middleware
-        // failures that happen before the react loop starts.
-        let fail = |e: AgentError, f: &mut F| -> AgentResult<RunOutcome> {
-            let _ = f(RuntimeEvent::RunFinished {
-                session_id: session_id.clone(),
-                agent_id: None,
-                trace_id: None,
-            });
-            Err(e)
-        };
-
         // Reset cancel token for this turn
         self.reset_cancel();
 
@@ -143,11 +172,9 @@ impl RuntimeCore {
         tracing::info!(session_id = session_id.id, user_input = %user_input, "agent turn start");
         drop(_guard);
 
-        tracing::debug!(
-            session_id = session_id.id,
-            "run_turn: subscribing to event bus"
-        );
         let mut event_rx = self.event_bus.subscribe();
+        let on_event = Arc::new(Mutex::new(on_event));
+
         let tool_definitions = self.tool_engine.definitions().await;
 
         let user_input_owned = match self
@@ -155,7 +182,14 @@ impl RuntimeCore {
             .await
         {
             Ok(u) => u,
-            Err(e) => return fail(e, &mut on_event),
+            Err(e) => {
+                let _ = on_event.lock().unwrap()(RuntimeEvent::RunFinished {
+                    session_id: session_id.clone(),
+                    agent_id: None,
+                    trace_id: None,
+                });
+                return Err(e);
+            }
         };
 
         // Reset nudge_count and turn_tool_calls for the new turn
@@ -168,7 +202,12 @@ impl RuntimeCore {
             })
             .await
         {
-            return fail(e, &mut on_event);
+            let _ = on_event.lock().unwrap()(RuntimeEvent::RunFinished {
+                session_id: session_id.clone(),
+                agent_id: None,
+                trace_id: None,
+            });
+            return Err(e);
         }
 
         if let Err(e) = self
@@ -177,7 +216,12 @@ impl RuntimeCore {
             })
             .await
         {
-            return fail(e, &mut on_event);
+            let _ = on_event.lock().unwrap()(RuntimeEvent::RunFinished {
+                session_id: session_id.clone(),
+                agent_id: None,
+                trace_id: None,
+            });
+            return Err(e);
         }
 
         self.event_bus.emit(RuntimeEvent::Checkpoint {
@@ -203,25 +247,29 @@ impl RuntimeCore {
                 &tool_definitions,
                 0,
                 &mut event_rx,
-                &mut on_event,
+                on_event.clone(),
             )
             .await;
 
         // Emit RunCancelled event if cancelled
         match &result {
             Ok((RunOutcome::Cancelled, _)) => {
-                on_event(RuntimeEvent::RunCancelled {
-                    session_id: session_id.clone(),
-                    agent_id: None,
-                    trace_id: None,
-                })?;
+                if let Ok(mut cb) = on_event.lock() {
+                    cb(RuntimeEvent::RunCancelled {
+                        session_id: session_id.clone(),
+                        agent_id: None,
+                        trace_id: None,
+                    })?;
+                }
             }
             Err(e) if e.is_cancelled() => {
-                on_event(RuntimeEvent::RunCancelled {
-                    session_id: session_id.clone(),
-                    agent_id: None,
-                    trace_id: None,
-                })?;
+                if let Ok(mut cb) = on_event.lock() {
+                    cb(RuntimeEvent::RunCancelled {
+                        session_id: session_id.clone(),
+                        agent_id: None,
+                        trace_id: None,
+                    })?;
+                }
             }
             _ => {}
         }
@@ -248,14 +296,14 @@ impl RuntimeCore {
                     agent_id: None,
                     trace_id: None,
                 });
-                EventBus::drain_async_events(&mut event_rx, &mut on_event)?;
+                drain_locked(&mut event_rx, &on_event)?;
                 tuple
             }
             Err(e) if e.is_cancelled() => {
                 return Err(e);
             }
             Err(e) => {
-                let _ = on_event(RuntimeEvent::RunFinished {
+                let _ = on_event.lock().unwrap()(RuntimeEvent::RunFinished {
                     session_id: session_id.clone(),
                     agent_id: None,
                     trace_id: None,
@@ -277,13 +325,15 @@ impl RuntimeCore {
         session_id: SessionId,
         user_input: &str,
     ) -> AgentResult<(Vec<RuntimeEvent>, RunOutcome)> {
-        let mut events = Vec::new();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let events_clone = events.clone();
         let outcome = self
-            .run_turn(session_id, user_input, |event| {
-                events.push(event);
+            .run_turn(session_id, user_input, move |event| {
+                events_clone.lock().unwrap().push(event);
                 Ok(())
             })
             .await?;
+        let events = Arc::try_unwrap(events).unwrap().into_inner().unwrap();
         Ok((events, outcome))
     }
 
@@ -291,10 +341,10 @@ impl RuntimeCore {
     pub async fn resume_from_checkpoint<F>(
         &self,
         checkpoint: CheckpointData,
-        mut on_event: F,
+        on_event: F,
     ) -> AgentResult<RunOutcome>
     where
-        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send + 'static,
     {
         // Reset cancel token for this resume
         self.reset_cancel();
@@ -306,6 +356,7 @@ impl RuntimeCore {
         tracing::info!(session_id = session_id.id, turn_count, step = ?checkpoint.step, "resuming from checkpoint");
 
         let mut event_rx = self.event_bus.subscribe();
+        let on_event = Arc::new(Mutex::new(on_event));
         let tool_definitions = self.tool_engine.definitions().await;
 
         if let CheckpointStep::BeforeToolCalls { tool_calls } = checkpoint.step {
@@ -314,7 +365,7 @@ impl RuntimeCore {
                     &session_id,
                     &tool_calls,
                     &mut event_rx,
-                    &mut on_event,
+                    on_event.clone(),
                     String::new(),
                 )
                 .await
@@ -327,7 +378,7 @@ impl RuntimeCore {
                             &tool_calls,
                             e,
                             &mut event_rx,
-                            &mut on_event,
+                            on_event.clone(),
                         )
                         .await?
                     {
@@ -344,25 +395,29 @@ impl RuntimeCore {
                 &tool_definitions,
                 turn_count,
                 &mut event_rx,
-                &mut on_event,
+                on_event.clone(),
             )
             .await;
 
         // Emit RunCancelled if cancelled, same as run_turn
         match &result {
             Ok((RunOutcome::Cancelled, _)) => {
-                on_event(RuntimeEvent::RunCancelled {
-                    session_id: session_id.clone(),
-                    agent_id: None,
-                    trace_id: None,
-                })?;
+                if let Ok(mut cb) = on_event.lock() {
+                    cb(RuntimeEvent::RunCancelled {
+                        session_id: session_id.clone(),
+                        agent_id: None,
+                        trace_id: None,
+                    })?;
+                }
             }
             Err(e) if e.is_cancelled() => {
-                on_event(RuntimeEvent::RunCancelled {
-                    session_id: session_id.clone(),
-                    agent_id: None,
-                    trace_id: None,
-                })?;
+                if let Ok(mut cb) = on_event.lock() {
+                    cb(RuntimeEvent::RunCancelled {
+                        session_id: session_id.clone(),
+                        agent_id: None,
+                        trace_id: None,
+                    })?;
+                }
             }
             _ => {}
         }
@@ -405,10 +460,10 @@ impl RuntimeCore {
         &self,
         session_id: SessionId,
         user_input: &str,
-        mut on_event: F,
+        on_event: F,
     ) -> AgentResult<RunOutcome>
     where
-        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send + 'static,
     {
         // Reset cancel token for this managed run
         self.reset_cancel();
@@ -417,6 +472,7 @@ impl RuntimeCore {
         let _enter = span.enter();
 
         let mut event_rx = self.event_bus.subscribe();
+        let on_event = Arc::new(Mutex::new(on_event));
 
         if let Err(e) = self.validate_session(&session_id).await {
             tracing::warn!(session_id = session_id.id, error = %e, "session validation failed");
@@ -425,7 +481,7 @@ impl RuntimeCore {
                 agent_id: None,
                 trace_id: None,
             });
-            EventBus::drain_async_events(&mut event_rx, &mut on_event)?;
+            drain_locked(&mut event_rx, &on_event)?;
             return Err(e);
         }
 
@@ -490,18 +546,20 @@ impl RuntimeCore {
                     &tool_definitions,
                     total_turns,
                     &mut event_rx,
-                    &mut on_event,
+                    on_event.clone(),
                 )
                 .await;
 
             // Emit RunCancelled if cancelled
             let is_cancelled = matches!(&result, Err(e) if e.is_cancelled());
             if is_cancelled {
-                on_event(RuntimeEvent::RunCancelled {
-                    session_id: session_id.clone(),
-                    agent_id: None,
-                    trace_id: None,
-                })?;
+                if let Ok(mut cb) = on_event.lock() {
+                    cb(RuntimeEvent::RunCancelled {
+                        session_id: session_id.clone(),
+                        agent_id: None,
+                        trace_id: None,
+                    })?;
+                }
                 self.cleanup_ephemeral(&session_id).await;
                 // Safe: we just checked it's Err and cancelled
                 return Err(result.unwrap_err());
@@ -509,11 +567,13 @@ impl RuntimeCore {
 
             // Emit RunCancelled for Ok(Cancelled) outcome
             if let Ok((RunOutcome::Cancelled, _)) = &result {
-                on_event(RuntimeEvent::RunCancelled {
-                    session_id: session_id.clone(),
-                    agent_id: None,
-                    trace_id: None,
-                })?;
+                if let Ok(mut cb) = on_event.lock() {
+                    cb(RuntimeEvent::RunCancelled {
+                        session_id: session_id.clone(),
+                        agent_id: None,
+                        trace_id: None,
+                    })?;
+                }
                 self.cleanup_ephemeral(&session_id).await;
                 return Ok(RunOutcome::Cancelled);
             }
@@ -551,7 +611,7 @@ impl RuntimeCore {
             agent_id: None,
             trace_id: None,
         });
-        EventBus::drain_async_events(&mut event_rx, &mut on_event)?;
+        drain_locked(&mut event_rx, &on_event)?;
 
         // Clean up ephemeral messages
         self.cleanup_ephemeral(&session_id).await;

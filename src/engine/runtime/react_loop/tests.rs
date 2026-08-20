@@ -328,10 +328,11 @@ async fn truncation_guard_blocks_tool_calls_on_length_finish_reason() {
 
     let sid = runtime.create_session().await;
 
-    let mut events = Vec::new();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let events_clone = events.clone();
     let result = runtime
-        .run_turn(sid.clone(), "run a command", |event| {
-            events.push(event);
+        .run_turn(sid.clone(), "run a command", move |event| {
+            events_clone.lock().unwrap().push(event);
             Ok(())
         })
         .await;
@@ -396,10 +397,11 @@ async fn run_managed_processes_follow_up_messages() {
     // inner loop completes and trigger a second inner loop.
     runtime.follow_up("continue working on the task".to_string());
 
-    let mut events = Vec::new();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let events_clone = events.clone();
     let result = runtime
-        .run_managed(sid.clone(), "do something", |event| {
-            events.push(event);
+        .run_managed(sid.clone(), "do something", move |event| {
+            events_clone.lock().unwrap().push(event);
             Ok(())
         })
         .await;
@@ -486,10 +488,11 @@ async fn run_turn_executes_tool_call_and_returns_text() {
 
     let sid = runtime.create_session().await;
 
-    let mut events = Vec::new();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let events_clone = events.clone();
     let result = runtime
-        .run_turn(sid.clone(), "echo hello", |event| {
-            events.push(event);
+        .run_turn(sid.clone(), "echo hello", move |event| {
+            events_clone.lock().unwrap().push(event);
             Ok(())
         })
         .await;
@@ -515,6 +518,8 @@ async fn run_turn_executes_tool_call_and_returns_text() {
         ),
         "session should contain the final assistant text"
     );
+
+    let events = events.lock().unwrap();
 
     assert!(
         events
@@ -688,10 +693,11 @@ async fn run_completes_with_text_response() {
     let sid = runtime.create_session().await;
     runtime.add_user_message(&sid, "question").await.unwrap();
 
-    let mut events = Vec::new();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let events_clone = events.clone();
     let result = runtime
-        .run(sid.clone(), |event| {
-            events.push(event);
+        .run(sid.clone(), move |event| {
+            events_clone.lock().unwrap().push(event);
             Ok(())
         })
         .await;
@@ -734,13 +740,16 @@ async fn run_turn_emits_run_cancelled_when_cancelled_mid_run() {
         .expect("build runtime");
 
     let sid = runtime.create_session().await;
-    let mut events = Vec::new();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let events_clone = events.clone();
     let result = runtime
-        .run_turn(sid.clone(), "cancel now", |event| {
-            events.push(event);
+        .run_turn(sid.clone(), "cancel now", move |event| {
+            events_clone.lock().unwrap().push(event);
             Ok(())
         })
         .await;
+
+    let events = events.lock().unwrap();
 
     assert!(
         matches!(result, Ok(RunOutcome::Cancelled)),
@@ -905,11 +914,12 @@ async fn resume_from_checkpoint_executes_pending_tool_calls() {
         turn_count: 0,
     };
 
-    let mut events = Vec::new();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let events_clone = events.clone();
     let result = runtime
         .runner
-        .resume_from_checkpoint(checkpoint, |event| {
-            events.push(event);
+        .resume_from_checkpoint(checkpoint, move |event| {
+            events_clone.lock().unwrap().push(event);
             Ok(())
         })
         .await;
@@ -986,14 +996,17 @@ async fn run_emits_runfinished_exactly_once() {
     let sid = runtime.create_session().await;
     runtime.add_user_message(&sid, "question").await.unwrap();
 
-    let mut events = Vec::new();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let events_clone = events.clone();
     let outcome = runtime
-        .run(sid.clone(), |event| {
-            events.push(event);
+        .run(sid.clone(), move |event| {
+            events_clone.lock().unwrap().push(event);
             Ok(())
         })
         .await
         .expect("run");
+
+    let events = events.lock().unwrap();
 
     assert!(matches!(outcome, RunOutcome::Completed));
     let finished = events
@@ -1017,14 +1030,17 @@ async fn run_managed_emits_runfinished_exactly_once() {
         .expect("build runtime");
     let sid = runtime.create_session().await;
 
-    let mut events = Vec::new();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let events_clone = events.clone();
     let outcome = runtime
-        .run_managed(sid.clone(), "do something", |event| {
-            events.push(event);
+        .run_managed(sid.clone(), "do something", move |event| {
+            events_clone.lock().unwrap().push(event);
             Ok(())
         })
         .await
         .expect("run_managed");
+
+    let events = events.lock().unwrap();
 
     assert!(matches!(outcome, RunOutcome::Completed));
     let finished = events
@@ -1342,13 +1358,16 @@ async fn run_turn_cancel_does_not_emit_runfinished() {
         .expect("build runtime");
     let sid = runtime.create_session().await;
 
-    let mut events = Vec::new();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let events_clone = events.clone();
     let result = runtime
-        .run_turn(sid.clone(), "cancel now", |event| {
-            events.push(event);
+        .run_turn(sid.clone(), "cancel now", move |event| {
+            events_clone.lock().unwrap().push(event);
             Ok(())
         })
         .await;
+
+    let events = events.lock().unwrap();
 
     assert!(matches!(result, Ok(RunOutcome::Cancelled)));
     assert!(
@@ -1377,14 +1396,17 @@ async fn run_text_only_event_order() {
     let sid = runtime.create_session().await;
     runtime.add_user_message(&sid, "question").await.unwrap();
 
-    let mut events = Vec::new();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let events_clone = events.clone();
     let outcome = runtime
-        .run(sid.clone(), |event| {
-            events.push(event);
+        .run(sid.clone(), move |event| {
+            events_clone.lock().unwrap().push(event);
             Ok(())
         })
         .await
         .expect("run");
+
+    let events = events.lock().unwrap();
 
     assert!(matches!(outcome, RunOutcome::Completed));
     assert_eq!(terminal_seq(&events), vec!["BeforeLlm", "RunFinished"]);
@@ -1399,14 +1421,17 @@ async fn run_managed_text_only_event_order() {
         .expect("build runtime");
     let sid = runtime.create_session().await;
 
-    let mut events = Vec::new();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let events_clone = events.clone();
     let outcome = runtime
-        .run_managed(sid.clone(), "do something", |event| {
-            events.push(event);
+        .run_managed(sid.clone(), "do something", move |event| {
+            events_clone.lock().unwrap().push(event);
             Ok(())
         })
         .await
         .expect("run_managed");
+
+    let events = events.lock().unwrap();
 
     assert!(matches!(outcome, RunOutcome::Completed));
     assert_eq!(terminal_seq(&events), vec!["BeforeLlm", "RunFinished"]);
@@ -1495,13 +1520,16 @@ async fn run_turn_tool_cancelled_mid_execution_returns_cancelled() {
         .expect("build runtime");
 
     let sid = runtime.create_session().await;
-    let mut events = Vec::new();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let events_clone = events.clone();
     let result = runtime
-        .run_turn(sid.clone(), "cancel now", |event| {
-            events.push(event);
+        .run_turn(sid.clone(), "cancel now", move |event| {
+            events_clone.lock().unwrap().push(event);
             Ok(())
         })
         .await;
+
+    let events = events.lock().unwrap();
 
     assert!(
         matches!(&result, Err(e) if e.is_cancelled()),
@@ -1524,13 +1552,16 @@ async fn run_turn_llm_stream_cancelled_returns_cancelled() {
         .expect("build runtime");
 
     let sid = runtime.create_session().await;
-    let mut events = Vec::new();
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let events_clone = events.clone();
     let result = runtime
-        .run_turn(sid.clone(), "test input", |event| {
-            events.push(event);
+        .run_turn(sid.clone(), "test input", move |event| {
+            events_clone.lock().unwrap().push(event);
             Ok(())
         })
         .await;
+
+    let events = events.lock().unwrap();
 
     assert!(
         matches!(&result, Err(e) if e.is_cancelled()),

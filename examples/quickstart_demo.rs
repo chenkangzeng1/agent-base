@@ -447,16 +447,19 @@ async fn main() -> AgentResult<()> {
             continue;
         }
 
-        let mut printer = CliEventPrinter::new();
+        let printer = std::sync::Arc::new(std::sync::Mutex::new(CliEventPrinter::new()));
+        let printer_clone = printer.clone();
         match runtime
-            .run_turn(session_id.clone(), &input, |event| printer.handle(event))
+            .run_turn(session_id.clone(), &input, move |event| {
+                printer_clone.lock().unwrap().handle(event)
+            })
             .await
         {
             Ok(_outcome) => {
-                printer.finish();
+                printer.lock().unwrap().finish();
             }
             Err(e) => {
-                printer.finish();
+                printer.lock().unwrap().finish();
                 if e.is_cancelled() {
                     println!("[Cancelled]");
                 } else {

@@ -11,7 +11,6 @@ pub struct UserMessageCtx {
     pub user_input: String,
 }
 
-#[derive(Clone)]
 pub struct PreLlmCtx {
     pub session_id: SessionId,
     pub messages: Vec<ChatMessage>,
@@ -21,6 +20,30 @@ pub struct PreLlmCtx {
     /// wraps the event into [`RuntimeEvent::UserEvent`] and pushes it to the
     /// EventBus — middleware never touches framework-level events directly.
     pub user_event_fn: Option<Arc<dyn Fn(UserEvent) + Send + Sync>>,
+    /// Optional closure to drain and render pending events immediately.
+    /// Middleware calls this after emitting events to avoid buffering until
+    /// `on_pre_llm` returns.  Cloneable so callbacks (e.g. compression
+    /// progress) can also trigger a drain.
+    pub drain_fn: Option<Arc<dyn Fn() + Send + Sync>>,
+}
+
+impl PreLlmCtx {
+    /// Drain and render all pending events immediately.
+    ///
+    /// Middleware calls this after emitting [`UserEvent`]s to avoid buffering
+    /// until `on_pre_llm` returns.  The drain function is injected by the
+    /// react loop — middleware never touches the event channel directly.
+    ///
+    /// Panics inside the drain function are caught and logged as warnings.
+    pub fn drain_events(&self) {
+        if let Some(ref f) = self.drain_fn
+            && let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                f();
+            }))
+        {
+            tracing::warn!("drain_events failed: {:?}", e);
+        }
+    }
 }
 
 #[derive(Clone)]

@@ -170,7 +170,7 @@ impl AgentRuntime {
 
     pub async fn run<F>(&self, session_id: SessionId, on_event: F) -> AgentResult<RunOutcome>
     where
-        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send + 'static,
     {
         self.runner.run(session_id, on_event).await
     }
@@ -182,7 +182,7 @@ impl AgentRuntime {
         on_event: F,
     ) -> AgentResult<RunOutcome>
     where
-        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send + 'static,
     {
         self.runner.run_turn(session_id, user_input, on_event).await
     }
@@ -340,7 +340,7 @@ impl AgentRuntime {
         on_event: F,
     ) -> AgentResult<RunOutcome>
     where
-        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send + 'static,
     {
         self.runner
             .run_managed(session_id, user_input, on_event)

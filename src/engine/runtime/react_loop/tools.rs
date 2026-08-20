@@ -1,11 +1,14 @@
+use std::sync::{Arc, Mutex};
+
 use tokio::sync::broadcast;
 
 use crate::engine::recovery::ToolErrorAction;
-use crate::engine::runtime::event_bus::EventBus;
 use crate::engine::runtime::plan_runner::RuntimeCore;
 use crate::engine::runtime::tool_engine::ExecutionContext;
 use crate::tool::content_text;
 use crate::types::{AgentError, AgentResult, MessageRole, RunOutcome, RuntimeEvent, SessionId};
+
+use super::entry::drain_locked;
 
 impl RuntimeCore {
     pub(super) async fn handle_tool_error<F>(
@@ -14,7 +17,7 @@ impl RuntimeCore {
         tool_calls: &[(String, String, String)],
         e: AgentError,
         event_rx: &mut broadcast::Receiver<RuntimeEvent>,
-        on_event: &mut F,
+        on_event: Arc<Mutex<F>>,
     ) -> AgentResult<Option<RunOutcome>>
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
@@ -24,7 +27,7 @@ impl RuntimeCore {
         if e.is_cancelled() {
             // Don't emit RunFinished when cancelled — RunCancelled will be emitted by run_turn
             // But still drain pending events and persist session
-            EventBus::drain_async_events(event_rx, on_event)?;
+            drain_locked(event_rx, &on_event)?;
             let session = self.session_manager.session_or_err(session_id).await?;
             if let Err(e) = self.session_manager.session_store().save(&session).await {
                 tracing::warn!(session_id = session_id.id, error = %e, "Failed to persist session");
@@ -62,7 +65,7 @@ impl RuntimeCore {
                 agent_id: None,
                 trace_id: None,
             });
-            EventBus::drain_async_events(event_rx, on_event)?;
+            drain_locked(event_rx, &on_event)?;
             let session = self.session_manager.session_or_err(session_id).await?;
             if let Err(e) = self.session_manager.session_store().save(&session).await {
                 tracing::warn!(session_id = session_id.id, error = %e, "Failed to persist session");
@@ -92,7 +95,7 @@ impl RuntimeCore {
                     agent_id: None,
                     trace_id: None,
                 });
-                EventBus::drain_async_events(event_rx, on_event)?;
+                drain_locked(event_rx, &on_event)?;
                 let session = self.session_manager.session_or_err(session_id).await?;
                 if let Err(e) = self.session_manager.session_store().save(&session).await {
                     tracing::warn!(session_id = session_id.id, error = %e, "Failed to persist session");
@@ -138,7 +141,7 @@ impl RuntimeCore {
         session_id: &SessionId,
         tool_calls: &[(String, String, String)],
         event_rx: &mut broadcast::Receiver<RuntimeEvent>,
-        on_event: &mut F,
+        on_event: Arc<Mutex<F>>,
         reasoning: String,
     ) -> AgentResult<()>
     where
@@ -170,7 +173,7 @@ impl RuntimeCore {
         // and returns Err). We only push real tool calls on success.
         let outcome = self
             .tool_engine
-            .orchestrate(session_id, tool_calls, &ctx, event_rx, on_event)
+            .orchestrate(session_id, tool_calls, &ctx, event_rx, on_event.clone())
             .await?;
 
         // Push assistant tool calls to session after all approvals pass

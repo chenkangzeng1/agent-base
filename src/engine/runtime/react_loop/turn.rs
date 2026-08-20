@@ -1,7 +1,8 @@
+use std::sync::{Arc, Mutex};
+
 use tokio::sync::broadcast;
 
 use crate::engine::middleware::{PostLlmCtx, PreLlmCtx};
-use crate::engine::runtime::event_bus::EventBus;
 use crate::engine::runtime::llm_engine::LlmTurnResult;
 use crate::engine::runtime::plan_runner::RuntimeCore;
 use crate::types::{
@@ -9,6 +10,7 @@ use crate::types::{
     UserEvent, default_convert_to_llm,
 };
 
+use super::entry::drain_locked;
 use super::turn_end::TurnEndCtx;
 
 struct PostLlmMwResult {
@@ -36,12 +38,30 @@ const REASONING_ONLY_MAX_STRIKES: usize = 3;
 const EMPTY_RESPONSE_MAX_STRIKES: usize = 3;
 
 impl RuntimeCore {
-    async fn apply_pre_llm_mw(
+    async fn apply_pre_llm_mw<F>(
         &self,
         session_id: &SessionId,
         messages: Vec<crate::types::ChatMessage>,
         tools: Vec<serde_json::Value>,
-    ) -> AgentResult<(Vec<crate::types::ChatMessage>, Vec<serde_json::Value>)> {
+        on_event: Arc<Mutex<F>>,
+    ) -> AgentResult<(Vec<crate::types::ChatMessage>, Vec<serde_json::Value>)>
+    where
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send + 'static,
+    {
+        // Create drain_fn with its own broadcast subscriber.
+        // Middleware (e.g. compression) can call this during long-running
+        // operations to flush accumulated events in real-time.
+        let drain_fn: Arc<dyn Fn() + Send + Sync> = {
+            let rx = Mutex::new(self.event_bus.subscribe());
+            let cb = on_event.clone();
+            Arc::new(move || {
+                let mut rx_guard = rx.lock().unwrap_or_else(|e| e.into_inner());
+                if let Err(e) = drain_locked(&mut rx_guard, &cb) {
+                    tracing::warn!("drain_fn failed: {}", e);
+                }
+            })
+        };
+
         let mut ctx = PreLlmCtx {
             session_id: session_id.clone(),
             messages,
@@ -58,10 +78,16 @@ impl RuntimeCore {
                     });
                 }))
             },
+            drain_fn: Some(drain_fn.clone()),
         };
+
         for mw in &self.middlewares {
             mw.on_pre_llm(&mut ctx).await?;
         }
+
+        // Drain events emitted by middleware (e.g. compression Started)
+        // so they render immediately rather than after the LLM call.
+        drain_fn();
         Ok((ctx.messages, ctx.tools))
     }
 
@@ -118,10 +144,10 @@ impl RuntimeCore {
         tool_definitions: &[serde_json::Value],
         mut turn_count: u32,
         event_rx: &mut broadcast::Receiver<RuntimeEvent>,
-        on_event: &mut F,
+        on_event: Arc<Mutex<F>>,
     ) -> AgentResult<(RunOutcome, u32)>
     where
-        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send + 'static,
     {
         let config = self.config_snapshot_async().await;
         let max_turns = config
@@ -195,7 +221,7 @@ impl RuntimeCore {
                 ));
             }
 
-            EventBus::drain_async_events(event_rx, on_event)?;
+            drain_locked(event_rx, &on_event)?;
 
             let turn_span =
                 tracing::info_span!("turn", session_id = session_id.id, turn = turn_count);
@@ -226,7 +252,7 @@ impl RuntimeCore {
             }
 
             let (messages, tools_for_turn) = self
-                .apply_pre_llm_mw(session_id, messages, tools_for_turn)
+                .apply_pre_llm_mw(session_id, messages, tools_for_turn, on_event.clone())
                 .await?;
 
             self.event_bus.emit(RuntimeEvent::Checkpoint {
@@ -296,7 +322,14 @@ impl RuntimeCore {
             let cancel_token = self.cancel_token();
             let result = self
                 .llm_engine
-                .process_stream(session_id, stream, span, event_rx, on_event, &cancel_token)
+                .process_stream(
+                    session_id,
+                    stream,
+                    span,
+                    event_rx,
+                    on_event.clone(),
+                    &cancel_token,
+                )
                 .await;
             tracing::info!(
                 session_id = session_id.id,
@@ -315,7 +348,7 @@ impl RuntimeCore {
                     &model,
                     result,
                     event_rx,
-                    on_event,
+                    on_event.clone(),
                 )
                 .await?
             {
@@ -338,7 +371,7 @@ impl RuntimeCore {
         model: &str,
         result: AgentResult<LlmTurnResult>,
         event_rx: &mut broadcast::Receiver<RuntimeEvent>,
-        on_event: &mut F,
+        on_event: Arc<Mutex<F>>,
     ) -> AgentResult<TurnFlow>
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
@@ -615,7 +648,7 @@ impl RuntimeCore {
                             session_id,
                             &result.tool_calls,
                             event_rx,
-                            on_event,
+                            on_event.clone(),
                             reasoning_text,
                         )
                         .await
@@ -679,7 +712,7 @@ impl RuntimeCore {
                                     &result.tool_calls,
                                     e,
                                     event_rx,
-                                    on_event,
+                                    on_event.clone(),
                                 )
                                 .await?
                             {
