@@ -3,6 +3,7 @@ mod checkpoint;
 mod config;
 mod error;
 mod events;
+mod finish_reason;
 mod message;
 mod outcome;
 mod plan_update;
@@ -13,6 +14,7 @@ pub use approval::{ApprovalDecision, ApprovalRequest, RiskLevel};
 pub use checkpoint::{CheckpointData, CheckpointStep, ToolResultData};
 pub use config::{AgentConfig, Language, ResponseFormat, RetryConfig, SafetyConfig, SessionConfig};
 pub use error::{AgentError, AgentResult, ErrorKind};
+pub use finish_reason::FinishReason;
 
 pub use events::{RuntimeEvent, UserEvent};
 pub use message::{

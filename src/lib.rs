@@ -36,7 +36,7 @@ pub use engine::{
 // ---------------------------------------------------------------------------
 pub use llm::{
     AnthropicClient, LlmCapabilities, LlmClient, LlmClientBuilder, LlmProvider, OpenAiClient,
-    ReasoningConfig, ReasoningEffort, StreamChunk, StreamClient, UsageInfo,
+    OpenAiResponsesClient, ReasoningConfig, ReasoningEffort, StreamChunk, StreamClient, UsageInfo,
 };
 
 // ---------------------------------------------------------------------------

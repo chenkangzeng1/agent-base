@@ -1651,3 +1651,84 @@ async fn run_managed_max_turns_exceeded() {
         result
     );
 }
+
+// ---------------------------------------------------------------------------
+// Phase 1: FinishReason branch tests
+// ---------------------------------------------------------------------------
+
+/// Model returns `tool_use` finish reason but no actual tool call data.
+/// The react loop should return `RunOutcome::Failed`.
+#[tokio::test]
+async fn tool_use_with_no_tool_calls_returns_failed() {
+    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+        // A ToolCall chunk with no delta.tool_calls — sets is_tool_call=true
+        // but leaves tool_calls empty.
+        StreamChunk::ToolCall(serde_json::json!({ "no_delta": true })),
+        StreamChunk::Stop {
+            finish_reason: Some("tool_use".to_string()),
+        },
+    ]])));
+    let runtime = AgentBuilder::new(client)
+        .system_prompt("test")
+        .build()
+        .expect("build runtime");
+    let sid = runtime.create_session().await;
+
+    let result = runtime.run_turn(sid, "do something", |_| Ok(())).await;
+
+    assert!(
+        matches!(result, Ok(RunOutcome::Failed { .. })),
+        "tool_use with no tool calls should return Failed: {:?}",
+        result
+    );
+}
+
+/// Model returns `max_tokens` (truncated) with text-only output (no tool calls).
+/// The react loop should return `RunOutcome::Failed`.
+#[tokio::test]
+async fn truncated_text_only_returns_failed() {
+    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+        StreamChunk::Text("Here is part of my answer before being cut".to_string()),
+        StreamChunk::Stop {
+            finish_reason: Some("max_tokens".to_string()),
+        },
+    ]])));
+    let runtime = AgentBuilder::new(client)
+        .system_prompt("test")
+        .build()
+        .expect("build runtime");
+    let sid = runtime.create_session().await;
+
+    let result = runtime.run_turn(sid, "do something", |_| Ok(())).await;
+
+    assert!(
+        matches!(result, Ok(RunOutcome::Failed { .. })),
+        "truncated text-only should return Failed: {:?}",
+        result
+    );
+}
+
+/// Model returns `length` (OpenAI truncation) with text-only output.
+/// The react loop should return `RunOutcome::Failed`.
+#[tokio::test]
+async fn openai_length_text_only_returns_failed() {
+    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+        StreamChunk::Text("Partial response before length limit".to_string()),
+        StreamChunk::Stop {
+            finish_reason: Some("length".to_string()),
+        },
+    ]])));
+    let runtime = AgentBuilder::new(client)
+        .system_prompt("test")
+        .build()
+        .expect("build runtime");
+    let sid = runtime.create_session().await;
+
+    let result = runtime.run_turn(sid, "do something", |_| Ok(())).await;
+
+    assert!(
+        matches!(result, Ok(RunOutcome::Failed { .. })),
+        "OpenAI length with text-only should return Failed: {:?}",
+        result
+    );
+}

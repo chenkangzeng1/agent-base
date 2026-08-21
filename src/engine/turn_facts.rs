@@ -104,7 +104,7 @@ impl Middleware for TurnFactMiddleware {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::SessionId;
+    use crate::types::{FinishReason, SessionId};
 
     #[tokio::test]
     async fn test_no_facts_no_prefix() {
@@ -137,6 +137,7 @@ mod tests {
             turn_tool_calls: 0,
             skip_push: false,
             follow_up_message: None,
+            finish_reason: FinishReason::Stop,
         };
         mw.on_post_llm(&mut post_ctx).await.unwrap();
 
@@ -170,6 +171,7 @@ mod tests {
             turn_tool_calls: 0,
             skip_push: false,
             follow_up_message: None,
+            finish_reason: FinishReason::Stop,
         };
         mw.on_post_llm(&mut post_ctx).await.unwrap();
 
@@ -206,6 +208,7 @@ mod tests {
             turn_tool_calls: 0,
             skip_push: false,
             follow_up_message: None,
+            finish_reason: FinishReason::Stop,
         };
         mw.on_post_llm(&mut post_ctx).await.unwrap();
 

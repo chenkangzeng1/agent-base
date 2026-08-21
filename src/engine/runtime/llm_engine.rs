@@ -110,10 +110,10 @@ impl LlmEngine {
         let mut aggregator = StreamAggregator::new();
         tracing::info!(session_id = session_id.id, "LLM process_stream start");
 
-        // Skip UserEvents that were already rendered by drain_fn during middleware
-        // execution (compression Progress/Started/Completed). drain_fn has its own
-        // broadcast subscriber and forwarded these to on_event — processing them
-        // again here would duplicate. Only skip UserEvent; keep Checkpoint and others.
+        // Skip UserEvents that were already rendered by ctx.emit() during middleware
+        // execution (compression Progress/Started/Completed). ctx.emit() sends to
+        // both the renderer callback and the event bus — the bus copy arrives here
+        // and must be skipped to avoid double-rendering.
         loop {
             match event_rx.try_recv() {
                 Ok(RuntimeEvent::UserEvent { .. }) => continue,
@@ -125,6 +125,7 @@ impl LlmEngine {
                     }
                     continue;
                 }
+                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => continue,
                 Err(_) => break,
             }
         }

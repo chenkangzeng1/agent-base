@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::Value;
 
-use crate::types::{AgentResult, ChatMessage, SessionId, UserEvent};
+use crate::types::{AgentResult, ChatMessage, FinishReason, SessionId, UserEvent};
 
 #[derive(Clone)]
 pub struct UserMessageCtx {
@@ -15,33 +15,31 @@ pub struct PreLlmCtx {
     pub session_id: SessionId,
     pub messages: Vec<ChatMessage>,
     pub tools: Vec<Value>,
-    /// Optional closure for middleware to emit [`UserEvent`]s (progress, structured).
-    /// Injected by the react loop when constructing the context. The closure
-    /// wraps the event into [`RuntimeEvent::UserEvent`] and pushes it to the
-    /// EventBus — middleware never touches framework-level events directly.
-    pub user_event_fn: Option<Arc<dyn Fn(UserEvent) + Send + Sync>>,
-    /// Optional closure to drain and render pending events immediately.
-    /// Middleware calls this after emitting events to avoid buffering until
-    /// `on_pre_llm` returns.  Cloneable so callbacks (e.g. compression
-    /// progress) can also trigger a drain.
-    pub drain_fn: Option<Arc<dyn Fn() + Send + Sync>>,
+    /// Unified emit function: sends [`UserEvent`] to both the renderer (real-time)
+    /// and the event bus (persistence).  Set by the react loop; middleware calls
+    /// [`emit()`](Self::emit) which delegates to this closure.
+    ///
+    /// The closure captures the renderer callback and the event bus, so middleware
+    /// never needs to know about broadcast channels or drain mechanics.
+    pub emit_fn: Option<Box<dyn Fn(UserEvent) + Send + Sync>>,
 }
 
 impl PreLlmCtx {
-    /// Drain and render all pending events immediately.
+    /// Emit a [`UserEvent`] to both the renderer and the event bus.
     ///
-    /// Middleware calls this after emitting [`UserEvent`]s to avoid buffering
-    /// until `on_pre_llm` returns.  The drain function is injected by the
-    /// react loop — middleware never touches the event channel directly.
+    /// This is the single entry point for middleware to send events.  The event
+    /// is delivered to the renderer callback (real-time display) and to the
+    /// event bus (persistence, event_log, checkpoint) in one call.
     ///
-    /// Panics inside the drain function are caught and logged as warnings.
-    pub fn drain_events(&self) {
-        if let Some(ref f) = self.drain_fn
+    /// Does nothing if the emit function was not set (e.g. in tests).
+    /// Panics inside the emit function are caught and logged as warnings.
+    pub fn emit(&self, event: UserEvent) {
+        if let Some(ref f) = self.emit_fn
             && let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                f();
+                f(event);
             }))
         {
-            tracing::warn!("drain_events failed: {:?}", e);
+            tracing::warn!("emit failed: {:?}", e);
         }
     }
 }
@@ -63,6 +61,10 @@ pub struct PostLlmCtx {
     pub turn_tool_calls: usize,
     pub skip_push: bool,
     pub follow_up_message: Option<String>,
+    /// Semantic finish reason from the LLM (Stop / ToolUse / Truncated / Other).
+    /// Middleware can inspect this to implement custom continuation logic
+    /// (e.g. auto-continue on truncation).
+    pub finish_reason: FinishReason,
 }
 
 #[async_trait]
@@ -104,12 +106,14 @@ mod tests {
             turn_tool_calls: 0,
             skip_push: false,
             follow_up_message: None,
+            finish_reason: FinishReason::Stop,
         };
         assert!(ctx.available_tools.is_empty());
         assert_eq!(ctx.turn_count, 0);
         assert_eq!(ctx.total_tool_calls, 0);
         assert!(!ctx.skip_push);
         assert!(ctx.follow_up_message.is_none());
+        assert_eq!(ctx.finish_reason, FinishReason::Stop);
     }
 
     #[test]
@@ -129,6 +133,7 @@ mod tests {
             turn_tool_calls: 0,
             skip_push: true,
             follow_up_message: Some("Please call tools now.".to_string()),
+            finish_reason: FinishReason::Stop,
         };
         assert!(ctx.skip_push);
         assert_eq!(
@@ -156,6 +161,9 @@ mod tests {
             turn_tool_calls: 2,
             skip_push: true,
             follow_up_message: Some("nudge".to_string()),
+            finish_reason: FinishReason::Truncated {
+                reason: Some("max_tokens".into()),
+            },
         };
         let cloned = ctx.clone();
         assert_eq!(cloned.available_tools, vec!["add", "subtract"]);
@@ -164,5 +172,6 @@ mod tests {
         assert_eq!(cloned.turn_tool_calls, 2);
         assert!(cloned.skip_push);
         assert_eq!(cloned.follow_up_message, Some("nudge".to_string()));
+        assert!(cloned.finish_reason.is_truncated());
     }
 }

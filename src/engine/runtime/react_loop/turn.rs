@@ -6,8 +6,8 @@ use crate::engine::middleware::{PostLlmCtx, PreLlmCtx};
 use crate::engine::runtime::llm_engine::LlmTurnResult;
 use crate::engine::runtime::plan_runner::RuntimeCore;
 use crate::types::{
-    AgentResult, CheckpointData, CheckpointStep, MessageRole, RunOutcome, RuntimeEvent, SessionId,
-    UserEvent, default_convert_to_llm,
+    AgentResult, CheckpointData, CheckpointStep, FinishReason, MessageRole, RunOutcome,
+    RuntimeEvent, SessionId, UserEvent, default_convert_to_llm,
 };
 
 use super::entry::drain_locked;
@@ -48,17 +48,30 @@ impl RuntimeCore {
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send + 'static,
     {
-        // Create drain_fn with its own broadcast subscriber.
-        // Middleware (e.g. compression) can call this during long-running
-        // operations to flush accumulated events in real-time.
-        let drain_fn: Arc<dyn Fn() + Send + Sync> = {
-            let rx = Mutex::new(self.event_bus.subscribe());
+        // Build a unified emit function that sends UserEvents to both:
+        // 1. on_event (real-time renderer callback)
+        // 2. event_bus (persistence, event_log, checkpoint)
+        let emit_fn: Box<dyn Fn(UserEvent) + Send + Sync> = {
+            let eb = self.event_bus.clone();
+            let sid = session_id.clone();
             let cb = on_event.clone();
-            Arc::new(move || {
-                let mut rx_guard = rx.lock().unwrap_or_else(|e| e.into_inner());
-                if let Err(e) = drain_locked(&mut rx_guard, &cb) {
-                    tracing::warn!("drain_fn failed: {}", e);
+            Box::new(move |ev: UserEvent| {
+                // Real-time render
+                if let Ok(mut cb) = cb.lock() {
+                    let _ = cb(RuntimeEvent::UserEvent {
+                        session_id: sid.clone(),
+                        event: ev.clone(),
+                        agent_id: None,
+                        trace_id: None,
+                    });
                 }
+                // Persistence
+                eb.emit(RuntimeEvent::UserEvent {
+                    session_id: sid.clone(),
+                    event: ev,
+                    agent_id: None,
+                    trace_id: None,
+                });
             })
         };
 
@@ -66,31 +79,18 @@ impl RuntimeCore {
             session_id: session_id.clone(),
             messages,
             tools,
-            user_event_fn: {
-                let eb = self.event_bus.clone();
-                let sid = session_id.clone();
-                Some(std::sync::Arc::new(move |ev: UserEvent| {
-                    eb.emit(RuntimeEvent::UserEvent {
-                        session_id: sid.clone(),
-                        event: ev,
-                        agent_id: None,
-                        trace_id: None,
-                    });
-                }))
-            },
-            drain_fn: Some(drain_fn.clone()),
+            emit_fn: Some(emit_fn),
         };
 
         for mw in &self.middlewares {
             mw.on_pre_llm(&mut ctx).await?;
         }
 
-        // Drain events emitted by middleware (e.g. compression Started)
-        // so they render immediately rather than after the LLM call.
-        drain_fn();
+        // No drain needed — ctx.emit() already delivered events directly.
         Ok((ctx.messages, ctx.tools))
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn apply_post_llm_mw(
         &self,
         session_id: &SessionId,
@@ -99,6 +99,7 @@ impl RuntimeCore {
         tool_calls: Vec<(String, String, String)>,
         available_tools: &[String],
         turn_count: u32,
+        finish_reason: FinishReason,
     ) -> AgentResult<PostLlmMwResult> {
         let session = self.session_manager.session_or_err(session_id).await?;
         let total_tool_calls = session.total_tool_calls;
@@ -117,6 +118,7 @@ impl RuntimeCore {
             turn_tool_calls,
             skip_push: false,
             follow_up_message: None,
+            finish_reason,
         };
         for mw in &self.middlewares {
             mw.on_post_llm(&mut ctx).await?;
@@ -255,6 +257,25 @@ impl RuntimeCore {
                 .apply_pre_llm_mw(session_id, messages, tools_for_turn, on_event.clone())
                 .await?;
 
+            // Drain UserEvent copies from event_rx that were written by
+            // ctx.emit() during middleware.  These were already delivered to
+            // on_event directly; leaving them in the bus would cause
+            // double-rendering in process_stream or orphaning on error paths
+            // (e.g. LLM call fails before process_stream runs).
+            loop {
+                match event_rx.try_recv() {
+                    Ok(RuntimeEvent::UserEvent { .. }) => continue,
+                    Ok(event) => {
+                        // Non-UserEvent — process it and keep draining.
+                        if let Ok(mut cb) = on_event.lock() {
+                            cb(event)?;
+                        }
+                        continue;
+                    }
+                    Err(_) => break,
+                }
+            }
+
             self.event_bus.emit(RuntimeEvent::Checkpoint {
                 session_id: session_id.clone(),
                 checkpoint: CheckpointData {
@@ -388,6 +409,8 @@ impl RuntimeCore {
                 llm_duration_ms,
                 reasoning_only,
             }) => {
+                // Normalise provider-specific finish_reason into a semantic enum.
+                let finish_reason = FinishReason::from_raw(finish_reason.as_deref());
                 tracing::info!(
                     session_id = session_id.id,
                     turn = turn_count,
@@ -498,6 +521,7 @@ impl RuntimeCore {
                         tool_calls_parsed,
                         &available_tools,
                         turn_count,
+                        finish_reason.clone(),
                     )
                     .await?;
 
@@ -583,7 +607,7 @@ impl RuntimeCore {
                     // P5: Truncation guard — when the LLM response hit the token limit,
                     // tool call arguments may be incomplete. Fail all tool calls
                     // without executing them, so the LLM can retry with complete args.
-                    if finish_reason.as_deref() == Some("length") {
+                    if finish_reason.is_truncated() {
                         tracing::warn!(
                             session_id = session_id.id,
                             turn = turn_count,
@@ -772,6 +796,76 @@ impl RuntimeCore {
                     }
                 }
 
+                // ── finish_reason anomaly detection (no tool call branch above matched) ──
+                match &finish_reason {
+                    FinishReason::ToolUse => {
+                        let error = "finish_reason=tool_use but no tool calls were parsed";
+                        tracing::warn!(
+                            session_id = session_id.id,
+                            turn = turn_count,
+                            error,
+                            "model signalled tool_use but no tool calls were parsed"
+                        );
+                        self.fire_turn_end(TurnEndCtx {
+                            ttft_ms,
+                            llm_duration_ms,
+                            usage: &usage,
+                            text_length: text_len,
+                            has_thinking,
+                            llm_calls: 1,
+                            error_message: Some(error),
+                            ..TurnEndCtx::new(
+                                session_id,
+                                turn_count,
+                                turn_start,
+                                model,
+                                user_input_owned,
+                                RunOutcome::Failed {
+                                    error: error.to_string(),
+                                },
+                            )
+                        })
+                        .await;
+                        return Ok(TurnFlow::Done(RunOutcome::Failed {
+                            error: error.to_string(),
+                        }));
+                    }
+                    FinishReason::Truncated { reason } => {
+                        // Pure-text response hit the token limit — this was previously
+                        // silently swallowed as a normal completion.
+                        let error = format!("response truncated ({:?})", reason);
+                        tracing::warn!(
+                            session_id = session_id.id,
+                            turn = turn_count,
+                            ?reason,
+                            "text-only response truncated by token limit"
+                        );
+                        self.fire_turn_end(TurnEndCtx {
+                            ttft_ms,
+                            llm_duration_ms,
+                            usage: &usage,
+                            text_length: text_len,
+                            has_thinking,
+                            llm_calls: 1,
+                            error_message: Some(&error),
+                            ..TurnEndCtx::new(
+                                session_id,
+                                turn_count,
+                                turn_start,
+                                model,
+                                user_input_owned,
+                                RunOutcome::Failed {
+                                    error: error.clone(),
+                                },
+                            )
+                        })
+                        .await;
+                        return Ok(TurnFlow::Done(RunOutcome::Failed { error }));
+                    }
+                    _ => {}
+                }
+
+                // ── text-only normal end ──
                 tracing::info!(
                     session_id = session_id.id,
                     turn = turn_count,

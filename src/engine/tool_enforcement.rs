@@ -73,7 +73,7 @@ impl Middleware for ToolEnforcementMiddleware {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::SessionId;
+    use crate::types::{FinishReason, SessionId};
 
     fn ctx(available_tools: Vec<String>) -> PostLlmCtx {
         PostLlmCtx {
@@ -88,6 +88,7 @@ mod tests {
             turn_tool_calls: 0,
             skip_push: false,
             follow_up_message: None,
+            finish_reason: FinishReason::Stop,
         }
     }
 

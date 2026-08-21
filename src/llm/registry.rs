@@ -1,10 +1,11 @@
 use std::sync::Arc;
 
-use super::{AnthropicClient, LlmClient, OpenAiClient};
+use super::{AnthropicClient, LlmClient, OpenAiClient, OpenAiResponsesClient, StreamClient};
 
 #[derive(Clone, Debug)]
 pub enum LlmProvider {
     OpenAi,
+    OpenAiResponses,
     Anthropic,
     Custom(String),
 }
@@ -14,6 +15,7 @@ impl LlmProvider {
     pub fn from_str(s: &str) -> Self {
         match s.to_lowercase().as_str() {
             "openai" => Self::OpenAi,
+            "openai-responses" | "responses" => Self::OpenAiResponses,
             "anthropic" => Self::Anthropic,
             other => Self::Custom(other.to_string()),
         }
@@ -71,9 +73,39 @@ impl LlmClientBuilder {
                 let url = base_url.unwrap_or_else(|| "https://api.anthropic.com".to_string());
                 Arc::new(AnthropicClient::new(self.api_key, self.model, Some(url)))
             }
+            LlmProvider::OpenAiResponses => {
+                panic!(
+                    "OpenAiResponsesClient implements StreamClient, not LlmClient. \
+                     Use build_stream_client() instead of build()."
+                )
+            }
             LlmProvider::Custom(_) => {
                 let url = base_url.unwrap_or_else(|| "https://api.openai.com/v1".to_string());
                 Arc::new(OpenAiClient::new(self.api_key, self.model, Some(url)))
+            }
+        }
+    }
+
+    /// Build an `Arc<dyn StreamClient>`.
+    ///
+    /// Use this for providers that implement [`StreamClient`] directly
+    /// (e.g. [`OpenAiResponsesClient`]) rather than the legacy [`LlmClient`] trait.
+    pub fn build_stream_client(self) -> Arc<dyn StreamClient> {
+        match &self.provider {
+            LlmProvider::OpenAiResponses => {
+                let url = self
+                    .base_url
+                    .clone()
+                    .unwrap_or_else(|| "https://api.openai.com/v1".to_string());
+                Arc::new(OpenAiResponsesClient::new(
+                    self.api_key,
+                    self.model,
+                    Some(url),
+                ))
+            }
+            _ => {
+                // For other providers, wrap the LlmClient in an adapter.
+                super::adapt(self.build())
             }
         }
     }
@@ -104,6 +136,22 @@ mod tests {
         assert!(matches!(
             LlmProvider::from_str("Anthropic"),
             LlmProvider::Anthropic
+        ));
+    }
+
+    #[test]
+    fn provider_from_str_openai_responses() {
+        assert!(matches!(
+            LlmProvider::from_str("openai-responses"),
+            LlmProvider::OpenAiResponses
+        ));
+        assert!(matches!(
+            LlmProvider::from_str("OpenAI-Responses"),
+            LlmProvider::OpenAiResponses
+        ));
+        assert!(matches!(
+            LlmProvider::from_str("responses"),
+            LlmProvider::OpenAiResponses
         ));
     }
 
@@ -139,6 +187,27 @@ mod tests {
             LlmClientBuilder::new(LlmProvider::Custom("ollama".into()), "sk", "llama").build();
         assert_eq!(client.model_name(), "llama");
         assert_eq!(client.capabilities().max_context_tokens, Some(128_000));
+    }
+
+    #[test]
+    fn build_stream_client_responses() {
+        let client = LlmClientBuilder::new(LlmProvider::OpenAiResponses, "sk", "gpt-4o")
+            .build_stream_client();
+        assert_eq!(client.model_name(), "gpt-4o");
+        assert_eq!(client.capabilities().max_context_tokens, Some(128_000));
+    }
+
+    #[test]
+    #[should_panic(expected = "build_stream_client")]
+    fn build_panics_for_responses_provider() {
+        LlmClientBuilder::new(LlmProvider::OpenAiResponses, "sk", "gpt-4o").build();
+    }
+
+    #[test]
+    fn build_stream_client_falls_back_to_adapter() {
+        let client =
+            LlmClientBuilder::new(LlmProvider::OpenAi, "sk", "gpt-4o").build_stream_client();
+        assert_eq!(client.model_name(), "gpt-4o");
     }
 
     #[test]

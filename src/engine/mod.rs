@@ -1,4 +1,5 @@
 mod approval;
+pub mod auto_continue;
 mod builder;
 mod circuit_breaker;
 mod context;
@@ -32,6 +33,7 @@ pub use safety::TurnToolLimitMiddleware;
 pub use session::AgentSession;
 pub use session_store::{InMemorySessionStore, SessionStore};
 
+pub use auto_continue::AutoContinueMiddleware;
 #[cfg(feature = "sqlite-session")]
 pub use session_store::SqliteSessionStore;
 pub use tool_enforcement::{ToolEnforcementConfig, ToolEnforcementMiddleware};

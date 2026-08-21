@@ -62,7 +62,7 @@ impl Middleware for TurnToolLimitMiddleware {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::SessionId;
+    use crate::types::{FinishReason, SessionId};
 
     fn make_ctx(turn_tool_calls: usize, pending_calls: usize) -> PostLlmCtx {
         let tool_calls = (0..pending_calls)
@@ -86,6 +86,7 @@ mod tests {
             turn_tool_calls,
             skip_push: false,
             follow_up_message: None,
+            finish_reason: FinishReason::Stop,
         }
     }
 

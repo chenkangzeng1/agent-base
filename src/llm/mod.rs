@@ -7,11 +7,13 @@ use crate::types::{AgentResult, ChatMessage, ResponseFormat};
 
 mod anthropic;
 mod openai;
+mod openai_responses;
 mod registry;
 mod stream_client;
 
 pub use anthropic::AnthropicClient;
 pub use openai::{LlmClientConfig, OpenAiClient};
+pub use openai_responses::OpenAiResponsesClient;
 pub use registry::{LlmClientBuilder, LlmProvider};
 pub use stream_client::{LlmClientAdapter, StreamClient, adapt};
 
