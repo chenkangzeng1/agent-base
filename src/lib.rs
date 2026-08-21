@@ -18,8 +18,8 @@ pub mod prelude {
         ToolRegistry, TypedTool,
     };
     pub use crate::types::{
-        AgentConfig, AgentError, AgentResult, ChatMessage, Language, Message, MessageRole,
-        RunOutcome, RuntimeEvent, SessionId, TurnContext, UserEvent,
+        AgentConfig, AgentError, AgentResult, ChatMessage, FinishReason, Language, Message,
+        MessageRole, RunOutcome, RuntimeEvent, SessionId, TurnContext, UserEvent,
     };
 }
 
@@ -72,8 +72,8 @@ pub use types::{AgentError, AgentResult, ErrorKind};
 // Types
 // ---------------------------------------------------------------------------
 pub use types::{
-    AgentConfig, ChatMessage, CheckpointData, CheckpointStep, ImageAttachment, ImageDetail,
-    Language, Message, MessageRole, PlanItem, PlanStepStatus, ResponseFormat, RetryConfig,
-    RunOutcome, SafetyConfig, SessionConfig, ToolCallMessage, ToolResultData, TurnContext,
-    UpdatePlanArgs,
+    AgentConfig, ChatMessage, CheckpointData, CheckpointStep, FinishReason, ImageAttachment,
+    ImageDetail, Language, Message, MessageRole, PlanItem, PlanStepStatus, ResponseFormat,
+    RetryConfig, RunOutcome, SafetyConfig, SessionConfig, ToolCallMessage, ToolResultData,
+    TurnContext, UpdatePlanArgs,
 };
