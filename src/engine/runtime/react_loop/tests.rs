@@ -1832,7 +1832,10 @@ async fn branch4_guard_called_with_run_has_tool_calls() {
     let calls = guard.calls.lock().unwrap();
     assert_eq!(calls.len(), 1, "on_text_only should be called exactly once");
     let (run_has_tools, response) = &calls[0];
-    assert!(*run_has_tools, "run_has_tool_calls must be true after tool use");
+    assert!(
+        *run_has_tools,
+        "run_has_tool_calls must be true after tool use"
+    );
     assert_eq!(response, "The answer is 42.");
 }
 
@@ -1898,10 +1901,7 @@ async fn branch4_guard_continue_nudges_and_retries() {
     // Extract guard call data before any async work.
     let (call_count, all_have_tools) = {
         let calls = guard.calls.lock().unwrap();
-        (
-            calls.len(),
-            calls.iter().all(|(has_tools, _)| *has_tools),
-        )
+        (calls.len(), calls.iter().all(|(has_tools, _)| *has_tools))
     };
     assert!(
         call_count >= 2,
@@ -1911,9 +1911,9 @@ async fn branch4_guard_continue_nudges_and_retries() {
 
     // Verify the nudge was pushed as a user message.
     let session = runtime.session(&sid).await.expect("session exists");
-    let has_nudge = session.chat_messages().iter().any(|m| {
-        matches!(m, ChatMessage::User { content, .. } if content.contains("please continue"))
-    });
+    let has_nudge = session.chat_messages().iter().any(
+        |m| matches!(m, ChatMessage::User { content, .. } if content.contains("please continue")),
+    );
     assert!(has_nudge, "session should contain the nudge message");
 
     // The second on_text_only call should still have run_has_tool_calls = true

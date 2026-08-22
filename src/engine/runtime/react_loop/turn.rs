@@ -487,7 +487,12 @@ impl RuntimeCore {
                     let guard_ctx = self.build_guard_ctx(&turn_ctx, "").await;
                     let action = self.guard.on_reasoning_only(&guard_ctx).await;
                     return self
-                        .dispatch_nudge_guard(action, &turn_ctx, &metrics, "reasoning-only response")
+                        .dispatch_nudge_guard(
+                            action,
+                            &turn_ctx,
+                            &metrics,
+                            "reasoning-only response",
+                        )
                         .await;
                 }
 

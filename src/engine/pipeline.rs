@@ -72,19 +72,20 @@ impl ToolExecutionPipeline for DefaultPipeline {
             .timeout_ms()
             .or(self.tool_timeout_ms)
             .unwrap_or(self.default_tool_timeout_ms);
-        let output = match tokio::time::timeout(Duration::from_millis(timeout_ms), tool.call(args, ctx))
-            .await
-        {
-            Ok(result) => result?,
-            Err(_) => {
-                tracing::warn!(
-                    tool = tool.name(),
-                    timeout_ms = timeout_ms,
-                    "tool execution timed out"
-                );
-                return Ok(vec![Content::text("[Tool Timeout]")]);
-            }
-        };
+        let output =
+            match tokio::time::timeout(Duration::from_millis(timeout_ms), tool.call(args, ctx))
+                .await
+            {
+                Ok(result) => result?,
+                Err(_) => {
+                    tracing::warn!(
+                        tool = tool.name(),
+                        timeout_ms = timeout_ms,
+                        "tool execution timed out"
+                    );
+                    return Ok(vec![Content::text("[Tool Timeout]")]);
+                }
+            };
 
         // 3. Output size limit — reject by default rather than silently
         // truncating (design §6.5). Tools that want to return a bounded

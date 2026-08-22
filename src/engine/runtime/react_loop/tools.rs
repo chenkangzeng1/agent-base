@@ -7,8 +7,8 @@ use crate::engine::runtime::plan_runner::RuntimeCore;
 use crate::engine::runtime::tool_engine::ExecutionContext;
 use crate::tool::content_text;
 use crate::types::{
-    AgentError, AgentResult, CheckpointData, CheckpointStep, FinishReason, MessageRole,
-    RunOutcome, RuntimeEvent, SessionId,
+    AgentError, AgentResult, CheckpointData, CheckpointStep, FinishReason, MessageRole, RunOutcome,
+    RuntimeEvent, SessionId,
 };
 
 use super::entry::drain_locked;
@@ -86,13 +86,16 @@ impl RuntimeCore {
 
         let tool_start = std::time::Instant::now();
         let tool_call_count = tool_calls.len() as u32;
-        let tool_names: Vec<String> = tool_calls
-            .iter()
-            .map(|(_, name, _)| name.clone())
-            .collect();
+        let tool_names: Vec<String> = tool_calls.iter().map(|(_, name, _)| name.clone()).collect();
 
         match self
-            .handle_tool_calls(session_id, &tool_calls, event_rx, on_event.clone(), reasoning_text)
+            .handle_tool_calls(
+                session_id,
+                &tool_calls,
+                event_rx,
+                on_event.clone(),
+                reasoning_text,
+            )
             .await
         {
             Ok(()) => {
