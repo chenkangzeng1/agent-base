@@ -3,6 +3,7 @@
 [![crates.io](https://img.shields.io/crates/v/agent-base.svg)](https://crates.io/crates/agent-base)
 [![Documentation](https://docs.rs/agent-base/badge.svg)](https://docs.rs/agent-base)
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![codecov](https://codecov.io/gh/hibuka-labs/agent-base/branch/master/graph/badge.svg)](https://codecov.io/gh/hibuka-labs/agent-base)
 
 [English](README.md) | [中文](README_CN.md)
 

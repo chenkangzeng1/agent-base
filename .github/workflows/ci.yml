@@ -91,3 +91,8 @@ jobs:
 
       - name: Coverage gate
         run: cargo llvm-cov --fail-under-lines 90
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
