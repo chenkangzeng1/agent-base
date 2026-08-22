@@ -976,7 +976,10 @@ async fn middleware_on_pre_and_post_llm_hooks_fire() {
 
     // The middleware incremented nudge_count, which should be written back.
     let session = runtime.session(&sid).await.expect("session exists");
-    assert_eq!(session.nudge_count, 1, "nudge_count should be written back");
+    assert_eq!(
+        session.run_state.nudge_count, 1,
+        "nudge_count should be written back"
+    );
 }
 
 // ── Bug ① regression: exactly one RunFinished per entry point ──────

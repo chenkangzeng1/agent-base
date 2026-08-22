@@ -197,11 +197,30 @@ pub struct LlmConfig {
     pub llm_retry: Option<RetryConfig>,
 }
 
-#[derive(Clone, Debug, Default)]
+/// Default tool timeout: 10 minutes.
+/// This is a safety net against hung tools; tools should override
+/// `timeout_ms()` with a value appropriate for their workload.
+pub const DEFAULT_TOOL_TIMEOUT_MS: u64 = 600_000;
+
+#[derive(Clone, Debug)]
 pub struct ToolConfig {
+    /// Default timeout for tools that don't override `timeout_ms()`.
+    /// Defaults to `DEFAULT_TOOL_TIMEOUT_MS` (10 minutes).
+    pub default_tool_timeout_ms: u64,
     pub tool_timeout_ms: Option<u64>,
     pub max_tool_output_chars: Option<usize>,
     pub tool_error_retry_prompt: Option<String>,
+}
+
+impl Default for ToolConfig {
+    fn default() -> Self {
+        Self {
+            default_tool_timeout_ms: DEFAULT_TOOL_TIMEOUT_MS,
+            tool_timeout_ms: None,
+            max_tool_output_chars: None,
+            tool_error_retry_prompt: None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]

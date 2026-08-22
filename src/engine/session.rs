@@ -6,7 +6,128 @@ use crate::types::{ChatMessage, ImageAttachment, Message, MessageRole, ToolCallM
 
 use crate::types::SessionId;
 
+/// Run-level state tracking for the react loop.
+///
+/// Manages counters and flags that track the current run's progress.
+/// All fields are reset at the start of each run (when a new user message arrives).
+///
+/// # Backward compatibility
+///
+/// Before this struct existed, `nudge_count` and `turn_tool_calls` were flat
+/// fields on `AgentSession`.  The [`RawAgentSession`] deserialization shim
+/// migrates them automatically.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct RunState {
+    /// Number of tool calls already executed in the current turn.
+    /// Reset to 0 at the start of each turn (when a new user message arrives).
+    /// Used by `TurnToolLimitMiddleware` to enforce per-turn tool call limits.
+    pub turn_tool_calls: usize,
+    /// Whether any tools were called in the current run.
+    /// Reset to false at the start of each run. Used by the completion judge
+    /// to determine if tools were used before a text-only response.
+    pub run_has_tool_calls: bool,
+    /// Number of consecutive LLM turns that produced only reasoning_content
+    /// (no text, no tool call). Reset to 0 when a normal response or tool call
+    /// is produced. Used by the react loop to fail instead of looping forever
+    /// on a reasoning-model runaway.
+    pub reasoning_only_strikes: usize,
+    /// Number of consecutive LLM turns that produced a completely empty response
+    /// (no text, no reasoning, no tool call). Reset to 0 when a normal response
+    /// or tool call is produced. Used by the react loop to retry a bounded
+    /// number of times, then fail instead of looping forever.
+    pub empty_response_strikes: usize,
+    /// Number of tool-enforcement nudges issued in the current turn.
+    /// Reset to 0 at the start of each turn (when a new user message arrives).
+    /// Used by `ToolEnforcementMiddleware` to cap nudge attempts per turn.
+    pub nudge_count: usize,
+}
+
+impl RunState {
+    /// Reset all run-level state for a new run (when a new user message arrives).
+    pub fn reset_for_new_run(&mut self) {
+        self.turn_tool_calls = 0;
+        self.run_has_tool_calls = false;
+        self.reasoning_only_strikes = 0;
+        self.empty_response_strikes = 0;
+        self.nudge_count = 0;
+    }
+
+    /// Record tool calls (branch 3: tool calls).
+    /// Resets reasoning_only_strikes and empty_response_strikes.
+    pub fn record_tool_calls(&mut self, n: usize) {
+        self.turn_tool_calls += n;
+        self.run_has_tool_calls = true;
+        self.reasoning_only_strikes = 0;
+        self.empty_response_strikes = 0;
+    }
+
+    /// Record reasoning-only response (branch 1).
+    /// Resets empty_response_strikes.
+    /// Returns the new strike count.
+    pub fn record_reasoning_only(&mut self) -> usize {
+        self.empty_response_strikes = 0;
+        self.reasoning_only_strikes += 1;
+        self.reasoning_only_strikes
+    }
+
+    /// Record empty response (branch 2).
+    /// Resets reasoning_only_strikes.
+    /// Returns the new strike count.
+    pub fn record_empty_response(&mut self) -> usize {
+        self.reasoning_only_strikes = 0;
+        self.empty_response_strikes += 1;
+        self.empty_response_strikes
+    }
+}
+
+/// Deserialization shim for backward compatibility.
+///
+/// Before `RunState` was introduced, `nudge_count`, `turn_tool_calls`,
+/// `reasoning_only_strikes`, and `empty_response_strikes` were flat fields
+/// on `AgentSession`.  This struct accepts **both** the old flat format and
+/// the new nested `run_state` format, migrating legacy data on the fly.
+#[derive(Deserialize)]
+struct RawAgentSession {
+    id: Option<SessionId>,
+    chat_messages: Vec<ChatMessage>,
+    always_allowed_actions: HashSet<String>,
+    total_tool_calls: usize,
+
+    // ── new format (preferred) ──
+    run_state: Option<RunState>,
+
+    // ── legacy flat fields (fallback) ──
+    nudge_count: Option<usize>,
+    turn_tool_calls: Option<usize>,
+    reasoning_only_strikes: Option<usize>,
+    empty_response_strikes: Option<usize>,
+}
+
+impl From<RawAgentSession> for AgentSession {
+    fn from(raw: RawAgentSession) -> Self {
+        let run_state = raw.run_state.unwrap_or_else(|| RunState {
+            nudge_count: raw.nudge_count.unwrap_or(0),
+            turn_tool_calls: raw.turn_tool_calls.unwrap_or(0),
+            reasoning_only_strikes: raw.reasoning_only_strikes.unwrap_or(0),
+            empty_response_strikes: raw.empty_response_strikes.unwrap_or(0),
+            ..RunState::default()
+        });
+        Self {
+            id: raw.id,
+            chat_messages: raw.chat_messages,
+            always_allowed_actions: raw.always_allowed_actions,
+            total_tool_calls: raw.total_tool_calls,
+            run_state,
+        }
+    }
+}
+
+/// Stable identity + rolling state of a single chat thread.
+///
+/// `Default` returns a fresh session; load persisted state via serde.
+/// Backward-compatible with the old flat-field format (pre-`RunState` migration).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(from = "RawAgentSession")]
 pub struct AgentSession {
     id: Option<SessionId>,
     /// LLM API format messages, sent directly to the provider.
@@ -16,24 +137,8 @@ pub struct AgentSession {
     /// Total number of tool calls made in this session (across all turns).
     /// Used by middleware for decisions like "first_turn_only" enforcement.
     pub total_tool_calls: usize,
-    /// Number of tool-enforcement nudges issued in the current turn.
-    /// Reset to 0 at the start of each turn (when a new user message arrives).
-    /// Used by `ToolEnforcementMiddleware` to cap nudge attempts per turn.
-    pub nudge_count: usize,
-    /// Number of tool calls already executed in the current turn.
-    /// Reset to 0 at the start of each turn (when a new user message arrives).
-    /// Used by `TurnToolLimitMiddleware` to enforce per-turn tool call limits.
-    pub turn_tool_calls: usize,
-    /// Number of consecutive LLM turns that produced only reasoning_content
-    /// (no text, no tool call). Reset to 0 at the start of each turn. Used by
-    /// the react loop to fail instead of looping forever on a reasoning-model
-    /// runaway.
-    pub reasoning_only_strikes: usize,
-    /// Number of consecutive LLM turns that produced a completely empty response
-    /// (no text, no reasoning, no tool call). Reset to 0 at the start of each
-    /// turn. Used by the react loop to retry a bounded number of times, then fail
-    /// instead of looping forever.
-    pub empty_response_strikes: usize,
+    /// Run-level state tracking for the react loop.
+    pub run_state: RunState,
 }
 
 impl AgentSession {
@@ -43,10 +148,7 @@ impl AgentSession {
             chat_messages: Vec::new(),
             always_allowed_actions: HashSet::new(),
             total_tool_calls: 0,
-            nudge_count: 0,
-            turn_tool_calls: 0,
-            reasoning_only_strikes: 0,
-            empty_response_strikes: 0,
+            run_state: RunState::default(),
         }
     }
 
@@ -713,5 +815,244 @@ mod validate_tests {
         let mut s = make_session();
         let msgs = vec![ChatMessage::tool("call_1", "orphaned")];
         assert!(s.set_chat_messages(msgs).is_err());
+    }
+
+    // ── RunState tests ────────────────────────────────────────────────────
+
+    #[test]
+    fn run_state_default() {
+        let rs = RunState::default();
+        assert_eq!(rs.turn_tool_calls, 0);
+        assert!(!rs.run_has_tool_calls);
+        assert_eq!(rs.reasoning_only_strikes, 0);
+        assert_eq!(rs.empty_response_strikes, 0);
+        assert_eq!(rs.nudge_count, 0);
+    }
+
+    #[test]
+    fn run_state_reset_for_new_run() {
+        let mut rs = RunState {
+            turn_tool_calls: 5,
+            run_has_tool_calls: true,
+            reasoning_only_strikes: 2,
+            empty_response_strikes: 1,
+            nudge_count: 3,
+        };
+
+        rs.reset_for_new_run();
+
+        assert_eq!(rs.turn_tool_calls, 0);
+        assert!(!rs.run_has_tool_calls);
+        assert_eq!(rs.reasoning_only_strikes, 0);
+        assert_eq!(rs.empty_response_strikes, 0);
+        assert_eq!(rs.nudge_count, 0);
+    }
+
+    #[test]
+    fn run_state_record_tool_calls() {
+        let mut rs = RunState {
+            reasoning_only_strikes: 2,
+            empty_response_strikes: 1,
+            ..RunState::default()
+        };
+
+        rs.record_tool_calls(3);
+
+        assert_eq!(rs.turn_tool_calls, 3);
+        assert!(rs.run_has_tool_calls);
+        assert_eq!(rs.reasoning_only_strikes, 0); // reset
+        assert_eq!(rs.empty_response_strikes, 0); // reset
+    }
+
+    #[test]
+    fn run_state_record_tool_calls_accumulates() {
+        let mut rs = RunState::default();
+        rs.record_tool_calls(2);
+        rs.record_tool_calls(3);
+
+        assert_eq!(rs.turn_tool_calls, 5);
+        assert!(rs.run_has_tool_calls);
+    }
+
+    #[test]
+    fn run_state_record_reasoning_only() {
+        let mut rs = RunState {
+            empty_response_strikes: 2,
+            ..RunState::default()
+        };
+
+        let strikes = rs.record_reasoning_only();
+
+        assert_eq!(strikes, 1);
+        assert_eq!(rs.reasoning_only_strikes, 1);
+        assert_eq!(rs.empty_response_strikes, 0); // reset
+    }
+
+    #[test]
+    fn run_state_record_reasoning_only_consecutive() {
+        let mut rs = RunState::default();
+
+        assert_eq!(rs.record_reasoning_only(), 1);
+        assert_eq!(rs.record_reasoning_only(), 2);
+        assert_eq!(rs.record_reasoning_only(), 3);
+    }
+
+    #[test]
+    fn run_state_record_empty_response() {
+        let mut rs = RunState {
+            reasoning_only_strikes: 2,
+            ..RunState::default()
+        };
+
+        let strikes = rs.record_empty_response();
+
+        assert_eq!(strikes, 1);
+        assert_eq!(rs.empty_response_strikes, 1);
+        assert_eq!(rs.reasoning_only_strikes, 0); // reset
+    }
+
+    #[test]
+    fn run_state_record_empty_response_consecutive() {
+        let mut rs = RunState::default();
+
+        assert_eq!(rs.record_empty_response(), 1);
+        assert_eq!(rs.record_empty_response(), 2);
+        assert_eq!(rs.record_empty_response(), 3);
+    }
+
+    #[test]
+    fn run_state_branch_cross_reset() {
+        // Simulate: reasoning only → tool calls → reasoning only
+        let mut rs = RunState::default();
+
+        // Branch 1: reasoning only
+        rs.record_reasoning_only();
+        assert_eq!(rs.reasoning_only_strikes, 1);
+
+        // Branch 3: tool calls (should reset reasoning_only_strikes)
+        rs.record_tool_calls(2);
+        assert_eq!(rs.reasoning_only_strikes, 0);
+        assert_eq!(rs.turn_tool_calls, 2);
+
+        // Branch 1 again: reasoning only (should start from 1, not 2)
+        let strikes = rs.record_reasoning_only();
+        assert_eq!(strikes, 1);
+    }
+
+    #[test]
+    fn run_state_empty_to_reasoning_reset() {
+        // Simulate: empty → empty → reasoning only (should reset empty strikes)
+        let mut rs = RunState::default();
+
+        rs.record_empty_response();
+        rs.record_empty_response();
+        assert_eq!(rs.empty_response_strikes, 2);
+
+        // Branch 1: reasoning only (should reset empty_response_strikes)
+        rs.record_reasoning_only();
+        assert_eq!(rs.empty_response_strikes, 0);
+        assert_eq!(rs.reasoning_only_strikes, 1);
+    }
+
+    // ── Backward-compatible deserialization ────────────────────────────────
+
+    #[test]
+    fn deserialize_legacy_flat_fields() {
+        // Old format: nudge_count, turn_tool_calls, etc. as flat fields
+        let json = r#"{
+            "id": null,
+            "chat_messages": [],
+            "always_allowed_actions": [],
+            "total_tool_calls": 5,
+            "nudge_count": 3,
+            "turn_tool_calls": 2,
+            "reasoning_only_strikes": 1,
+            "empty_response_strikes": 0
+        }"#;
+        let session: AgentSession = serde_json::from_str(json).unwrap();
+        assert_eq!(session.run_state.nudge_count, 3);
+        assert_eq!(session.run_state.turn_tool_calls, 2);
+        assert_eq!(session.run_state.reasoning_only_strikes, 1);
+        assert_eq!(session.run_state.empty_response_strikes, 0);
+        assert!(!session.run_state.run_has_tool_calls); // default
+    }
+
+    #[test]
+    fn deserialize_new_run_state_format() {
+        // New format: nested run_state
+        let json = r#"{
+            "id": null,
+            "chat_messages": [],
+            "always_allowed_actions": [],
+            "total_tool_calls": 5,
+            "run_state": {
+                "turn_tool_calls": 4,
+                "run_has_tool_calls": true,
+                "reasoning_only_strikes": 0,
+                "empty_response_strikes": 1,
+                "nudge_count": 2
+            }
+        }"#;
+        let session: AgentSession = serde_json::from_str(json).unwrap();
+        assert_eq!(session.run_state.turn_tool_calls, 4);
+        assert!(session.run_state.run_has_tool_calls);
+        assert_eq!(session.run_state.empty_response_strikes, 1);
+        assert_eq!(session.run_state.nudge_count, 2);
+    }
+
+    #[test]
+    fn deserialize_run_state_takes_precedence_over_flat() {
+        // When both are present, run_state wins
+        let json = r#"{
+            "id": null,
+            "chat_messages": [],
+            "always_allowed_actions": [],
+            "total_tool_calls": 0,
+            "run_state": {
+                "turn_tool_calls": 10,
+                "run_has_tool_calls": true,
+                "reasoning_only_strikes": 0,
+                "empty_response_strikes": 0,
+                "nudge_count": 0
+            },
+            "nudge_count": 99,
+            "turn_tool_calls": 99
+        }"#;
+        let session: AgentSession = serde_json::from_str(json).unwrap();
+        assert_eq!(session.run_state.turn_tool_calls, 10); // run_state wins
+        assert_eq!(session.run_state.nudge_count, 0); // run_state wins
+    }
+
+    #[test]
+    fn deserialize_legacy_missing_optional_fields() {
+        // Old format with some fields missing (defaults to 0)
+        let json = r#"{
+            "id": null,
+            "chat_messages": [],
+            "always_allowed_actions": [],
+            "total_tool_calls": 0,
+            "nudge_count": 1
+        }"#;
+        let session: AgentSession = serde_json::from_str(json).unwrap();
+        assert_eq!(session.run_state.nudge_count, 1);
+        assert_eq!(session.run_state.turn_tool_calls, 0); // missing → 0
+        assert_eq!(session.run_state.reasoning_only_strikes, 0);
+        assert_eq!(session.run_state.empty_response_strikes, 0);
+    }
+
+    #[test]
+    fn roundtrip_preserves_run_state() {
+        let mut session = AgentSession::new(SessionId::new(1));
+        session.run_state.nudge_count = 5;
+        session.run_state.turn_tool_calls = 3;
+        session.run_state.run_has_tool_calls = true;
+        session.run_state.reasoning_only_strikes = 2;
+
+        let json = serde_json::to_string(&session).unwrap();
+        let restored: AgentSession = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.run_state.nudge_count, 5);
+        assert_eq!(restored.run_state.turn_tool_calls, 3);
+        assert!(restored.run_state.run_has_tool_calls);
+        assert_eq!(restored.run_state.reasoning_only_strikes, 2);
     }
 }

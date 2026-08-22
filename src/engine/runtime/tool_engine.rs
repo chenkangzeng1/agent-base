@@ -672,7 +672,7 @@ mod tests {
         );
 
         let defs = engine.definitions().await;
-        assert_eq!(defs.len(), 1);
+        assert_eq!(defs.len(), 1); // echo
         assert_eq!(defs[0]["function"]["name"], "echo");
     }
 
@@ -991,7 +991,7 @@ mod tests {
         assert_eq!(engine.tools_arc().read().await.len(), 1);
 
         let defs = engine.definitions().await;
-        assert_eq!(defs.len(), 1);
+        assert_eq!(defs.len(), 1); // echo
         assert_eq!(defs[0]["function"]["name"], "echo");
     }
 

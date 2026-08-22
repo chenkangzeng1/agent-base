@@ -12,7 +12,7 @@ mod turn_context;
 
 pub use approval::{ApprovalDecision, ApprovalRequest, RiskLevel};
 pub use checkpoint::{CheckpointData, CheckpointStep, ToolResultData};
-pub use config::{AgentConfig, Language, ResponseFormat, RetryConfig, SafetyConfig, SessionConfig};
+pub use config::{AgentConfig, DEFAULT_TOOL_TIMEOUT_MS, Language, ResponseFormat, RetryConfig, SafetyConfig, SessionConfig, ToolConfig};
 pub use error::{AgentError, AgentResult, ErrorKind};
 pub use finish_reason::FinishReason;
 

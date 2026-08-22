@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use crate::tool::{Content, Tool, ToolContext, ToolPolicy, content_text};
-use crate::types::{AgentError, AgentResult};
+use crate::types::{AgentError, AgentResult, DEFAULT_TOOL_TIMEOUT_MS};
 
 /// Pure execution pipeline — cares about *how* to safely execute a tool.
 ///
@@ -25,6 +25,7 @@ pub trait ToolExecutionPipeline: Send + Sync {
 #[derive(Clone)]
 pub struct DefaultPipeline {
     tool_policy: Option<Arc<dyn ToolPolicy>>,
+    default_tool_timeout_ms: u64,
     tool_timeout_ms: Option<u64>,
     max_output_chars: Option<usize>,
 }
@@ -37,9 +38,15 @@ impl DefaultPipeline {
     ) -> Self {
         Self {
             tool_policy,
+            default_tool_timeout_ms: DEFAULT_TOOL_TIMEOUT_MS,
             tool_timeout_ms,
             max_output_chars,
         }
+    }
+
+    pub fn with_default_timeout(mut self, timeout_ms: u64) -> Self {
+        self.default_tool_timeout_ms = timeout_ms;
+        self
     }
 
     pub fn policy(&self) -> Option<Arc<dyn ToolPolicy>> {
@@ -60,23 +67,23 @@ impl ToolExecutionPipeline for DefaultPipeline {
             policy.before_call(tool.name(), args, ctx)?;
         }
 
-        // 2. Execute with optional timeout
-        let output = if let Some(timeout_ms) = self.tool_timeout_ms {
-            match tokio::time::timeout(Duration::from_millis(timeout_ms), tool.call(args, ctx))
-                .await
-            {
-                Ok(result) => result?,
-                Err(_) => {
-                    tracing::warn!(
-                        tool = tool.name(),
-                        timeout_ms = timeout_ms,
-                        "tool execution timed out"
-                    );
-                    return Ok(vec![Content::text("[Tool Timeout]")]);
-                }
+        // 2. Execute with timeout: tool → global config → framework default
+        let timeout_ms = tool
+            .timeout_ms()
+            .or(self.tool_timeout_ms)
+            .unwrap_or(self.default_tool_timeout_ms);
+        let output = match tokio::time::timeout(Duration::from_millis(timeout_ms), tool.call(args, ctx))
+            .await
+        {
+            Ok(result) => result?,
+            Err(_) => {
+                tracing::warn!(
+                    tool = tool.name(),
+                    timeout_ms = timeout_ms,
+                    "tool execution timed out"
+                );
+                return Ok(vec![Content::text("[Tool Timeout]")]);
             }
-        } else {
-            tool.call(args, ctx).await?
         };
 
         // 3. Output size limit — reject by default rather than silently
@@ -156,6 +163,9 @@ mod tests {
         }
         fn schema(&self) -> Value {
             json!({})
+        }
+        fn timeout_ms(&self) -> Option<u64> {
+            Some(50) // 50ms for testing
         }
         async fn call(&self, _args: &Value, _ctx: &ToolContext) -> AgentResult<Vec<Content>> {
             tokio::time::sleep(Duration::from_secs(10)).await;

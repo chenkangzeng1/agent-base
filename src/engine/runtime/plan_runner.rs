@@ -4,6 +4,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::engine::context::ContextWindowManager;
 use crate::engine::middleware::MiddlewareRef;
+use crate::engine::react_loop_guard::{NoopGuard, ReactLoopGuard};
 use crate::engine::runtime::event_bus::EventBus;
 use crate::engine::runtime::llm_engine::LlmEngine;
 use crate::engine::runtime::message_queue::MessageQueue;
@@ -31,6 +32,8 @@ pub(crate) struct RuntimeCore {
     pub(crate) message_queue: MessageQueue,
     /// Optional callback to transform messages before sending to LLM.
     pub(crate) convert_to_llm: Option<ConvertToLlmFn>,
+    /// Guard for react loop completion detection.
+    pub(crate) guard: Arc<dyn ReactLoopGuard>,
 }
 
 impl RuntimeCore {
@@ -44,6 +47,7 @@ impl RuntimeCore {
         context_manager: Option<ContextWindowManager>,
         middlewares: Vec<MiddlewareRef>,
         convert_to_llm: Option<ConvertToLlmFn>,
+        guard: Option<Arc<dyn ReactLoopGuard>>,
     ) -> Self {
         Self {
             config: Arc::new(RwLock::new(config)),
@@ -57,6 +61,7 @@ impl RuntimeCore {
             turn_end_callbacks: StdRwLock::new(Vec::new()),
             message_queue: MessageQueue::new(),
             convert_to_llm,
+            guard: guard.unwrap_or_else(|| Arc::new(NoopGuard)),
         }
     }
 

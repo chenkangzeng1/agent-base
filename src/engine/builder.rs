@@ -11,6 +11,7 @@ use super::AgentRuntime;
 use super::approval::ApprovalHandler;
 use super::context::ContextWindowManager;
 use super::middleware::{Middleware, MiddlewareRef};
+use super::react_loop_guard::ReactLoopGuard;
 use super::recovery::{StopOnError, ToolErrorRecovery};
 use super::session_store::{InMemorySessionStore, SessionStore};
 
@@ -27,6 +28,7 @@ pub struct AgentBuilder {
     event_bus_capacity: usize,
     session_id_generator: Option<Arc<dyn SessionIdGenerator>>,
     convert_to_llm: Option<ConvertToLlmFn>,
+    guard: Option<Arc<dyn ReactLoopGuard>>,
 }
 
 impl AgentBuilder {
@@ -44,6 +46,7 @@ impl AgentBuilder {
             event_bus_capacity: 2048,
             session_id_generator: None,
             convert_to_llm: None,
+            guard: None,
         }
     }
 
@@ -66,6 +69,18 @@ impl AgentBuilder {
     pub fn convert_to_llm(mut self, cb: ConvertToLlmFn) -> Self {
         self.convert_to_llm = Some(cb);
         self
+    }
+
+    pub fn guard(mut self, guard: impl ReactLoopGuard + 'static) -> Self {
+        self.guard = Some(Arc::new(guard));
+        self
+    }
+
+    /// Check if a guard has been set.
+    ///
+    /// Used by agent-works to inject a default guard if none was set.
+    pub fn get_guard(&self) -> Option<&Arc<dyn ReactLoopGuard>> {
+        self.guard.as_ref()
     }
 
     pub fn system_prompt(mut self, system_prompt: impl Into<String>) -> Self {
@@ -265,6 +280,7 @@ impl AgentBuilder {
             self.context_manager,
             self.middlewares,
             self.convert_to_llm,
+            self.guard,
         ));
 
         Ok(AgentRuntime { runner })

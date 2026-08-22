@@ -91,12 +91,9 @@ impl RuntimeCore {
             .apply_user_message_mw(&session_id, user_input_owned)
             .await?;
 
-        // Reset nudge_count and turn_tool_calls for the new turn
+        // Reset run state for the new turn
         self.with_session_mut(&session_id, |session| {
-            session.nudge_count = 0;
-            session.turn_tool_calls = 0;
-            session.reasoning_only_strikes = 0;
-            session.empty_response_strikes = 0;
+            session.run_state.reset_for_new_run();
         })
         .await?;
 
@@ -192,13 +189,10 @@ impl RuntimeCore {
             }
         };
 
-        // Reset nudge_count and turn_tool_calls for the new turn
+        // Reset nudge_count, turn_tool_calls, and run_tool_calls for the new turn
         if let Err(e) = self
             .with_session_mut(&session_id, |session| {
-                session.nudge_count = 0;
-                session.turn_tool_calls = 0;
-                session.reasoning_only_strikes = 0;
-                session.empty_response_strikes = 0;
+                session.run_state.reset_for_new_run();
             })
             .await
         {
@@ -503,12 +497,9 @@ impl RuntimeCore {
             .apply_user_message_mw(&session_id, user_input.to_string())
             .await?;
 
-        // Reset nudge_count and turn_tool_calls
+        // Reset run state for the new turn
         self.with_session_mut(&session_id, |session| {
-            session.nudge_count = 0;
-            session.turn_tool_calls = 0;
-            session.reasoning_only_strikes = 0;
-            session.empty_response_strikes = 0;
+            session.run_state.reset_for_new_run();
         })
         .await?;
 

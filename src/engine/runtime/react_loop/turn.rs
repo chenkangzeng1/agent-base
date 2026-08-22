@@ -12,6 +12,14 @@ use crate::types::{
 
 use super::entry::drain_locked;
 use super::turn_end::TurnEndCtx;
+use super::turn_guard::{TurnCtx, TurnMetrics};
+
+/// Control-flow result of one `handle_llm_turn` call: keep looping, or
+/// terminate the turn with a final outcome.
+pub(super) enum TurnFlow {
+    Continue,
+    Done(RunOutcome),
+}
 
 struct PostLlmMwResult {
     pub full_text: String,
@@ -20,22 +28,6 @@ struct PostLlmMwResult {
     pub skip_push: bool,
     pub follow_up_message: Option<String>,
 }
-
-/// Control-flow result of one `handle_llm_turn` call: keep looping, or
-/// terminate the turn with a final outcome.
-enum TurnFlow {
-    Continue,
-    Done(RunOutcome),
-}
-
-/// Max consecutive reasoning-only turns (no text, no tool call) before the
-/// react loop gives up and fails instead of looping on a reasoning-model runaway.
-const REASONING_ONLY_MAX_STRIKES: usize = 3;
-
-/// Max consecutive completely-empty responses (no text, no reasoning, no tool
-/// call) before the react loop fails instead of looping forever. Mirrors the
-/// bounded-retry budget of the reference harnesses (2 retries after the first).
-const EMPTY_RESPONSE_MAX_STRIKES: usize = 3;
 
 impl RuntimeCore {
     async fn apply_pre_llm_mw<F>(
@@ -103,8 +95,8 @@ impl RuntimeCore {
     ) -> AgentResult<PostLlmMwResult> {
         let session = self.session_manager.session_or_err(session_id).await?;
         let total_tool_calls = session.total_tool_calls;
-        let nudge_count = session.nudge_count;
-        let turn_tool_calls = session.turn_tool_calls;
+        let nudge_count = session.run_state.nudge_count;
+        let turn_tool_calls = session.run_state.turn_tool_calls;
         drop(session);
         let mut ctx = PostLlmCtx {
             session_id: session_id.clone(),
@@ -126,7 +118,7 @@ impl RuntimeCore {
         // Write back nudge_count if middleware modified it
         if ctx.nudge_count != nudge_count {
             self.with_session_mut(session_id, |session| {
-                session.nudge_count = ctx.nudge_count;
+                session.run_state.nudge_count = ctx.nudge_count;
             })
             .await?;
         }
@@ -456,6 +448,24 @@ impl RuntimeCore {
                     })
                     .collect();
 
+                // Shared context for guard dispatch
+                let turn_ctx = TurnCtx {
+                    session_id,
+                    turn_count,
+                    user_input: user_input_owned,
+                    finish_reason: &finish_reason,
+                    available_tools: &available_tools,
+                    turn_start,
+                    model,
+                };
+                let metrics = TurnMetrics {
+                    ttft_ms,
+                    llm_duration_ms,
+                    usage: &usage,
+                    text_len,
+                    has_thinking,
+                };
+
                 // Degenerate state: the model emitted reasoning_content but no
                 // `content` and no tool call. We never promote reasoning into the
                 // answer, so this is a no-output turn: the model "thought" but
@@ -464,8 +474,7 @@ impl RuntimeCore {
                 if reasoning_only {
                     let strikes = self
                         .with_session_mut(session_id, |session| {
-                            session.reasoning_only_strikes += 1;
-                            session.reasoning_only_strikes
+                            session.run_state.record_reasoning_only()
                         })
                         .await?;
                     tracing::warn!(
@@ -474,43 +483,12 @@ impl RuntimeCore {
                         strikes,
                         "reasoning-only response with tools available — nudging the model to commit"
                     );
-                    if strikes >= REASONING_ONLY_MAX_STRIKES {
-                        let error = "model produced only reasoning (no tool call or answer) \
-                                     across multiple turns despite tools being available";
-                        self.fire_turn_end(TurnEndCtx {
-                            ttft_ms,
-                            llm_duration_ms,
-                            usage: &usage,
-                            text_length: text_len,
-                            has_thinking,
-                            llm_calls: 1,
-                            error_message: Some(error),
-                            ..TurnEndCtx::new(
-                                session_id,
-                                turn_count,
-                                turn_start,
-                                model,
-                                user_input_owned,
-                                RunOutcome::Failed {
-                                    error: error.to_string(),
-                                },
-                            )
-                        })
+
+                    let guard_ctx = self.build_guard_ctx(&turn_ctx, "").await;
+                    let action = self.guard.on_reasoning_only(&guard_ctx).await;
+                    return self
+                        .dispatch_nudge_guard(action, &turn_ctx, &metrics, "reasoning-only response")
                         .await;
-                        return Ok(TurnFlow::Done(RunOutcome::Failed {
-                            error: error.to_string(),
-                        }));
-                    }
-                    self.with_session_mut(session_id, |session| {
-                        session.push_message(
-                            MessageRole::User,
-                            "You produced internal reasoning but no tool call and no final answer. \
-                             Make a decision now: call a tool to make progress, or write your \
-                             final answer as plain text.",
-                        );
-                    })
-                    .await?;
-                    return Ok(TurnFlow::Continue);
                 }
 
                 let result = self
@@ -554,8 +532,7 @@ impl RuntimeCore {
                     // then fail loudly instead of looping forever.
                     let strikes = self
                         .with_session_mut(session_id, |session| {
-                            session.empty_response_strikes += 1;
-                            session.empty_response_strikes
+                            session.run_state.record_empty_response()
                         })
                         .await?;
                     tracing::warn!(
@@ -564,236 +541,30 @@ impl RuntimeCore {
                         strikes,
                         "empty LLM response (no text, no reasoning, no tool call)"
                     );
-                    if strikes >= EMPTY_RESPONSE_MAX_STRIKES {
-                        let error = "model returned empty responses repeatedly \
-                                     (no text, no reasoning, no tool call)";
-                        self.fire_turn_end(TurnEndCtx {
-                            ttft_ms,
-                            llm_duration_ms,
-                            usage: &usage,
-                            text_length: text_len,
-                            has_thinking,
-                            llm_calls: 1,
-                            error_message: Some(error),
-                            ..TurnEndCtx::new(
-                                session_id,
-                                turn_count,
-                                turn_start,
-                                model,
-                                user_input_owned,
-                                RunOutcome::Failed {
-                                    error: error.to_string(),
-                                },
-                            )
-                        })
+
+                    let guard_ctx = self.build_guard_ctx(&turn_ctx, "").await;
+                    let action = self.guard.on_empty_response(&guard_ctx).await;
+                    return self
+                        .dispatch_nudge_guard(action, &turn_ctx, &metrics, "empty response")
                         .await;
-                        return Ok(TurnFlow::Done(RunOutcome::Failed {
-                            error: error.to_string(),
-                        }));
-                    }
-                    self.with_session_mut(session_id, |session| {
-                        session.push_message(
-                            MessageRole::User,
-                            "You returned an empty response with no tool call and no \
-                             answer. Produce output now: call a tool to make progress, \
-                             or write your final answer as plain text.",
-                        );
-                    })
-                    .await?;
-                    return Ok(TurnFlow::Continue);
                 }
 
                 if result.is_tool_call && !result.tool_calls.is_empty() {
-                    // P5: Truncation guard — when the LLM response hit the token limit,
-                    // tool call arguments may be incomplete. Fail all tool calls
-                    // without executing them, so the LLM can retry with complete args.
-                    if finish_reason.is_truncated() {
-                        tracing::warn!(
-                            session_id = session_id.id,
-                            turn = turn_count,
-                            tool_count = tool_calls.len(),
-                            "LLM response truncated (finish_reason=length) — tool calls may have incomplete arguments, marking as errors"
-                        );
-                        for tc in &tool_calls {
-                            let tc_id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("");
-                            let tc_name = tc
-                                .get("function")
-                                .and_then(|f| f.get("name"))
-                                .and_then(|n| n.as_str())
-                                .unwrap_or("unknown");
-                            self.with_session_mut(session_id, |session| {
-                                session.push_message(
-                                    MessageRole::Assistant,
-                                    format!("[would call tool: {}]", tc_name),
-                                );
-                                session.push_tool_result(
-                                    tc_id,
-                                    "Tool call was not executed: the response hit the output token limit, \
-                                     so its arguments may be truncated. Re-issue the tool call with complete arguments.",
-                                );
-                            })
-                            .await?;
-                        }
-                        // Skip tool execution entirely — the error results above will
-                        // cause the LLM to regenerate the tool calls in the next turn.
-                        return Ok(TurnFlow::Continue);
-                    }
-
-                    tracing::info!(
-                        session_id = session_id.id,
-                        turn = turn_count,
-                        tool_count = result.tool_calls.len(),
-                        "handling tool calls"
-                    );
-                    self.event_bus.emit(RuntimeEvent::Checkpoint {
-                        session_id: session_id.clone(),
-                        checkpoint: CheckpointData {
-                            session_id: session_id.clone(),
-                            user_input: user_input_owned.to_string(),
-                            step: CheckpointStep::BeforeToolCalls {
-                                tool_calls: result.tool_calls.clone(),
-                            },
-                            turn_count,
-                        },
-                        agent_id: None,
-                        trace_id: None,
-                    });
-
-                    let tool_start = std::time::Instant::now();
-                    let tool_call_count = result.tool_calls.len() as u32;
-                    let tool_names: Vec<String> = result
-                        .tool_calls
-                        .iter()
-                        .map(|(_, name, _)| name.clone())
-                        .collect();
-
-                    match self
-                        .handle_tool_calls(
+                    return self
+                        .run_tool_turn(
                             session_id,
-                            &result.tool_calls,
+                            user_input_owned,
+                            turn_count,
+                            turn_start,
+                            model,
+                            result.tool_calls,
+                            &finish_reason,
+                            reasoning_text,
+                            &metrics,
                             event_rx,
                             on_event.clone(),
-                            reasoning_text,
                         )
-                        .await
-                    {
-                        Ok(()) => {
-                            let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
-                            self.fire_turn_end(TurnEndCtx {
-                                ttft_ms,
-                                llm_duration_ms,
-                                tool_duration_ms,
-                                usage: &usage,
-                                text_length: text_len,
-                                has_thinking,
-                                tool_call_count,
-                                tools_used: &tool_names,
-                                tool_success: tool_call_count,
-                                llm_calls: 1,
-                                ..TurnEndCtx::new(
-                                    session_id,
-                                    turn_count,
-                                    turn_start,
-                                    model,
-                                    user_input_owned,
-                                    RunOutcome::Completed,
-                                )
-                            })
-                            .await;
-                            tracing::info!(
-                                session_id = session_id.id,
-                                turn = turn_count,
-                                "tool calls done, continuing loop"
-                            );
-                            let n = result.tool_calls.len();
-                            self.with_session_mut(session_id, |session| {
-                                session.total_tool_calls += n;
-                                session.turn_tool_calls += n;
-                            })
-                            .await?;
-                            self.event_bus.emit(RuntimeEvent::Checkpoint {
-                                session_id: session_id.clone(),
-                                checkpoint: CheckpointData {
-                                    session_id: session_id.clone(),
-                                    user_input: user_input_owned.to_string(),
-                                    step: CheckpointStep::AfterToolCalls {
-                                        tool_calls: result.tool_calls.clone(),
-                                        results: Vec::new(),
-                                    },
-                                    turn_count,
-                                },
-                                agent_id: None,
-                                trace_id: None,
-                            });
-                            return Ok(TurnFlow::Continue);
-                        }
-                        Err(e) => {
-                            let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
-                            let error_msg = e.to_string();
-                            if let Some(outcome) = self
-                                .handle_tool_error(
-                                    session_id,
-                                    &result.tool_calls,
-                                    e,
-                                    event_rx,
-                                    on_event.clone(),
-                                )
-                                .await?
-                            {
-                                self.fire_turn_end(TurnEndCtx {
-                                    ttft_ms,
-                                    llm_duration_ms,
-                                    tool_duration_ms,
-                                    usage: &usage,
-                                    text_length: text_len,
-                                    has_thinking,
-                                    tool_call_count,
-                                    tools_used: &tool_names,
-                                    tool_failed: tool_call_count,
-                                    error_message: Some(&error_msg),
-                                    llm_calls: 1,
-                                    ..TurnEndCtx::new(
-                                        session_id,
-                                        turn_count,
-                                        turn_start,
-                                        model,
-                                        user_input_owned,
-                                        RunOutcome::Failed {
-                                            error: error_msg.clone(),
-                                        },
-                                    )
-                                })
-                                .await;
-                                return Ok(TurnFlow::Done(outcome));
-                            }
-                            // Retry: record metrics for the failed attempt
-                            self.fire_turn_end(TurnEndCtx {
-                                ttft_ms,
-                                llm_duration_ms,
-                                tool_duration_ms,
-                                usage: &usage,
-                                text_length: text_len,
-                                has_thinking,
-                                tool_call_count,
-                                tools_used: &tool_names,
-                                tool_failed: tool_call_count,
-                                error_message: Some(&error_msg),
-                                llm_calls: 1,
-                                ..TurnEndCtx::new(
-                                    session_id,
-                                    turn_count,
-                                    turn_start,
-                                    model,
-                                    user_input_owned,
-                                    RunOutcome::Failed {
-                                        error: error_msg.clone(),
-                                    },
-                                )
-                            })
-                            .await;
-                            return Ok(TurnFlow::Continue);
-                        }
-                    }
+                        .await;
                 }
 
                 // ── finish_reason anomaly detection (no tool call branch above matched) ──
@@ -865,30 +636,12 @@ impl RuntimeCore {
                     _ => {}
                 }
 
-                // ── text-only normal end ──
-                tracing::info!(
-                    session_id = session_id.id,
-                    turn = turn_count,
-                    "text-only response, run completed"
-                );
-                self.fire_turn_end(TurnEndCtx {
-                    ttft_ms,
-                    llm_duration_ms,
-                    usage: &usage,
-                    text_length: text_len,
-                    has_thinking,
-                    llm_calls: 1,
-                    ..TurnEndCtx::new(
-                        session_id,
-                        turn_count,
-                        turn_start,
-                        model,
-                        user_input_owned,
-                        RunOutcome::Completed,
-                    )
-                })
-                .await;
-                Ok(TurnFlow::Done(RunOutcome::Completed))
+                // ── text-only branch ──
+                // Use the guard to determine if the task is actually complete.
+                let guard_ctx = self.build_guard_ctx(&turn_ctx, &result.full_text).await;
+                let action = self.guard.on_text_only(&guard_ctx).await;
+                self.dispatch_text_only_guard(action, &turn_ctx, &metrics)
+                    .await
             }
             Err(e) => {
                 // Fire turn-end callback for LLM stream error

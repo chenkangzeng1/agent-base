@@ -166,6 +166,15 @@ pub trait Tool: Send + Sync {
     fn schema(&self) -> Value;
     async fn call(&self, args: &Value, ctx: &ToolContext) -> AgentResult<Vec<Content>>;
 
+    /// Timeout for this tool in milliseconds.
+    ///
+    /// Returns `Some(ms)` to enforce a timeout, or `None` to use the
+    /// framework's default timeout from `ToolConfig.default_tool_timeout_ms`.
+    /// Tools that need more or less time should override this method.
+    fn timeout_ms(&self) -> Option<u64> {
+        None  // Use framework default
+    }
+
     /// Machine-readable metadata for tool introspection.
     ///
     /// The default implementation derives `name` and `description` from
@@ -182,6 +191,7 @@ pub trait Tool: Send + Sync {
         }
     }
 }
+
 
 #[async_trait]
 pub trait TypedTool: Send + Sync {

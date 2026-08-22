@@ -6,11 +6,208 @@ use crate::engine::recovery::ToolErrorAction;
 use crate::engine::runtime::plan_runner::RuntimeCore;
 use crate::engine::runtime::tool_engine::ExecutionContext;
 use crate::tool::content_text;
-use crate::types::{AgentError, AgentResult, MessageRole, RunOutcome, RuntimeEvent, SessionId};
+use crate::types::{
+    AgentError, AgentResult, CheckpointData, CheckpointStep, FinishReason, MessageRole,
+    RunOutcome, RuntimeEvent, SessionId,
+};
 
 use super::entry::drain_locked;
+use super::turn::TurnFlow;
+use super::turn_end::TurnEndCtx;
+use super::turn_guard::TurnMetrics;
 
 impl RuntimeCore {
+    /// Execute tool calls for one LLM turn: truncation guard, execution,
+    /// checkpoint emission, and turn-end metrics.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) async fn run_tool_turn<F>(
+        &self,
+        session_id: &SessionId,
+        user_input: &str,
+        turn_count: u32,
+        turn_start: std::time::Instant,
+        model: &str,
+        tool_calls: Vec<(String, String, String)>,
+        finish_reason: &FinishReason,
+        reasoning_text: String,
+        metrics: &TurnMetrics<'_>,
+        event_rx: &mut broadcast::Receiver<RuntimeEvent>,
+        on_event: Arc<Mutex<F>>,
+    ) -> AgentResult<TurnFlow>
+    where
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
+    {
+        // Truncation guard — when the LLM response hit the token limit,
+        // tool call arguments may be incomplete. Fail all tool calls
+        // without executing them, so the LLM can retry with complete args.
+        if finish_reason.is_truncated() {
+            tracing::warn!(
+                session_id = session_id.id,
+                turn = turn_count,
+                tool_count = tool_calls.len(),
+                "LLM response truncated (finish_reason=length) — tool calls may have incomplete arguments, marking as errors"
+            );
+            for (tc_id, tc_name, _) in &tool_calls {
+                self.with_session_mut(session_id, |session| {
+                    session.push_message(
+                        MessageRole::Assistant,
+                        format!("[would call tool: {}]", tc_name),
+                    );
+                    session.push_tool_result(
+                        tc_id,
+                        "Tool call was not executed: the response hit the output token limit, \
+                         so its arguments may be truncated. Re-issue the tool call with complete arguments.",
+                    );
+                })
+                .await?;
+            }
+            return Ok(TurnFlow::Continue);
+        }
+
+        tracing::info!(
+            session_id = session_id.id,
+            turn = turn_count,
+            tool_count = tool_calls.len(),
+            "handling tool calls"
+        );
+        self.event_bus.emit(RuntimeEvent::Checkpoint {
+            session_id: session_id.clone(),
+            checkpoint: CheckpointData {
+                session_id: session_id.clone(),
+                user_input: user_input.to_string(),
+                step: CheckpointStep::BeforeToolCalls {
+                    tool_calls: tool_calls.clone(),
+                },
+                turn_count,
+            },
+            agent_id: None,
+            trace_id: None,
+        });
+
+        let tool_start = std::time::Instant::now();
+        let tool_call_count = tool_calls.len() as u32;
+        let tool_names: Vec<String> = tool_calls
+            .iter()
+            .map(|(_, name, _)| name.clone())
+            .collect();
+
+        match self
+            .handle_tool_calls(session_id, &tool_calls, event_rx, on_event.clone(), reasoning_text)
+            .await
+        {
+            Ok(()) => {
+                let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
+                self.fire_turn_end(TurnEndCtx {
+                    ttft_ms: metrics.ttft_ms,
+                    llm_duration_ms: metrics.llm_duration_ms,
+                    tool_duration_ms,
+                    usage: metrics.usage,
+                    text_length: metrics.text_len,
+                    has_thinking: metrics.has_thinking,
+                    tool_call_count,
+                    tools_used: &tool_names,
+                    tool_success: tool_call_count,
+                    llm_calls: 1,
+                    ..TurnEndCtx::new(
+                        session_id,
+                        turn_count,
+                        turn_start,
+                        model,
+                        user_input,
+                        RunOutcome::Completed,
+                    )
+                })
+                .await;
+                tracing::info!(
+                    session_id = session_id.id,
+                    turn = turn_count,
+                    "tool calls done, continuing loop"
+                );
+                let n = tool_calls.len();
+                self.with_session_mut(session_id, |session| {
+                    session.total_tool_calls += n;
+                    session.run_state.record_tool_calls(n);
+                })
+                .await?;
+                self.event_bus.emit(RuntimeEvent::Checkpoint {
+                    session_id: session_id.clone(),
+                    checkpoint: CheckpointData {
+                        session_id: session_id.clone(),
+                        user_input: user_input.to_string(),
+                        step: CheckpointStep::AfterToolCalls {
+                            tool_calls,
+                            results: Vec::new(),
+                        },
+                        turn_count,
+                    },
+                    agent_id: None,
+                    trace_id: None,
+                });
+                Ok(TurnFlow::Continue)
+            }
+            Err(e) => {
+                let tool_duration_ms = tool_start.elapsed().as_millis() as u64;
+                let error_msg = e.to_string();
+                if let Some(outcome) = self
+                    .handle_tool_error(session_id, &tool_calls, e, event_rx, on_event)
+                    .await?
+                {
+                    self.fire_turn_end(TurnEndCtx {
+                        ttft_ms: metrics.ttft_ms,
+                        llm_duration_ms: metrics.llm_duration_ms,
+                        tool_duration_ms,
+                        usage: metrics.usage,
+                        text_length: metrics.text_len,
+                        has_thinking: metrics.has_thinking,
+                        tool_call_count,
+                        tools_used: &tool_names,
+                        tool_failed: tool_call_count,
+                        error_message: Some(&error_msg),
+                        llm_calls: 1,
+                        ..TurnEndCtx::new(
+                            session_id,
+                            turn_count,
+                            turn_start,
+                            model,
+                            user_input,
+                            RunOutcome::Failed {
+                                error: error_msg.clone(),
+                            },
+                        )
+                    })
+                    .await;
+                    return Ok(TurnFlow::Done(outcome));
+                }
+                // Retry: record metrics for the failed attempt
+                self.fire_turn_end(TurnEndCtx {
+                    ttft_ms: metrics.ttft_ms,
+                    llm_duration_ms: metrics.llm_duration_ms,
+                    tool_duration_ms,
+                    usage: metrics.usage,
+                    text_length: metrics.text_len,
+                    has_thinking: metrics.has_thinking,
+                    tool_call_count,
+                    tools_used: &tool_names,
+                    tool_failed: tool_call_count,
+                    error_message: Some(&error_msg),
+                    llm_calls: 1,
+                    ..TurnEndCtx::new(
+                        session_id,
+                        turn_count,
+                        turn_start,
+                        model,
+                        user_input,
+                        RunOutcome::Failed {
+                            error: error_msg.clone(),
+                        },
+                    )
+                })
+                .await;
+                Ok(TurnFlow::Continue)
+            }
+        }
+    }
+
     pub(super) async fn handle_tool_error<F>(
         &self,
         session_id: &SessionId,

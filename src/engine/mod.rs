@@ -5,6 +5,7 @@ mod circuit_breaker;
 mod context;
 mod middleware;
 mod pipeline;
+pub mod react_loop_guard;
 
 mod recovery;
 mod runtime;
@@ -20,6 +21,7 @@ pub use circuit_breaker::{CircuitBreaker, CircuitState};
 pub use context::ContextWindowManager;
 pub use middleware::{Middleware, PostLlmCtx, PreLlmCtx, UserMessageCtx};
 pub use pipeline::{DefaultPipeline, ToolExecutionPipeline};
+pub use react_loop_guard::{GuardAction, GuardCtx, NoopGuard, ReactLoopGuard};
 pub(crate) use runtime::EventBus;
 
 pub use crate::types::{AgentResult, ApprovalDecision, ApprovalRequest, RiskLevel, SessionId};
