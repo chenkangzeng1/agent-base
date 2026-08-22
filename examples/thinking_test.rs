@@ -4,9 +4,9 @@ use futures_util::StreamExt;
 fn usage_summary(usage: &agent_base::UsageInfo) -> String {
     format!(
         "prompt={}, completion={}, total={}",
-        usage.prompt_tokens.map_or(0, |v| v),
-        usage.completion_tokens.map_or(0, |v| v),
-        usage.total_tokens.map_or(0, |v| v),
+        usage.prompt_tokens.unwrap_or(0),
+        usage.completion_tokens.unwrap_or(0),
+        usage.total_tokens.unwrap_or(0),
     )
 }
 
