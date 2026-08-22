@@ -1735,3 +1735,191 @@ async fn openai_length_text_only_returns_failed() {
         result
     );
 }
+
+// ---------------------------------------------------------------------------
+// Branch 4 (text-only after tools): guard integration tests
+// ---------------------------------------------------------------------------
+
+use crate::engine::react_loop_guard::{GuardAction, GuardCtx, ReactLoopGuard};
+
+/// A guard that records every `on_text_only` call for later inspection,
+/// and delegates all methods to a configurable action.
+struct RecordingGuard {
+    /// Recorded (run_has_tool_calls, model_response) from on_text_only calls.
+    calls: Mutex<Vec<(bool, String)>>,
+    /// What to return from on_text_only.
+    text_only_action: GuardAction,
+}
+
+impl RecordingGuard {
+    fn new(text_only_action: GuardAction) -> Self {
+        Self {
+            calls: Mutex::new(Vec::new()),
+            text_only_action,
+        }
+    }
+}
+
+#[async_trait]
+impl ReactLoopGuard for RecordingGuard {
+    async fn on_reasoning_only(&self, _ctx: &GuardCtx) -> GuardAction {
+        GuardAction::Done
+    }
+
+    async fn on_empty_response(&self, _ctx: &GuardCtx) -> GuardAction {
+        GuardAction::Done
+    }
+
+    async fn on_text_only(&self, ctx: &GuardCtx) -> GuardAction {
+        self.calls
+            .lock()
+            .unwrap()
+            .push((ctx.run_has_tool_calls, ctx.model_response.clone()));
+        self.text_only_action.clone()
+    }
+}
+
+/// When the model calls a tool then returns text, the guard's `on_text_only`
+/// must be invoked with `run_has_tool_calls = true`.
+#[tokio::test]
+async fn branch4_guard_called_with_run_has_tool_calls() {
+    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![
+        // Turn 1: tool call
+        vec![
+            StreamChunk::ToolCall(serde_json::json!({
+                "delta": {
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "function": {
+                            "name": "echo",
+                            "arguments": "{\"text\":\"hello\"}"
+                        }
+                    }]
+                }
+            })),
+            StreamChunk::Stop {
+                finish_reason: Some("tool_calls".to_string()),
+            },
+        ],
+        // Turn 2: text-only answer → branch 4
+        vec![
+            StreamChunk::Text("The answer is 42.".to_string()),
+            StreamChunk::Stop {
+                finish_reason: Some("stop".to_string()),
+            },
+        ],
+    ])));
+
+    let guard = Arc::new(RecordingGuard::new(GuardAction::Done));
+    let guard_clone = guard.clone();
+
+    let runtime = AgentBuilder::new(client)
+        .system_prompt("test")
+        .register_tool(EchoTool)
+        .guard_dyn(guard_clone)
+        .build()
+        .expect("build runtime");
+
+    let sid = runtime.create_session().await;
+
+    let result = runtime.run_turn(sid, "echo hello", |_| Ok(())).await;
+    assert!(
+        matches!(result, Ok(RunOutcome::Completed)),
+        "run_turn should complete: {:?}",
+        result
+    );
+
+    let calls = guard.calls.lock().unwrap();
+    assert_eq!(calls.len(), 1, "on_text_only should be called exactly once");
+    let (run_has_tools, response) = &calls[0];
+    assert!(*run_has_tools, "run_has_tool_calls must be true after tool use");
+    assert_eq!(response, "The answer is 42.");
+}
+
+/// When the guard returns `Continue`, the react loop should inject a nudge
+/// and call the LLM again — the second text response should complete.
+#[tokio::test]
+async fn branch4_guard_continue_nudges_and_retries() {
+    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![
+        // Turn 1: tool call
+        vec![
+            StreamChunk::ToolCall(serde_json::json!({
+                "delta": {
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "function": {
+                            "name": "echo",
+                            "arguments": "{\"text\":\"hello\"}"
+                        }
+                    }]
+                }
+            })),
+            StreamChunk::Stop {
+                finish_reason: Some("tool_calls".to_string()),
+            },
+        ],
+        // Turn 2: text-only → guard says Continue
+        vec![
+            StreamChunk::Text("maybe done".to_string()),
+            StreamChunk::Stop {
+                finish_reason: Some("stop".to_string()),
+            },
+        ],
+        // Turn 3: after nudge, model gives final answer
+        vec![
+            StreamChunk::Text("here is the complete answer".to_string()),
+            StreamChunk::Stop {
+                finish_reason: Some("stop".to_string()),
+            },
+        ],
+    ])));
+
+    // Guard always returns Continue → nudge each time → loops until max turns.
+    // We verify: (1) guard called multiple times, (2) nudge injected, (3) run_has_tool_calls persists.
+    let guard = Arc::new(RecordingGuard::new(GuardAction::Continue(
+        "please continue".to_string(),
+    )));
+    let guard_clone = guard.clone();
+
+    let runtime = AgentBuilder::new(client)
+        .system_prompt("test")
+        .register_tool(EchoTool)
+        .guard_dyn(guard_clone)
+        .build()
+        .expect("build runtime");
+
+    let sid = runtime.create_session().await;
+
+    let (_events, _outcome) = runtime
+        .run_turn_collect(sid.clone(), "echo hello")
+        .await
+        .expect("run_turn_collect");
+
+    // Extract guard call data before any async work.
+    let (call_count, all_have_tools) = {
+        let calls = guard.calls.lock().unwrap();
+        (
+            calls.len(),
+            calls.iter().all(|(has_tools, _)| *has_tools),
+        )
+    };
+    assert!(
+        call_count >= 2,
+        "guard should be called at least twice (initial + after nudge), got: {}",
+        call_count
+    );
+
+    // Verify the nudge was pushed as a user message.
+    let session = runtime.session(&sid).await.expect("session exists");
+    let has_nudge = session.chat_messages().iter().any(|m| {
+        matches!(m, ChatMessage::User { content, .. } if content.contains("please continue"))
+    });
+    assert!(has_nudge, "session should contain the nudge message");
+
+    // The second on_text_only call should still have run_has_tool_calls = true
+    // (it's never reset mid-run).
+    assert!(
+        all_have_tools,
+        "all on_text_only calls should have run_has_tool_calls = true"
+    );
+}

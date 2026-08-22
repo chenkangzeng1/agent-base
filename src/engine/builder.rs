@@ -76,6 +76,15 @@ impl AgentBuilder {
         self
     }
 
+    /// Set a guard from a pre-built `Arc<dyn ReactLoopGuard>`.
+    ///
+    /// Use this when you need to share the guard reference (e.g. for inspecting
+    /// recorded calls in tests).
+    pub fn guard_dyn(mut self, guard: Arc<dyn ReactLoopGuard>) -> Self {
+        self.guard = Some(guard);
+        self
+    }
+
     /// Check if a guard has been set.
     ///
     /// Used by agent-works to inject a default guard if none was set.
