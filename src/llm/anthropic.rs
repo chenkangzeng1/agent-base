@@ -150,7 +150,50 @@ impl AnthropicClient {
             }
         }
 
-        (system_prompt, result)
+        // Merge consecutive user-role messages where the first contains only
+        // tool_result blocks.  Anthropic API requires strict user/assistant
+        // alternation; this happens when tool failures (Tool → user with
+        // tool_result) are followed by a retry prompt (User → user with text).
+        let mut merged: Vec<Value> = Vec::with_capacity(result.len());
+        for msg in result {
+            let is_user = msg.get("role").and_then(Value::as_str) == Some("user");
+            let prev_is_user = merged
+                .last()
+                .and_then(|m| m.get("role"))
+                .and_then(Value::as_str)
+                == Some("user");
+
+            if is_user && prev_is_user {
+                // Check if the previous user message contains only tool_result blocks
+                let prev_all_tool_results = merged
+                    .last()
+                    .and_then(|m| m.get("content"))
+                    .and_then(Value::as_array)
+                    .map(|arr| {
+                        arr.iter()
+                            .all(|c| c.get("type").and_then(Value::as_str) == Some("tool_result"))
+                    })
+                    .unwrap_or(false);
+
+                if prev_all_tool_results {
+                    // Append this message's content to the previous user message
+                    if let (Some(prev_content), Some(new_content)) = (
+                        merged.last_mut().and_then(|m| m.get_mut("content")),
+                        msg.get("content"),
+                    ) {
+                        if let (Some(prev_arr), Some(new_arr)) =
+                            (prev_content.as_array_mut(), new_content.as_array())
+                        {
+                            prev_arr.extend(new_arr.iter().cloned());
+                            continue;
+                        }
+                    }
+                }
+            }
+            merged.push(msg);
+        }
+
+        (system_prompt, merged)
     }
 
     fn convert_tools(tools: &[Value]) -> Vec<Value> {
@@ -547,7 +590,8 @@ mod tests {
 
         let (sys, out) = AnthropicClient::convert_messages(&msgs);
         assert_eq!(sys.as_deref(), Some("sys"));
-        assert_eq!(out.len(), 6);
+        // tool_result + Custom text are merged into one user message
+        assert_eq!(out.len(), 5);
 
         assert_eq!(
             out[0],
@@ -575,14 +619,13 @@ mod tests {
         assert_eq!(out[3]["content"][0]["name"], "echo");
         assert_eq!(out[3]["content"][0]["input"], serde_json::json!({"x": 1}));
 
+        // tool_result + Custom text merged into one user message
         assert_eq!(out[4]["role"], "user");
         assert_eq!(out[4]["content"][0]["type"], "tool_result");
         assert_eq!(out[4]["content"][0]["tool_use_id"], "tc1");
         assert_eq!(out[4]["content"][0]["content"], "done");
-
-        assert_eq!(out[5]["role"], "user");
-        assert_eq!(out[5]["content"][0]["type"], "text");
-        assert_eq!(out[5]["content"][0]["text"], "{\"x\":1}");
+        assert_eq!(out[4]["content"][1]["type"], "text");
+        assert_eq!(out[4]["content"][1]["text"], "{\"x\":1}");
     }
 
     #[test]
