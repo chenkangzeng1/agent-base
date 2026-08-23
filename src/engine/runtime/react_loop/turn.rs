@@ -131,6 +131,7 @@ impl RuntimeCore {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn run_turn_loop<F>(
         &self,
         session_id: &SessionId,
@@ -139,6 +140,7 @@ impl RuntimeCore {
         mut turn_count: u32,
         event_rx: &mut broadcast::Receiver<RuntimeEvent>,
         on_event: Arc<Mutex<F>>,
+        all_user_inputs: &[String],
     ) -> AgentResult<(RunOutcome, u32)>
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send + 'static,
@@ -362,6 +364,7 @@ impl RuntimeCore {
                     result,
                     event_rx,
                     on_event.clone(),
+                    all_user_inputs,
                 )
                 .await?
             {
@@ -385,6 +388,7 @@ impl RuntimeCore {
         result: AgentResult<LlmTurnResult>,
         event_rx: &mut broadcast::Receiver<RuntimeEvent>,
         on_event: Arc<Mutex<F>>,
+        all_user_inputs: &[String],
     ) -> AgentResult<TurnFlow>
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
@@ -457,6 +461,7 @@ impl RuntimeCore {
                     available_tools: &available_tools,
                     turn_start,
                     model,
+                    all_user_inputs,
                 };
                 let metrics = TurnMetrics {
                     ttft_ms,

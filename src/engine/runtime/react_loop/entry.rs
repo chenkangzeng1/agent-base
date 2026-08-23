@@ -97,6 +97,8 @@ impl RuntimeCore {
         })
         .await?;
 
+        let all_user_inputs = self.collect_user_inputs(&session_id).await?;
+
         let result = self
             .run_turn_loop(
                 &session_id,
@@ -105,6 +107,7 @@ impl RuntimeCore {
                 0,
                 &mut event_rx,
                 on_event.clone(),
+                &all_user_inputs,
             )
             .await;
 
@@ -234,6 +237,7 @@ impl RuntimeCore {
             session_id = session_id.id,
             "run_turn: entering run_turn_loop"
         );
+        let all_user_inputs = self.collect_user_inputs(&session_id).await?;
         let result = self
             .run_turn_loop(
                 &session_id,
@@ -242,6 +246,7 @@ impl RuntimeCore {
                 0,
                 &mut event_rx,
                 on_event.clone(),
+                &all_user_inputs,
             )
             .await;
 
@@ -382,6 +387,8 @@ impl RuntimeCore {
             }
         }
 
+        let all_user_inputs = self.collect_user_inputs(&session_id).await?;
+
         let result = self
             .run_turn_loop(
                 &session_id,
@@ -390,6 +397,7 @@ impl RuntimeCore {
                 turn_count,
                 &mut event_rx,
                 on_event.clone(),
+                &all_user_inputs,
             )
             .await;
 
@@ -530,6 +538,7 @@ impl RuntimeCore {
             }
 
             // Run inner turn loop (steering drained at each iteration inside)
+            let all_user_inputs = self.collect_user_inputs(&session_id).await?;
             let result = self
                 .run_turn_loop(
                     &session_id,
@@ -538,6 +547,7 @@ impl RuntimeCore {
                     total_turns,
                     &mut event_rx,
                     on_event.clone(),
+                    &all_user_inputs,
                 )
                 .await;
 
@@ -608,6 +618,21 @@ impl RuntimeCore {
         self.cleanup_ephemeral(&session_id).await;
 
         Ok(final_outcome)
+    }
+
+    /// Collect all user messages from the session (oldest-first).
+    async fn collect_user_inputs(&self, session_id: &SessionId) -> AgentResult<Vec<String>> {
+        self.with_session_mut(session_id, |session| {
+            session
+                .chat_messages()
+                .iter()
+                .filter_map(|m| match m {
+                    crate::types::ChatMessage::User { content, .. } => Some(content.clone()),
+                    _ => None,
+                })
+                .collect()
+        })
+        .await
     }
 
     /// Remove ephemeral messages from the session, best-effort (warn on failure).

@@ -27,6 +27,10 @@ pub struct GuardCtx {
     pub reasoning_only_strikes: usize,
     pub empty_response_strikes: usize,
     pub run_has_tool_calls: bool,
+    /// All user messages in the current session, ordered oldest-first.
+    /// Guards can use this to reconstruct full conversation context
+    /// (e.g. "继续" after a multi-turn discussion).
+    pub all_user_inputs: Vec<String>,
 }
 
 /// React Loop Guard trait
@@ -89,6 +93,7 @@ mod tests {
             reasoning_only_strikes: 0,
             empty_response_strikes: 0,
             run_has_tool_calls: false,
+            all_user_inputs: vec!["test".to_string()],
         };
 
         assert!(matches!(

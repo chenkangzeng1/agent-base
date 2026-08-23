@@ -25,6 +25,7 @@ pub(super) struct TurnCtx<'a> {
     pub available_tools: &'a [String],
     pub turn_start: Instant,
     pub model: &'a str,
+    pub all_user_inputs: &'a [String],
 }
 
 impl RuntimeCore {
@@ -58,6 +59,7 @@ impl RuntimeCore {
             reasoning_only_strikes: session_data.0,
             empty_response_strikes: session_data.1,
             run_has_tool_calls: session_data.2,
+            all_user_inputs: turn_ctx.all_user_inputs.to_vec(),
         }
     }
 
@@ -317,6 +319,7 @@ mod tests {
             reasoning_only_strikes: 0,
             empty_response_strikes: 0,
             run_has_tool_calls: false,
+            all_user_inputs: vec!["test".to_string()],
         };
         let debug_str = format!("{:?}", ctx);
         assert!(debug_str.contains("session_id"));
@@ -347,6 +350,7 @@ mod tests {
             reasoning_only_strikes: 0,
             empty_response_strikes: 0,
             run_has_tool_calls: false,
+            all_user_inputs: vec!["test".to_string()],
         };
 
         // Use tokio runtime to test async calls
