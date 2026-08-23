@@ -4,7 +4,7 @@ use serde_json::Value;
 use super::message::ChatMessage;
 use super::session::SessionId;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct CheckpointData {
     pub session_id: SessionId,
     pub user_input: String,
@@ -12,7 +12,7 @@ pub struct CheckpointData {
     pub turn_count: u32,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub enum CheckpointStep {
     AfterUserInput,
     BeforeLlm {
@@ -28,7 +28,7 @@ pub enum CheckpointStep {
     },
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct ToolResultData {
     pub tool_call_id: String,
     pub tool_name: String,
@@ -230,5 +230,32 @@ mod tests {
             )
             .is_err()
         );
+    }
+}
+
+
+#[cfg(test)]
+mod serde_round_trip_tests {
+    use super::*;
+
+    fn rt_step(step: CheckpointStep) {
+        let s = serde_json::to_string(&step).expect("serialize step");
+        let back: CheckpointStep = serde_json::from_str(&s).expect("deserialize step");
+        assert_eq!(step, back);
+
+        #[test]
+        fn round_trip_afteruserinput() {
+            rt_step(CheckpointStep::AfterUserInput);
+        }
+            }
+
+    #[test]
+    fn malformed_step_errors() {
+        assert!(serde_json::from_str::<CheckpointStep>("{\"x\":1}").is_err());
+    }
+
+    #[test]
+    fn malformed_data_errors() {
+        assert!(serde_json::from_str::<CheckpointData>("null").is_err());
     }
 }

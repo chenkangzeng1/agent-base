@@ -1,0 +1,7 @@
+fix: Add serde round-trip tests for CheckpointData and CheckpointStep
+
+- src\types\checkpoint.rs: serde round-trip tests
+
+Fixes #2
+
+Signed-off-by: Vedant Madane <6527493+VedantMadane@users.noreply.github.com>
