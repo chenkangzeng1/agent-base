@@ -111,7 +111,7 @@ impl AnthropicClient {
                     if let Some(tc) = tool_calls {
                         for t in tc {
                             let input: Value =
-                                serde_json::from_str(&t.arguments).unwrap_or(Value::Null);
+                                serde_json::from_str(&t.arguments).unwrap_or(json!({}));
                             parts.push(json!({
                                 "type": "tool_use",
                                 "id": t.id,
