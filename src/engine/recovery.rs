@@ -488,20 +488,20 @@ mod tests {
 
         // tool_a: 1 failure
         recovery
-            .on_error(&session_id, &vec!["tool_a".to_string()], &error)
+            .on_error(&session_id, &["tool_a".to_string()], &error)
             .unwrap();
 
         // tool_b: 1 failure (independent counter)
         assert_eq!(
             recovery
-                .on_error(&session_id, &vec!["tool_b".to_string()], &error,)
+                .on_error(&session_id, &["tool_b".to_string()], &error,)
                 .unwrap(),
             ToolErrorAction::Retry
         );
 
         // tool_a: 2nd failure → RetryWithHistory (not affected by tool_b)
         let action = recovery
-            .on_error(&session_id, &vec!["tool_a".to_string()], &error)
+            .on_error(&session_id, &["tool_a".to_string()], &error)
             .unwrap();
         assert!(
             matches!(action, ToolErrorAction::RetryWithHistory { .. }),

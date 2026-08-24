@@ -12,10 +12,10 @@ use futures_util::StreamExt;
 use serde_json::Value;
 
 use anthropic_rs_api::types::{
-    ContentBlock, ContentBlockDelta, Message, MessagesRequestBuilder, MessagesStreamEvent,
-    Role, StopReason, ThinkingConfig, Tool, ToolChoice,
+    ContentBlock, ContentBlockDelta, Message, MessagesRequestBuilder, MessagesStreamEvent, Role,
+    StopReason, ThinkingConfig, Tool, ToolChoice,
 };
-use anthropic_rs_api::{Client, AnthropicError};
+use anthropic_rs_api::{AnthropicError, Client};
 
 use super::{LlmCapabilities, LlmClient, LlmClientConfig, ReasoningConfig, StreamChunk, UsageInfo};
 use crate::types::{AgentError, AgentResult, ChatMessage, ImageAttachment, ResponseFormat};
@@ -71,7 +71,9 @@ impl AnthropicAdapter {
                 ChatMessage::System { content, .. } => {
                     system_prompt = Some(content.clone());
                 }
-                ChatMessage::User { content, images, .. } => {
+                ChatMessage::User {
+                    content, images, ..
+                } => {
                     let mut blocks = vec![ContentBlock::text(content)];
 
                     for img in images {
@@ -80,9 +82,7 @@ impl AnthropicAdapter {
                                 blocks.push(ContentBlock::image_url(url));
                             }
                             ImageAttachment::Base64 {
-                                data,
-                                media_type,
-                                ..
+                                data, media_type, ..
                             } => {
                                 let mime = media_type.as_deref().unwrap_or("image/jpeg");
                                 blocks.push(ContentBlock::image_base64(mime, data));
@@ -99,16 +99,14 @@ impl AnthropicAdapter {
                 } => {
                     let mut blocks = Vec::new();
 
-                    if let Some(text) = content {
-                        if !text.is_empty() {
-                            blocks.push(ContentBlock::text(text));
-                        }
+                    if let Some(text) = content.as_ref().filter(|t| !t.is_empty()) {
+                        blocks.push(ContentBlock::text(text));
                     }
 
                     if let Some(tc) = tool_calls {
                         for t in tc {
-                            let input: Value =
-                                serde_json::from_str(&t.arguments).unwrap_or(Value::Object(Default::default()));
+                            let input: Value = serde_json::from_str(&t.arguments)
+                                .unwrap_or(Value::Object(Default::default()));
                             blocks.push(ContentBlock::tool_use(&t.id, &t.name, input));
                         }
                     }
@@ -142,7 +140,10 @@ impl AnthropicAdapter {
             let is_user = msg.role == Role::User;
             let is_assistant = msg.role == Role::Assistant;
             let prev_is_user = merged.last().map(|m| m.role == Role::User).unwrap_or(false);
-            let prev_is_assistant = merged.last().map(|m| m.role == Role::Assistant).unwrap_or(false);
+            let prev_is_assistant = merged
+                .last()
+                .map(|m| m.role == Role::Assistant)
+                .unwrap_or(false);
 
             if is_user && prev_is_user {
                 let prev_all_tool_results = merged
@@ -154,20 +155,19 @@ impl AnthropicAdapter {
                     })
                     .unwrap_or(false);
 
-                if prev_all_tool_results {
-                    if let Some(prev) = merged.last_mut() {
-                        prev.content.extend(msg.content);
-                        continue;
-                    }
+                if prev_all_tool_results && let Some(prev) = merged.last_mut() {
+                    prev.content.extend(msg.content);
+                    continue;
                 }
             }
 
             // Merge consecutive assistant messages
-            if is_assistant && prev_is_assistant {
-                if let Some(prev) = merged.last_mut() {
-                    prev.content.extend(msg.content);
-                    continue;
-                }
+            if is_assistant
+                && prev_is_assistant
+                && let Some(prev) = merged.last_mut()
+            {
+                prev.content.extend(msg.content);
+                continue;
             }
 
             merged.push(msg);
@@ -201,8 +201,8 @@ impl AnthropicAdapter {
         match event {
             MessagesStreamEvent::MessageStart { message } => {
                 vec![StreamChunk::Usage(UsageInfo {
-                    prompt_tokens: Some(message.usage.input_tokens as u32),
-                    completion_tokens: Some(message.usage.output_tokens as u32),
+                    prompt_tokens: Some(message.usage.input_tokens),
+                    completion_tokens: Some(message.usage.output_tokens),
                     total_tokens: None,
                 })]
             }
@@ -253,7 +253,7 @@ impl AnthropicAdapter {
             MessagesStreamEvent::MessageDelta { delta, usage } => {
                 let mut chunks = vec![StreamChunk::Usage(UsageInfo {
                     prompt_tokens: None,
-                    completion_tokens: Some(usage.output_tokens as u32),
+                    completion_tokens: Some(usage.output_tokens),
                     total_tokens: None,
                 })];
 
@@ -287,8 +287,7 @@ impl AnthropicAdapter {
         reasoning: Option<&ReasoningConfig>,
     ) -> Result<anthropic_rs_api::types::MessagesRequest, AgentError> {
         let (system, msgs) = Self::convert_messages(messages);
-        let mut builder =
-            MessagesRequestBuilder::new(&self.model, msgs, self.max_tokens);
+        let mut builder = MessagesRequestBuilder::new(&self.model, msgs, self.max_tokens);
 
         if let Some(sys) = system {
             builder = builder.system(sys);
@@ -300,11 +299,11 @@ impl AnthropicAdapter {
             builder = builder.tool_choice(ToolChoice::Auto);
         }
 
-        if let Some(rc) = reasoning {
-            if rc.enabled == Some(true) || rc.budget_tokens.is_some() {
-                let budget = rc.budget_tokens.unwrap_or(2048) as u32;
-                builder = builder.thinking(ThinkingConfig::enabled(budget));
-            }
+        if let Some(rc) = reasoning
+            && (rc.enabled == Some(true) || rc.budget_tokens.is_some())
+        {
+            let budget = rc.budget_tokens.unwrap_or(2048) as u32;
+            builder = builder.thinking(ThinkingConfig::enabled(budget));
         }
 
         builder
@@ -320,7 +319,9 @@ impl From<AnthropicError> for AgentError {
                 message: format!("{}: {}", api.error_type, api.message),
             },
             AnthropicError::Http(e) => AgentError::llm(format!("HTTP error: {e}")),
-            AnthropicError::InvalidRequest(msg) => AgentError::llm(format!("Invalid request: {msg}")),
+            AnthropicError::InvalidRequest(msg) => {
+                AgentError::llm(format!("Invalid request: {msg}"))
+            }
             AnthropicError::MissingEnvironment(var) => {
                 AgentError::llm(format!("Missing environment variable: {var}"))
             }
@@ -353,7 +354,9 @@ impl LlmClient for AnthropicAdapter {
                 ContentBlock::Text { text, .. } => {
                     serde_json::json!({"type": "text", "text": text})
                 }
-                ContentBlock::ToolUse { id, name, input, .. } => {
+                ContentBlock::ToolUse {
+                    id, name, input, ..
+                } => {
                     serde_json::json!({"type": "tool_use", "id": id, "name": name, "input": input})
                 }
                 ContentBlock::Thinking { thinking, .. } => {
@@ -416,6 +419,57 @@ impl LlmClient for AnthropicAdapter {
 
     fn model_name(&self) -> &str {
         &self.model
+    }
+}
+
+#[async_trait]
+impl super::StreamClient for AnthropicAdapter {
+    async fn stream(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[Value],
+        reasoning: Option<&ReasoningConfig>,
+        response_format: Option<&ResponseFormat>,
+    ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
+        self.chat_stream(messages, tools, reasoning, response_format)
+            .await
+    }
+
+    async fn chat(
+        &self,
+        messages: &[ChatMessage],
+        tools: &[Value],
+        reasoning: Option<&ReasoningConfig>,
+        response_format: Option<&ResponseFormat>,
+    ) -> AgentResult<String> {
+        let result = LlmClient::chat(self, messages, tools, reasoning, response_format).await?;
+        // Anthropic returns content as an array of blocks; extract text blocks.
+        let text = result
+            .get("content")
+            .and_then(|c| c.as_array())
+            .map(|blocks| {
+                blocks
+                    .iter()
+                    .filter_map(|b| {
+                        if b.get("type")?.as_str()? == "text" {
+                            b.get("text")?.as_str().map(String::from)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
+            .unwrap_or_default();
+        Ok(text)
+    }
+
+    fn capabilities(&self) -> LlmCapabilities {
+        LlmClient::capabilities(self)
+    }
+
+    fn model_name(&self) -> &str {
+        LlmClient::model_name(self)
     }
 }
 

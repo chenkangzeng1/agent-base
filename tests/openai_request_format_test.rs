@@ -1,4 +1,4 @@
-use agent_base::{ChatMessage, StreamClient, OpenAiClient};
+use agent_base::{ChatMessage, OpenAiClient, StreamClient};
 use serde_json::{Value, json};
 
 /// 测试 OpenAiClient 生成的请求 body 格式

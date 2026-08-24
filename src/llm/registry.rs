@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use super::{AnthropicClient, OpenAiAdapter, StreamClient};
+use super::{AnthropicAdapter, OpenAiAdapter, StreamClient};
 
 #[derive(Clone, Debug)]
 pub enum LlmProvider {
@@ -86,8 +86,7 @@ impl LlmClientBuilder {
             }
             LlmProvider::Anthropic => {
                 let url = base_url.unwrap_or_else(|| "https://api.anthropic.com".to_string());
-                let client = AnthropicClient::new(self.api_key, self.model, Some(url));
-                super::adapt(Arc::new(client))
+                Arc::new(AnthropicAdapter::new(self.api_key, self.model, Some(url)))
             }
             LlmProvider::Custom(_) => {
                 let url = base_url.unwrap_or_else(|| "https://api.openai.com/v1".to_string());

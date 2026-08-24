@@ -1,7 +1,6 @@
 mod approval;
 pub mod auto_continue;
 mod builder;
-mod circuit_breaker;
 mod context;
 mod middleware;
 mod pipeline;
@@ -17,7 +16,6 @@ mod turn_facts;
 
 pub use approval::{AllowAllApprovalHandler, ApprovalHandler, DenyAllApprovalHandler};
 pub use builder::AgentBuilder;
-pub use circuit_breaker::{CircuitBreaker, CircuitState};
 pub use context::ContextWindowManager;
 pub use middleware::{Middleware, PostLlmCtx, PreLlmCtx, UserMessageCtx};
 pub use pipeline::{DefaultPipeline, ToolExecutionPipeline};

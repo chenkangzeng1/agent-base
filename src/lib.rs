@@ -11,7 +11,7 @@ pub mod prelude {
         AgentBuilder, AgentRuntime, AgentSession, AllowAllApprovalHandler, DenyAllApprovalHandler,
     };
     pub use crate::llm::{
-        AnthropicAdapter, AnthropicClient, LlmClient, LlmClientBuilder, OpenAiAdapter, OpenAiClient, StreamClient,
+        AnthropicAdapter, LlmClient, LlmClientBuilder, OpenAiAdapter, OpenAiClient, StreamClient,
     };
     pub use crate::tool::{
         AutoContinueTool, Content, DenyAllToolPolicy, Tool, ToolContext, ToolMetadata, ToolPolicy,
@@ -27,7 +27,7 @@ pub mod prelude {
 // Agent Runtime
 // ---------------------------------------------------------------------------
 pub use engine::{
-    AgentBuilder, AgentRuntime, AgentSession, CircuitBreaker, CircuitState, DefaultPipeline,
+    AgentBuilder, AgentRuntime, AgentSession, DefaultPipeline,
     InMemorySessionStore, QueueMode, SessionId, SessionStore, ToolExecutionPipeline,
 };
 
@@ -35,7 +35,7 @@ pub use engine::{
 // LLM Provider
 // ---------------------------------------------------------------------------
 pub use llm::{
-    AnthropicAdapter, AnthropicClient, LlmCapabilities, LlmClient, LlmClientBuilder, LlmProvider, OpenAiAdapter,
+    AnthropicAdapter, LlmCapabilities, LlmClient, LlmClientBuilder, LlmProvider, OpenAiAdapter,
     OpenAiClient, ReasoningConfig, ReasoningEffort, StreamChunk, StreamClient, UsageInfo,
 };
 

@@ -1,7 +1,7 @@
 /// 模拟 ops-omni 的实际场景：模型已调完工具，拿到 df -h 结果，需要写文字总结。
 ///
 /// 测试 qwen3.7-max 在"总结回复"场景下是否会产生 content。
-use agent_base::{AgentResult, ChatMessage, StreamClient, OpenAiClient, StreamChunk};
+use agent_base::{AgentResult, ChatMessage, OpenAiClient, StreamChunk, StreamClient};
 use futures_util::StreamExt;
 
 async fn test_summarize(

@@ -1,4 +1,4 @@
-use agent_base::{AgentResult, ChatMessage, StreamClient, OpenAiClient, StreamChunk};
+use agent_base::{AgentResult, ChatMessage, OpenAiClient, StreamChunk, StreamClient};
 use futures_util::StreamExt;
 
 fn usage_summary(usage: &agent_base::UsageInfo) -> String {

@@ -4,7 +4,7 @@
 /// 这决定了 react_loop 是否会把响应当作"空响应"而无限重试。
 ///
 /// 运行：cargo run --example qwen_model_compare
-use agent_base::{AgentResult, ChatMessage, StreamClient, OpenAiClient, StreamChunk};
+use agent_base::{AgentResult, ChatMessage, OpenAiClient, StreamChunk, StreamClient};
 use futures_util::StreamExt;
 
 fn usage_summary(usage: &agent_base::UsageInfo) -> String {
