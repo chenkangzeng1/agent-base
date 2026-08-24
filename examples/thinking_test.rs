@@ -1,4 +1,4 @@
-use agent_base::{AgentResult, ChatMessage, LlmClient, OpenAiClient, StreamChunk};
+use agent_base::{AgentResult, ChatMessage, StreamClient, OpenAiClient, StreamChunk};
 use futures_util::StreamExt;
 
 fn usage_summary(usage: &agent_base::UsageInfo) -> String {
@@ -36,7 +36,7 @@ async fn run_test(
     };
 
     let mut stream = client
-        .chat_stream(&messages, empty_tools, Some(&reasoning), None)
+        .stream(&messages, empty_tools, Some(&reasoning), None)
         .await?;
 
     let mut in_thought = false;

@@ -1,4 +1,4 @@
-use agent_base::{ChatMessage, LlmClient, OpenAiClient};
+use agent_base::{ChatMessage, StreamClient, OpenAiClient};
 use serde_json::{Value, json};
 
 /// 测试 OpenAiClient 生成的请求 body 格式
@@ -27,7 +27,7 @@ async fn test_openai_client_request_body_format() {
         effort: None,
     };
     let result = client
-        .chat_stream(&messages, &tools, Some(&reasoning), None)
+        .stream(&messages, &tools, Some(&reasoning), None)
         .await;
 
     // 我们期望请求失败（因为 URL 无效），但请求 body 格式应该正确
