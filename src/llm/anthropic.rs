@@ -268,9 +268,9 @@ impl AnthropicClient {
         body
     }
 
-    fn parse_sse(data_str: &str, event_type: &str) -> AgentResult<StreamChunk> {
+    fn parse_sse(data_str: &str, event_type: &str) -> AgentResult<Vec<StreamChunk>> {
         if data_str.is_empty() {
-            return Ok(StreamChunk::Text(String::new()));
+            return Ok(vec![StreamChunk::Text(String::new())]);
         }
 
         let data: Value = serde_json::from_str(data_str)
@@ -290,11 +290,11 @@ impl AnthropicClient {
                     .and_then(|u| u.get("output_tokens"))
                     .and_then(Value::as_u64)
                     .map(|v| v as u32);
-                Ok(StreamChunk::Usage(UsageInfo {
+                Ok(vec![StreamChunk::Usage(UsageInfo {
                     prompt_tokens: input_tokens,
                     completion_tokens: output_tokens,
                     total_tokens: None,
-                }))
+                })])
             }
             "content_block_start" => {
                 let cb = data.get("content_block");
@@ -312,7 +312,7 @@ impl AnthropicClient {
                         .and_then(Value::as_str)
                         .unwrap_or("")
                         .to_string();
-                    return Ok(StreamChunk::ToolCall(json!({
+                    return Ok(vec![StreamChunk::ToolCall(json!({
                         "delta": {
                             "tool_calls": [{
                                 "index": idx,
@@ -323,9 +323,9 @@ impl AnthropicClient {
                                 }
                             }]
                         }
-                    })));
+                    }))]);
                 }
-                Ok(StreamChunk::Text(String::new()))
+                Ok(vec![StreamChunk::Text(String::new())])
             }
             "content_block_delta" => {
                 let delta = data.get("delta");
@@ -338,7 +338,7 @@ impl AnthropicClient {
                                 .and_then(Value::as_str)
                                 .unwrap_or("")
                                 .to_string();
-                            Ok(StreamChunk::Text(text))
+                            Ok(vec![StreamChunk::Text(text)])
                         }
                         Some("input_json_delta") => {
                             let partial = d
@@ -346,7 +346,7 @@ impl AnthropicClient {
                                 .and_then(Value::as_str)
                                 .unwrap_or("")
                                 .to_string();
-                            Ok(StreamChunk::ToolCall(json!({
+                            Ok(vec![StreamChunk::ToolCall(json!({
                                 "delta": {
                                     "tool_calls": [{
                                         "index": idx,
@@ -355,7 +355,7 @@ impl AnthropicClient {
                                         }
                                     }]
                                 }
-                            })))
+                            }))])
                         }
                         Some("thinking_delta") => {
                             let thinking = d
@@ -363,37 +363,50 @@ impl AnthropicClient {
                                 .and_then(Value::as_str)
                                 .unwrap_or("")
                                 .to_string();
-                            Ok(StreamChunk::Thought(thinking))
+                            Ok(vec![StreamChunk::Thought(thinking)])
                         }
-                        _ => Ok(StreamChunk::Text(String::new())),
+                        _ => Ok(vec![StreamChunk::Text(String::new())]),
                     }
                 } else {
-                    Ok(StreamChunk::Text(String::new()))
+                    Ok(vec![StreamChunk::Text(String::new())])
                 }
             }
-            "content_block_stop" => Ok(StreamChunk::Text(String::new())),
+            "content_block_stop" => Ok(vec![StreamChunk::Text(String::new())]),
             "message_delta" => {
+                // Extract stop_reason from delta (Anthropic sends it here)
+                let stop_reason = data
+                    .get("delta")
+                    .and_then(|d| d.get("stop_reason"))
+                    .and_then(Value::as_str)
+                    .map(String::from);
+
                 let output_tokens = data
                     .get("usage")
                     .and_then(|u| u.get("output_tokens"))
                     .and_then(Value::as_u64)
                     .map(|v| v as u32);
-                Ok(StreamChunk::Usage(UsageInfo {
+
+                // Build result: Usage chunk, and optionally Stop chunk if stop_reason present
+                let mut chunks = vec![StreamChunk::Usage(UsageInfo {
                     prompt_tokens: None,
                     completion_tokens: output_tokens,
                     total_tokens: None,
-                }))
+                })];
+
+                // If stop_reason is present, add Stop chunk here (message_stop won't have it)
+                if let Some(finish_reason) = stop_reason {
+                    chunks.push(StreamChunk::Stop { finish_reason: Some(finish_reason) });
+                }
+
+                Ok(chunks)
             }
             "message_stop" => {
-                let finish_reason = data
-                    .get("message")
-                    .and_then(|m| m.get("stop_reason"))
-                    .and_then(Value::as_str)
-                    .map(String::from);
-                Ok(StreamChunk::Stop { finish_reason })
+                // In real protocol, message_stop is bare (no stop_reason field)
+                // stop_reason was already sent in message_delta, so return empty
+                Ok(vec![])
             }
-            "ping" => Ok(StreamChunk::Text(String::new())),
-            _ => Ok(StreamChunk::Text(String::new())),
+            "ping" => Ok(vec![StreamChunk::Text(String::new())]),
+            _ => Ok(vec![StreamChunk::Text(String::new())]),
         }
     }
 }
@@ -494,12 +507,18 @@ impl LlmClient for AnthropicClient {
                         // field to "message", so `ev.event` is never empty here.
                         let event_type = ev.event.as_str();
                         match Self::parse_sse(&ev.data, event_type) {
-                            Ok(chunk) => Some(Ok(chunk)),
+                            Ok(chunks) => Some(Ok(chunks)),
                             Err(e) => Some(Err(e)),
                         }
                     }
                     Err(e) => Some(Err(AgentError::LlmStream(format!("SSE Stream error: {e}")))),
                 }
+            })
+            .flat_map(|result| match result {
+                Ok(chunks) => {
+                    futures_util::stream::iter(chunks.into_iter().map(Ok).collect::<Vec<_>>())
+                }
+                Err(e) => futures_util::stream::iter(vec![Err(e)]),
             });
 
         Ok(Box::pin(stream))
@@ -701,30 +720,33 @@ mod tests {
 
     #[test]
     fn parse_sse_empty_data() {
-        let c = AnthropicClient::parse_sse("", "message_start").unwrap();
-        assert!(matches!(c, StreamChunk::Text(t) if t.is_empty()));
+        let chunks = AnthropicClient::parse_sse("", "message_start").unwrap();
+        assert_eq!(chunks.len(), 1);
+        assert!(matches!(&chunks[0], StreamChunk::Text(t) if t.is_empty()));
     }
 
     #[test]
     fn parse_sse_message_start_usage() {
-        let c = AnthropicClient::parse_sse(
+        let chunks = AnthropicClient::parse_sse(
             r#"{"type":"message_start","message":{"usage":{"input_tokens":10,"output_tokens":5}}}"#,
             "message_start",
         )
         .unwrap();
+        assert_eq!(chunks.len(), 1);
         assert!(
-            matches!(c, StreamChunk::Usage(u) if u.prompt_tokens == Some(10) && u.completion_tokens == Some(5))
+            matches!(&chunks[0], StreamChunk::Usage(u) if u.prompt_tokens == Some(10) && u.completion_tokens == Some(5))
         );
     }
 
     #[test]
     fn parse_sse_content_block_start_tool_use() {
-        let c = AnthropicClient::parse_sse(
+        let chunks = AnthropicClient::parse_sse(
             r#"{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"echo"}}"#,
             "content_block_start",
         )
         .unwrap();
-        match c {
+        assert_eq!(chunks.len(), 1);
+        match &chunks[0] {
             StreamChunk::ToolCall(v) => {
                 assert_eq!(v["delta"]["tool_calls"][0]["index"], 0);
                 assert_eq!(v["delta"]["tool_calls"][0]["id"], "toolu_1");
@@ -736,29 +758,32 @@ mod tests {
 
     #[test]
     fn parse_sse_content_block_start_text() {
-        let c = AnthropicClient::parse_sse(
+        let chunks = AnthropicClient::parse_sse(
             r#"{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}"#,
             "content_block_start",
         )
         .unwrap();
-        assert!(matches!(c, StreamChunk::Text(t) if t.is_empty()));
+        assert_eq!(chunks.len(), 1);
+        assert!(matches!(&chunks[0], StreamChunk::Text(t) if t.is_empty()));
     }
 
     #[test]
     fn parse_sse_content_block_delta_variants() {
-        let text = AnthropicClient::parse_sse(
+        let chunks = AnthropicClient::parse_sse(
             r#"{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}"#,
             "content_block_delta",
         )
         .unwrap();
-        assert!(matches!(text, StreamChunk::Text(t) if t == "hello"));
+        assert_eq!(chunks.len(), 1);
+        assert!(matches!(&chunks[0], StreamChunk::Text(t) if t == "hello"));
 
-        let tj = AnthropicClient::parse_sse(
+        let chunks = AnthropicClient::parse_sse(
             r#"{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"x=1"}}"#,
             "content_block_delta",
         )
         .unwrap();
-        match tj {
+        assert_eq!(chunks.len(), 1);
+        match &chunks[0] {
             StreamChunk::ToolCall(v) => {
                 assert_eq!(v["delta"]["tool_calls"][0]["index"], 1);
                 assert_eq!(v["delta"]["tool_calls"][0]["function"]["arguments"], "x=1");
@@ -766,68 +791,62 @@ mod tests {
             other => panic!("expected ToolCall, got {other:?}"),
         }
 
-        let th = AnthropicClient::parse_sse(
+        let chunks = AnthropicClient::parse_sse(
             r#"{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm"}}"#,
             "content_block_delta",
         )
         .unwrap();
-        assert!(matches!(th, StreamChunk::Thought(t) if t == "hmm"));
+        assert_eq!(chunks.len(), 1);
+        assert!(matches!(&chunks[0], StreamChunk::Thought(t) if t == "hmm"));
 
-        let unk = AnthropicClient::parse_sse(
+        let chunks = AnthropicClient::parse_sse(
             r#"{"type":"content_block_delta","index":0,"delta":{"type":"whatever"}}"#,
             "content_block_delta",
         )
         .unwrap();
-        assert!(matches!(unk, StreamChunk::Text(t) if t.is_empty()));
+        assert_eq!(chunks.len(), 1);
+        assert!(matches!(&chunks[0], StreamChunk::Text(t) if t.is_empty()));
 
-        let nd = AnthropicClient::parse_sse(
+        let chunks = AnthropicClient::parse_sse(
             r#"{"type":"content_block_delta","index":0}"#,
             "content_block_delta",
         )
         .unwrap();
-        assert!(matches!(nd, StreamChunk::Text(t) if t.is_empty()));
+        assert_eq!(chunks.len(), 1);
+        assert!(matches!(&chunks[0], StreamChunk::Text(t) if t.is_empty()));
     }
 
     #[test]
     fn parse_sse_message_delta_usage() {
-        let c = AnthropicClient::parse_sse(
+        let chunks = AnthropicClient::parse_sse(
             r#"{"type":"message_delta","usage":{"output_tokens":12}}"#,
             "message_delta",
         )
         .unwrap();
+        assert_eq!(chunks.len(), 1);
         assert!(
-            matches!(c, StreamChunk::Usage(u) if u.completion_tokens == Some(12) && u.prompt_tokens.is_none())
+            matches!(&chunks[0], StreamChunk::Usage(u) if u.completion_tokens == Some(12) && u.prompt_tokens.is_none())
         );
     }
 
     #[test]
     fn parse_sse_message_stop() {
-        let c = AnthropicClient::parse_sse(
-            r#"{"type":"message_stop","message":{"stop_reason":"end_turn"}}"#,
-            "message_stop",
-        )
-        .unwrap();
-        assert!(matches!(c, StreamChunk::Stop { finish_reason: Some(r) } if r == "end_turn"));
-
-        let c = AnthropicClient::parse_sse(r#"{"type":"message_stop"}"#, "message_stop").unwrap();
-        assert!(matches!(
-            c,
-            StreamChunk::Stop {
-                finish_reason: None
-            }
-        ));
+        // Test real protocol format: message_stop is bare (no message field)
+        // In new implementation, message_stop returns empty vec (stop_reason already in message_delta)
+        let chunks = AnthropicClient::parse_sse(r#"{"type":"message_stop"}"#, "message_stop").unwrap();
+        assert!(chunks.is_empty(), "message_stop should return empty vec");
     }
 
     #[test]
     fn parse_sse_ping_unknown_and_invalid() {
-        assert!(matches!(
-            AnthropicClient::parse_sse(r#"{"type":"ping"}"#, "ping").unwrap(),
-            StreamChunk::Text(_)
-        ));
-        assert!(matches!(
-            AnthropicClient::parse_sse(r#"{}"#, "something_else").unwrap(),
-            StreamChunk::Text(_)
-        ));
+        let chunks = AnthropicClient::parse_sse(r#"{"type":"ping"}"#, "ping").unwrap();
+        assert_eq!(chunks.len(), 1);
+        assert!(matches!(&chunks[0], StreamChunk::Text(_)));
+
+        let chunks = AnthropicClient::parse_sse(r#"{}"#, "something_else").unwrap();
+        assert_eq!(chunks.len(), 1);
+        assert!(matches!(&chunks[0], StreamChunk::Text(_)));
+
         assert!(AnthropicClient::parse_sse("not-json", "message_stop").is_err());
     }
 
@@ -901,9 +920,9 @@ mod tests {
             "event: content_block_delta\n",
             "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"hmm\"}}\n\n",
             "event: message_delta\n",
-            "data: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":12}}\n\n",
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":12}}\n\n",
             "event: message_stop\n",
-            "data: {\"type\":\"message_stop\",\"message\":{\"stop_reason\":\"end_turn\"}}\n\n",
+            "data: {\"type\":\"message_stop\"}\n\n",
         );
         Mock::given(method("POST"))
             .and(path("/v1/messages"))
@@ -1042,5 +1061,149 @@ mod tests {
             .unwrap();
         let result: Result<Vec<_>, _> = stream.try_collect().await;
         assert!(result.is_err());
+    }
+
+    // ── P0-2 fix: stop_reason parsing tests ─────────────────────────────
+
+    #[test]
+    fn parse_sse_message_delta_with_stop_reason() {
+        // Simulate real Anthropic protocol sequence:
+        // 1. message_delta with stop_reason=max_tokens
+        // 2. message_stop (bare)
+
+        // Step 1: Parse message_delta, should return Usage + Stop chunks
+        let chunks = AnthropicClient::parse_sse(
+            r#"{"type":"message_delta","delta":{"stop_reason":"max_tokens","stop_sequence":null},"usage":{"output_tokens":8192}}"#,
+            "message_delta",
+        ).unwrap();
+
+        // Should return 2 chunks: Usage and Stop
+        assert_eq!(chunks.len(), 2);
+        assert!(matches!(&chunks[0], StreamChunk::Usage(u) if u.completion_tokens == Some(8192)));
+        assert!(matches!(
+            &chunks[1],
+            StreamChunk::Stop { finish_reason: Some(r) } if r == "max_tokens"
+        ));
+
+        // Step 2: Parse message_stop, should return empty vec
+        let chunks = AnthropicClient::parse_sse(
+            r#"{"type":"message_stop"}"#,
+            "message_stop",
+        ).unwrap();
+        assert!(chunks.is_empty(), "message_stop should return empty vec");
+    }
+
+    #[test]
+    fn parse_sse_message_delta_with_end_turn() {
+        // message_delta with stop_reason=end_turn (normal completion)
+        let chunks = AnthropicClient::parse_sse(
+            r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":100}}"#,
+            "message_delta",
+        ).unwrap();
+
+        assert_eq!(chunks.len(), 2);
+        assert!(matches!(&chunks[0], StreamChunk::Usage(_)));
+        assert!(matches!(
+            &chunks[1],
+            StreamChunk::Stop { finish_reason: Some(r) } if r == "end_turn"
+        ));
+    }
+
+    #[test]
+    fn parse_sse_message_delta_without_stop_reason() {
+        // message_delta without stop_reason (possible scenario)
+        let chunks = AnthropicClient::parse_sse(
+            r#"{"type":"message_delta","usage":{"output_tokens":50}}"#,
+            "message_delta",
+        ).unwrap();
+
+        // Without stop_reason, should only return Usage chunk
+        assert_eq!(chunks.len(), 1);
+        assert!(matches!(&chunks[0], StreamChunk::Usage(_)));
+    }
+
+    #[test]
+    fn parse_sse_message_delta_with_tool_use() {
+        // message_delta with stop_reason=tool_use (tool call requested)
+        let chunks = AnthropicClient::parse_sse(
+            r#"{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":200}}"#,
+            "message_delta",
+        ).unwrap();
+
+        assert_eq!(chunks.len(), 2);
+        assert!(matches!(&chunks[0], StreamChunk::Usage(_)));
+        assert!(matches!(
+            &chunks[1],
+            StreamChunk::Stop { finish_reason: Some(r) } if r == "tool_use"
+        ));
+    }
+
+    #[test]
+    fn parse_sse_message_stop_returns_empty() {
+        // message_stop should always return empty vec
+        // (stop_reason is already handled in message_delta)
+        let chunks = AnthropicClient::parse_sse(
+            r#"{"type":"message_stop"}"#,
+            "message_stop",
+        ).unwrap();
+
+        assert!(chunks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn chat_stream_parses_truncated_response() {
+        // Test the full flow: LLM hits max_tokens, tool args truncated
+        let server = MockServer::start().await;
+        let sse = concat!(
+            "event: message_start\n",
+            "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":100,\"output_tokens\":0}}}\n\n",
+            "event: content_block_start\n",
+            "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"write_file\"}}\n\n",
+            "event: content_block_delta\n",
+            "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"input_json_delta\",\"partial_json\":\"\"}}\n\n",
+            "event: message_delta\n",
+            "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"max_tokens\",\"stop_sequence\":null},\"usage\":{\"output_tokens\":8192}}\n\n",
+            "event: message_stop\n",
+            "data: {\"type\":\"message_stop\"}\n\n",
+        );
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(sse, "text/event-stream"))
+            .mount(&server)
+            .await;
+
+        let client = AnthropicClient::new("k".into(), "claude-sonnet".into(), Some(server.uri()));
+        let stream = client
+            .chat_stream(&[ChatMessage::user("hi")], &[], None, None)
+            .await
+            .unwrap();
+        let chunks: Vec<StreamChunk> = stream.try_collect().await.unwrap();
+
+        // Debug: print chunks
+        for (i, chunk) in chunks.iter().enumerate() {
+            eprintln!("chunks[{}]: {:?}", i, chunk);
+        }
+
+        // Expected sequence:
+        // 0: Usage (from message_start)
+        // 1: ToolCall (from content_block_start)
+        // 2: ToolCall (from content_block_delta, input_json_delta)
+        // 3: Usage (from message_delta)
+        // 4: Stop (from message_delta, stop_reason=max_tokens)
+        // Note: message_stop returns empty, so no chunk for it
+
+        assert_eq!(chunks.len(), 5, "Expected 5 chunks, got {}", chunks.len());
+        assert!(matches!(&chunks[0], StreamChunk::Usage(_)));
+        assert!(matches!(&chunks[1], StreamChunk::ToolCall(_)));
+        assert!(matches!(&chunks[2], StreamChunk::ToolCall(_)));
+        assert!(matches!(&chunks[3], StreamChunk::Usage(u) if u.completion_tokens == Some(8192)));
+
+        // Critical: Stop should have finish_reason="max_tokens"
+        // This will trigger the truncation guard in tools.rs:43
+        assert!(
+            matches!(&chunks[4], StreamChunk::Stop { finish_reason: Some(r) } if r == "max_tokens"),
+            "Expected finish_reason='max_tokens' for truncated response, got {:?}",
+            chunks[4]
+        );
     }
 }
