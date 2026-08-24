@@ -395,7 +395,9 @@ impl AnthropicClient {
 
                 // If stop_reason is present, add Stop chunk here (message_stop won't have it)
                 if let Some(finish_reason) = stop_reason {
-                    chunks.push(StreamChunk::Stop { finish_reason: Some(finish_reason) });
+                    chunks.push(StreamChunk::Stop {
+                        finish_reason: Some(finish_reason),
+                    });
                 }
 
                 Ok(chunks)
@@ -833,7 +835,8 @@ mod tests {
     fn parse_sse_message_stop() {
         // Test real protocol format: message_stop is bare (no message field)
         // In new implementation, message_stop returns empty vec (stop_reason already in message_delta)
-        let chunks = AnthropicClient::parse_sse(r#"{"type":"message_stop"}"#, "message_stop").unwrap();
+        let chunks =
+            AnthropicClient::parse_sse(r#"{"type":"message_stop"}"#, "message_stop").unwrap();
         assert!(chunks.is_empty(), "message_stop should return empty vec");
     }
 
@@ -1086,10 +1089,8 @@ mod tests {
         ));
 
         // Step 2: Parse message_stop, should return empty vec
-        let chunks = AnthropicClient::parse_sse(
-            r#"{"type":"message_stop"}"#,
-            "message_stop",
-        ).unwrap();
+        let chunks =
+            AnthropicClient::parse_sse(r#"{"type":"message_stop"}"#, "message_stop").unwrap();
         assert!(chunks.is_empty(), "message_stop should return empty vec");
     }
 
@@ -1115,7 +1116,8 @@ mod tests {
         let chunks = AnthropicClient::parse_sse(
             r#"{"type":"message_delta","usage":{"output_tokens":50}}"#,
             "message_delta",
-        ).unwrap();
+        )
+        .unwrap();
 
         // Without stop_reason, should only return Usage chunk
         assert_eq!(chunks.len(), 1);
@@ -1142,10 +1144,8 @@ mod tests {
     fn parse_sse_message_stop_returns_empty() {
         // message_stop should always return empty vec
         // (stop_reason is already handled in message_delta)
-        let chunks = AnthropicClient::parse_sse(
-            r#"{"type":"message_stop"}"#,
-            "message_stop",
-        ).unwrap();
+        let chunks =
+            AnthropicClient::parse_sse(r#"{"type":"message_stop"}"#, "message_stop").unwrap();
 
         assert!(chunks.is_empty());
     }

@@ -11,7 +11,7 @@ pub mod prelude {
         AgentBuilder, AgentRuntime, AgentSession, AllowAllApprovalHandler, DenyAllApprovalHandler,
     };
     pub use crate::llm::{
-        AnthropicClient, LlmClient, LlmClientBuilder, OpenAiClient, StreamClient,
+        AnthropicClient, LlmClient, LlmClientBuilder, OpenAiAdapter, OpenAiClient, StreamClient,
     };
     pub use crate::tool::{
         AutoContinueTool, Content, DenyAllToolPolicy, Tool, ToolContext, ToolMetadata, ToolPolicy,
@@ -35,8 +35,8 @@ pub use engine::{
 // LLM Provider
 // ---------------------------------------------------------------------------
 pub use llm::{
-    AnthropicClient, LlmCapabilities, LlmClient, LlmClientBuilder, LlmProvider, OpenAiClient,
-    OpenAiResponsesClient, ReasoningConfig, ReasoningEffort, StreamChunk, StreamClient, UsageInfo,
+    AnthropicClient, LlmCapabilities, LlmClient, LlmClientBuilder, LlmProvider, OpenAiAdapter,
+    OpenAiClient, ReasoningConfig, ReasoningEffort, StreamChunk, StreamClient, UsageInfo,
 };
 
 // ---------------------------------------------------------------------------

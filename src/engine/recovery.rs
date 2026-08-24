@@ -195,10 +195,7 @@ impl ToolErrorRecovery for ConsecutiveFailureRecovery {
             );
 
             // Check if grace was already used for this tool
-            let already_used = session_grace
-                .get(&tool_name)
-                .copied()
-                .unwrap_or(false);
+            let already_used = session_grace.get(&tool_name).copied().unwrap_or(false);
 
             if already_used {
                 // Grace exhausted → hard stop. Clear all state for this session.
@@ -211,10 +208,7 @@ impl ToolErrorRecovery for ConsecutiveFailureRecovery {
             // First time at threshold → give LLM one grace round
             session_grace.insert(tool_name.clone(), true);
 
-            let errors = session_msgs
-                .get(&tool_name)
-                .cloned()
-                .unwrap_or_default();
+            let errors = session_msgs.get(&tool_name).cloned().unwrap_or_default();
 
             // Clear messages but keep counts and grace flag so that the next
             // failure for the same tool triggers Stop (not another RetryWithHistory).
@@ -494,32 +488,20 @@ mod tests {
 
         // tool_a: 1 failure
         recovery
-            .on_error(
-                &session_id,
-                &vec!["tool_a".to_string()],
-                &error,
-            )
+            .on_error(&session_id, &vec!["tool_a".to_string()], &error)
             .unwrap();
 
         // tool_b: 1 failure (independent counter)
         assert_eq!(
             recovery
-                .on_error(
-                    &session_id,
-                    &vec!["tool_b".to_string()],
-                    &error,
-                )
+                .on_error(&session_id, &vec!["tool_b".to_string()], &error,)
                 .unwrap(),
             ToolErrorAction::Retry
         );
 
         // tool_a: 2nd failure → RetryWithHistory (not affected by tool_b)
         let action = recovery
-            .on_error(
-                &session_id,
-                &vec!["tool_a".to_string()],
-                &error,
-            )
+            .on_error(&session_id, &vec!["tool_a".to_string()], &error)
             .unwrap();
         assert!(
             matches!(action, ToolErrorAction::RetryWithHistory { .. }),

@@ -2,20 +2,39 @@ use async_trait::async_trait;
 use futures_core::Stream;
 use serde_json::Value;
 use std::pin::Pin;
+use std::time::Duration;
 
 use crate::types::{AgentResult, ChatMessage, ResponseFormat};
 
 mod anthropic;
-mod openai;
-mod openai_responses;
+mod openai_adapter;
 mod registry;
 mod stream_client;
 
 pub use anthropic::AnthropicClient;
-pub use openai::{LlmClientConfig, OpenAiClient};
-pub use openai_responses::OpenAiResponsesClient;
+pub use openai_adapter::{OpenAiAdapter, OpenAiClient};
 pub use registry::{LlmClientBuilder, LlmProvider};
 pub use stream_client::{LlmClientAdapter, StreamClient, adapt};
+
+/// Shared HTTP client configuration for all LLM providers.
+#[derive(Clone, Debug)]
+pub struct LlmClientConfig {
+    pub connect_timeout: Duration,
+    pub request_timeout: Duration,
+    pub pool_max_idle_per_host: usize,
+    pub pool_idle_timeout: Duration,
+}
+
+impl Default for LlmClientConfig {
+    fn default() -> Self {
+        Self {
+            connect_timeout: Duration::from_secs(15),
+            request_timeout: Duration::from_secs(120),
+            pool_max_idle_per_host: 10,
+            pool_idle_timeout: Duration::from_secs(90),
+        }
+    }
+}
 
 #[derive(Clone, Debug)]
 pub enum StreamChunk {
