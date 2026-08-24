@@ -7,11 +7,13 @@ use std::time::Duration;
 use crate::types::{AgentResult, ChatMessage, ResponseFormat};
 
 mod anthropic;
+mod anthropic_adapter;
 mod openai_adapter;
 mod registry;
 mod stream_client;
 
 pub use anthropic::AnthropicClient;
+pub use anthropic_adapter::AnthropicAdapter;
 pub use openai_adapter::{OpenAiAdapter, OpenAiClient};
 pub use registry::{LlmClientBuilder, LlmProvider};
 pub use stream_client::{LlmClientAdapter, StreamClient, adapt};

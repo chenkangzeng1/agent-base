@@ -11,6 +11,7 @@ categories = ["development-tools", "asynchronous"]
 
 [dependencies]
 anyhow = "1"
+anthropic-rs-api = { path = "../anthropic-rs-api/anthropic" }
 async-openai = { version = "0.41", default-features = true }
 async-trait = "0.1"
 eventsource-stream = "0.2"
