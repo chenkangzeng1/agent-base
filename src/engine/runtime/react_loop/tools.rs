@@ -285,6 +285,15 @@ impl RuntimeCore {
                 } else {
                     format!("❌ Tool execution failed: {}", e)
                 };
+                // Emit ToolCallFinished so TUI shows the failure before RunFinished
+                self.event_bus.emit(RuntimeEvent::ToolCallFinished {
+                    session_id: session_id.clone(),
+                    tool_name: names.join(", "),
+                    summary: error_summary.clone(),
+                    agent_id: None,
+                    trace_id: None,
+                    denied: false,
+                });
                 self.with_session_mut(session_id, |session| {
                     session.close_dangling_tool_calls(&error_summary);
                     session.remove_ephemeral_messages();
@@ -308,6 +317,54 @@ impl RuntimeCore {
                 Ok(Some(RunOutcome::Failed {
                     error: format!("Tool execution failed: {}", e),
                 }))
+            }
+            ToolErrorAction::RetryWithHistory { errors } => {
+                let tool_name = names.join(", ");
+                let error_history = format!(
+                    "The tool `{}` has failed {} consecutive times. \
+                     Error history:\n\n{}\n\n\
+                     Please analyze these errors and either switch to a different \
+                     approach or explain the failure to the user.",
+                    tool_name,
+                    errors.len(),
+                    errors
+                        .iter()
+                        .enumerate()
+                        .map(|(i, e)| format!("{}. {}", i + 1, e))
+                        .collect::<Vec<_>>()
+                        .join("\n\n"),
+                );
+
+                let summary = if config.language == crate::types::Language::Zh {
+                    format!(
+                        "⚠️ {} 连续失败 {} 次，已将错误历史发给 LLM 评估",
+                        tool_name,
+                        errors.len()
+                    )
+                } else {
+                    format!(
+                        "⚠️ {} failed {} consecutive times, error history sent to LLM",
+                        tool_name,
+                        errors.len()
+                    )
+                };
+
+                // Emit ToolCallFinished so TUI shows the recovery action
+                self.event_bus.emit(RuntimeEvent::ToolCallFinished {
+                    session_id: session_id.clone(),
+                    tool_name: tool_name.clone(),
+                    summary: summary.clone(),
+                    agent_id: None,
+                    trace_id: None,
+                    denied: false,
+                });
+
+                self.with_session_mut(session_id, |session| {
+                    session.close_dangling_tool_calls(&summary);
+                    session.push_message(MessageRole::User, error_history);
+                })
+                .await?;
+                Ok(None)
             }
             ToolErrorAction::Retry => {
                 let retry_prompt = match &retry_prompt_template {

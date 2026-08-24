@@ -10,6 +10,16 @@ pub enum ToolErrorAction {
     Stop,
     /// Feed the error back to the LLM and continue reasoning
     Retry,
+    /// Feed the full error history back to the LLM and let it evaluate.
+    ///
+    /// Emitted by [`ConsecutiveFailureRecovery`] when the same tool fails
+    /// `max_consecutive_failures` times in a row. Gives the LLM one grace
+    /// round to read the full error stack and either switch strategy or
+    /// explain the failure to the user.
+    RetryWithHistory {
+        /// Collected error messages from the consecutive failure streak.
+        errors: Vec<String>,
+    },
 }
 
 /// Recovery strategy after a tool execution failure
@@ -79,6 +89,10 @@ pub struct ConsecutiveFailureRecovery {
     max_consecutive_failures: usize,
     /// session_id -> (tool_name -> consecutive_failures)
     failure_counts: Mutex<HashMap<u64, HashMap<String, usize>>>,
+    /// session_id -> (tool_name -> collected error messages for the current streak)
+    error_messages: Mutex<HashMap<u64, HashMap<String, Vec<String>>>>,
+    /// session_id -> (tool_name -> whether RetryWithHistory grace was already used)
+    grace_used: Mutex<HashMap<u64, HashMap<String, bool>>>,
 }
 
 impl ConsecutiveFailureRecovery {
@@ -86,10 +100,12 @@ impl ConsecutiveFailureRecovery {
         Self {
             max_consecutive_failures,
             failure_counts: Mutex::new(HashMap::new()),
+            error_messages: Mutex::new(HashMap::new()),
+            grace_used: Mutex::new(HashMap::new()),
         }
     }
 
-    /// Reset failure count for a specific tool in a session.
+    /// Reset failure count, error messages, and grace flag for a specific tool in a session.
     /// Call this when a tool succeeds to avoid false positives.
     pub fn reset_failures(&self, session_id: &SessionId, tool_name: &str) {
         if let Ok(mut counts) = self.failure_counts.lock()
@@ -97,13 +113,29 @@ impl ConsecutiveFailureRecovery {
         {
             session_counts.remove(tool_name);
         }
+        if let Ok(mut msgs) = self.error_messages.lock()
+            && let Some(session_msgs) = msgs.get_mut(&session_id.id)
+        {
+            session_msgs.remove(tool_name);
+        }
+        if let Ok(mut grace) = self.grace_used.lock()
+            && let Some(session_grace) = grace.get_mut(&session_id.id)
+        {
+            session_grace.remove(tool_name);
+        }
     }
 
-    /// Reset all failure counts for a session.
+    /// Reset all failure counts, error messages, and grace flags for a session.
     /// Call this when a new turn starts.
     pub fn reset_session(&self, session_id: &SessionId) {
         if let Ok(mut counts) = self.failure_counts.lock() {
             counts.remove(&session_id.id);
+        }
+        if let Ok(mut msgs) = self.error_messages.lock() {
+            msgs.remove(&session_id.id);
+        }
+        if let Ok(mut grace) = self.grace_used.lock() {
+            grace.remove(&session_id.id);
         }
     }
 }
@@ -113,47 +145,82 @@ impl ToolErrorRecovery for ConsecutiveFailureRecovery {
         &self,
         session_id: &SessionId,
         tool_names: &[String],
-        _error: &AgentError,
+        error: &AgentError,
     ) -> AgentResult<ToolErrorAction> {
         let mut counts = self
             .failure_counts
             .lock()
             .map_err(|e| AgentError::internal(format!("Failed to lock failure counts: {}", e)))?;
+        let mut msgs = self
+            .error_messages
+            .lock()
+            .map_err(|e| AgentError::internal(format!("Failed to lock error messages: {}", e)))?;
+        let mut grace = self
+            .grace_used
+            .lock()
+            .map_err(|e| AgentError::internal(format!("Failed to lock grace_used: {}", e)))?;
 
         let session_counts = counts.entry(session_id.id).or_insert_with(HashMap::new);
+        let session_msgs = msgs.entry(session_id.id).or_insert_with(HashMap::new);
+        let session_grace = grace.entry(session_id.id).or_insert_with(HashMap::new);
 
-        // Increment failure count for each failing tool
+        // Record error message and increment failure count for each failing tool
+        let error_text = error.to_string();
         let mut max_failures = 0;
+        let mut threshold_tool: Option<String> = None;
         for name in tool_names {
             let count = session_counts.entry(name.clone()).or_insert(0);
             *count += 1;
+            session_msgs
+                .entry(name.clone())
+                .or_insert_with(Vec::new)
+                .push(error_text.clone());
             if *count > max_failures {
                 max_failures = *count;
+            }
+            if *count >= self.max_consecutive_failures {
+                threshold_tool = Some(name.clone());
             }
         }
 
         if max_failures >= self.max_consecutive_failures {
-            let failing_tools: Vec<String> = tool_names
-                .iter()
-                .filter(|name| {
-                    session_counts
-                        .get(*name)
-                        .is_some_and(|&c| c >= self.max_consecutive_failures)
-                })
-                .cloned()
-                .collect();
+            let tool_name = threshold_tool.unwrap_or_else(|| tool_names[0].clone());
 
             tracing::warn!(
                 session_id = session_id.id,
-                failing_tools = ?failing_tools,
+                tool = %tool_name,
+                failures = max_failures,
                 max_consecutive_failures = self.max_consecutive_failures,
-                "ConsecutiveFailureRecovery: stopping after repeated failures"
+                "ConsecutiveFailureRecovery: threshold reached"
             );
 
-            // Clear counts for this session since we're stopping
-            counts.remove(&session_id.id);
+            // Check if grace was already used for this tool
+            let already_used = session_grace
+                .get(&tool_name)
+                .copied()
+                .unwrap_or(false);
 
-            return Ok(ToolErrorAction::Stop);
+            if already_used {
+                // Grace exhausted → hard stop. Clear all state for this session.
+                counts.remove(&session_id.id);
+                msgs.remove(&session_id.id);
+                grace.remove(&session_id.id);
+                return Ok(ToolErrorAction::Stop);
+            }
+
+            // First time at threshold → give LLM one grace round
+            session_grace.insert(tool_name.clone(), true);
+
+            let errors = session_msgs
+                .get(&tool_name)
+                .cloned()
+                .unwrap_or_default();
+
+            // Clear messages but keep counts and grace flag so that the next
+            // failure for the same tool triggers Stop (not another RetryWithHistory).
+            msgs.remove(&session_id.id);
+
+            return Ok(ToolErrorAction::RetryWithHistory { errors });
         }
 
         Ok(ToolErrorAction::Retry)
@@ -192,8 +259,10 @@ mod tests {
         );
     }
 
+    // ── ConsecutiveFailureRecovery: basic flow ───────────────────────
+
     #[test]
-    fn consecutive_failure_retries_then_stops() {
+    fn consecutive_failure_retries_then_retry_with_history() {
         let recovery = ConsecutiveFailureRecovery::new(3);
         let session_id = SessionId::new(1);
         let names = vec!["tool_a".to_string()];
@@ -209,12 +278,59 @@ mod tests {
             ToolErrorAction::Retry
         );
 
-        // Third failure: stop
-        assert_eq!(
-            recovery.on_error(&session_id, &names, &error).unwrap(),
-            ToolErrorAction::Stop
+        // Third failure: RetryWithHistory (grace round)
+        let action = recovery.on_error(&session_id, &names, &error).unwrap();
+        assert!(matches!(action, ToolErrorAction::RetryWithHistory { .. }));
+    }
+
+    #[test]
+    fn consecutive_failure_stop_after_grace() {
+        let recovery = ConsecutiveFailureRecovery::new(3);
+        let session_id = SessionId::new(1);
+        let names = vec!["tool_a".to_string()];
+        let error = AgentError::internal("test error");
+
+        // 3 failures → RetryWithHistory (grace)
+        for _ in 0..2 {
+            recovery.on_error(&session_id, &names, &error).unwrap();
+        }
+        let action = recovery.on_error(&session_id, &names, &error).unwrap();
+        assert!(matches!(action, ToolErrorAction::RetryWithHistory { .. }));
+
+        // Counts NOT cleared — tool_a is still at count=3, grace_used=true.
+        // Next failure (count=4) hits threshold → grace already used → Stop.
+        let action = recovery.on_error(&session_id, &names, &error).unwrap();
+        assert!(
+            matches!(action, ToolErrorAction::Stop),
+            "should Stop after grace exhausted, got {:?}",
+            action
         );
     }
+
+    #[test]
+    fn consecutive_failure_retry_with_history_collects_errors() {
+        let recovery = ConsecutiveFailureRecovery::new(2);
+        let session_id = SessionId::new(1);
+        let names = vec!["tool_a".to_string()];
+
+        // Two failures with different error messages
+        let error1 = AgentError::internal("first error");
+        let error2 = AgentError::internal("second error");
+
+        recovery.on_error(&session_id, &names, &error1).unwrap();
+        let action = recovery.on_error(&session_id, &names, &error2).unwrap();
+
+        match action {
+            ToolErrorAction::RetryWithHistory { errors } => {
+                assert_eq!(errors.len(), 2);
+                assert!(errors[0].contains("first error"));
+                assert!(errors[1].contains("second error"));
+            }
+            _ => panic!("expected RetryWithHistory, got {:?}", action),
+        }
+    }
+
+    // ── ConsecutiveFailureRecovery: reset behavior ───────────────────
 
     #[test]
     fn consecutive_failure_resets_on_success() {
@@ -261,6 +377,86 @@ mod tests {
     }
 
     #[test]
+    fn consecutive_failure_on_success_resets_grace() {
+        let recovery = ConsecutiveFailureRecovery::new(2);
+        let session_id = SessionId::new(1);
+        let names = vec!["tool_a".to_string()];
+        let error = AgentError::internal("test error");
+
+        // 2 failures → RetryWithHistory
+        recovery.on_error(&session_id, &names, &error).unwrap();
+        let action = recovery.on_error(&session_id, &names, &error).unwrap();
+        assert!(matches!(action, ToolErrorAction::RetryWithHistory { .. }));
+
+        // Tool succeeds → reset
+        recovery.on_success(&session_id, "tool_a");
+
+        // Next 2 failures → should get RetryWithHistory again (grace reset)
+        recovery.on_error(&session_id, &names, &error).unwrap();
+        let action = recovery.on_error(&session_id, &names, &error).unwrap();
+        assert!(
+            matches!(action, ToolErrorAction::RetryWithHistory { .. }),
+            "grace should be reusable after success, got {:?}",
+            action
+        );
+    }
+
+    #[test]
+    fn consecutive_failure_resets_clears_error_messages() {
+        let recovery = ConsecutiveFailureRecovery::new(3);
+        let session_id = SessionId::new(1);
+        let names = vec!["tool_a".to_string()];
+        let error = AgentError::internal("test error");
+
+        // Two failures → error messages accumulated
+        recovery.on_error(&session_id, &names, &error).unwrap();
+        recovery.on_error(&session_id, &names, &error).unwrap();
+
+        // Reset
+        recovery.reset_failures(&session_id, "tool_a");
+
+        // Next failure → if we reach threshold, error messages should only
+        // contain the new ones (not the old ones before reset)
+        let error_new = AgentError::internal("new error");
+        recovery.on_error(&session_id, &names, &error_new).unwrap();
+        recovery.on_error(&session_id, &names, &error_new).unwrap();
+        let action = recovery.on_error(&session_id, &names, &error_new).unwrap();
+        match action {
+            ToolErrorAction::RetryWithHistory { errors } => {
+                assert_eq!(errors.len(), 3);
+                for e in &errors {
+                    assert!(e.contains("new error"), "old errors should be cleared");
+                }
+            }
+            _ => panic!("expected RetryWithHistory, got {:?}", action),
+        }
+    }
+
+    #[test]
+    fn consecutive_failure_resets_session_clears_everything() {
+        let recovery = ConsecutiveFailureRecovery::new(2);
+        let session_id = SessionId::new(1);
+        let names = vec!["tool_a".to_string()];
+        let error = AgentError::internal("test error");
+
+        // 2 failures → RetryWithHistory
+        recovery.on_error(&session_id, &names, &error).unwrap();
+        let action = recovery.on_error(&session_id, &names, &error).unwrap();
+        assert!(matches!(action, ToolErrorAction::RetryWithHistory { .. }));
+
+        // Reset session
+        recovery.reset_session(&session_id);
+
+        // Should retry again (fresh session)
+        assert_eq!(
+            recovery.on_error(&session_id, &names, &error).unwrap(),
+            ToolErrorAction::Retry
+        );
+    }
+
+    // ── ConsecutiveFailureRecovery: session isolation ─────────────────
+
+    #[test]
     fn consecutive_failure_per_session_isolation() {
         let recovery = ConsecutiveFailureRecovery::new(2);
         let session1 = SessionId::new(1);
@@ -268,41 +464,95 @@ mod tests {
         let names = vec!["tool_a".to_string()];
         let error = AgentError::internal("test error");
 
-        // Session 1: two failures -> stop
+        // Session 1: two failures → RetryWithHistory
         recovery.on_error(&session1, &names, &error).unwrap();
-        assert_eq!(
-            recovery.on_error(&session1, &names, &error).unwrap(),
-            ToolErrorAction::Stop
+        let action = recovery.on_error(&session1, &names, &error).unwrap();
+        assert!(matches!(action, ToolErrorAction::RetryWithHistory { .. }));
+
+        // Session 1: one more failure → Stop (grace already used)
+        let action = recovery.on_error(&session1, &names, &error).unwrap();
+        assert!(
+            matches!(action, ToolErrorAction::Stop),
+            "session 1 should Stop after grace exhausted, got {:?}",
+            action
         );
 
-        // Session 2: should still retry (isolated)
+        // Session 2: should still retry (isolated, no grace used)
         assert_eq!(
             recovery.on_error(&session2, &names, &error).unwrap(),
             ToolErrorAction::Retry
         );
     }
 
+    // ── ConsecutiveFailureRecovery: different tools independent ───────
+
     #[test]
-    fn consecutive_failure_resets_session() {
+    fn consecutive_failure_different_tools_independent() {
         let recovery = ConsecutiveFailureRecovery::new(2);
         let session_id = SessionId::new(1);
-        let names = vec!["tool_a".to_string()];
         let error = AgentError::internal("test error");
 
-        // Two failures -> stop
-        recovery.on_error(&session_id, &names, &error).unwrap();
-        assert_eq!(
-            recovery.on_error(&session_id, &names, &error).unwrap(),
-            ToolErrorAction::Stop
-        );
+        // tool_a: 1 failure
+        recovery
+            .on_error(
+                &session_id,
+                &vec!["tool_a".to_string()],
+                &error,
+            )
+            .unwrap();
 
-        // Reset session
-        recovery.reset_session(&session_id);
-
-        // Should retry again
+        // tool_b: 1 failure (independent counter)
         assert_eq!(
-            recovery.on_error(&session_id, &names, &error).unwrap(),
+            recovery
+                .on_error(
+                    &session_id,
+                    &vec!["tool_b".to_string()],
+                    &error,
+                )
+                .unwrap(),
             ToolErrorAction::Retry
         );
+
+        // tool_a: 2nd failure → RetryWithHistory (not affected by tool_b)
+        let action = recovery
+            .on_error(
+                &session_id,
+                &vec!["tool_a".to_string()],
+                &error,
+            )
+            .unwrap();
+        assert!(
+            matches!(action, ToolErrorAction::RetryWithHistory { .. }),
+            "tool_a should trigger RetryWithHistory independently of tool_b"
+        );
+    }
+
+    // ── ConsecutiveFailureRecovery: ToolArgsInvalid error messages ────
+
+    #[test]
+    fn consecutive_failure_records_serde_error_details() {
+        let recovery = ConsecutiveFailureRecovery::new(2);
+        let session_id = SessionId::new(1);
+        let names = vec!["write_file".to_string()];
+
+        // Simulate the improved serde error message
+        let error = AgentError::ToolArgsInvalid {
+            name: "write_file".to_string(),
+            raw: "missing field `path` at line 1 column 2 (args: {})".to_string(),
+        };
+
+        recovery.on_error(&session_id, &names, &error).unwrap();
+        let action = recovery.on_error(&session_id, &names, &error).unwrap();
+
+        match action {
+            ToolErrorAction::RetryWithHistory { errors } => {
+                assert_eq!(errors.len(), 2);
+                assert!(
+                    errors[0].contains("missing field"),
+                    "should contain serde error details"
+                );
+            }
+            _ => panic!("expected RetryWithHistory, got {:?}", action),
+        }
     }
 }

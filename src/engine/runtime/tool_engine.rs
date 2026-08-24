@@ -378,12 +378,19 @@ impl ToolEngine {
         for (id, name, args_str) in tool_calls {
             let args: Value = match serde_json::from_str(args_str) {
                 Ok(args) => args,
-                Err(_) => {
+                Err(e) => {
+                    tracing::debug!(
+                        session_id = session_id.id,
+                        tool = name,
+                        error = %e,
+                        args = args_str,
+                        "tool args JSON parse failed"
+                    );
                     failures.push(ToolFailure {
                         id: id.clone(),
                         error: AgentError::ToolArgsInvalid {
                             name: name.clone(),
-                            raw: args_str.clone(),
+                            raw: format!("{} (args: {})", e, args_str),
                         },
                     });
                     continue;
@@ -1194,5 +1201,100 @@ mod tests {
             .unwrap_err();
 
         assert!(matches!(err, AgentError::ApprovalDenied { .. }));
+    }
+
+    #[tokio::test]
+    async fn orchestrate_invalid_args_error_includes_serde_details() {
+        let mut registry = ToolRegistry::default();
+        registry.register(EchoTool);
+
+        let event_bus = EventBus::new(16);
+        let mut event_rx = event_bus.subscribe();
+        let engine = ToolEngine::new(registry, None, None, Arc::new(StopOnError), event_bus);
+
+        let sm = session_manager();
+        let c = ctx(&sm);
+
+        // Malformed JSON — serde should tell us what went wrong
+        let outcome = engine
+            .orchestrate(
+                &SessionId::new(1),
+                &[(
+                    "call_x".to_string(),
+                    "echo".to_string(),
+                    "{invalid".to_string(),
+                )],
+                &c,
+                &mut event_rx,
+                std::sync::Arc::new(std::sync::Mutex::new(|_| -> AgentResult<()> { Ok(()) })),
+            )
+            .await
+            .expect("orchestrate should not hard-fail on bad args");
+
+        assert_eq!(outcome.failures.len(), 1);
+        match &outcome.failures[0].error {
+            AgentError::ToolArgsInvalid { raw, .. } => {
+                // The raw field should now contain the serde error message,
+                // not just the original args string
+                assert!(
+                    raw.contains("args: {invalid"),
+                    "should include original args, got: {}",
+                    raw
+                );
+                // Serde error should be present (e.g., "key must be a string")
+                assert!(
+                    raw.len() > "{invalid".to_string().len() + 10,
+                    "raw should contain serde error in addition to args, got: {}",
+                    raw
+                );
+            }
+            other => panic!("expected ToolArgsInvalid, got {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn orchestrate_non_json_args_error_includes_parse_details() {
+        let mut registry = ToolRegistry::default();
+        registry.register(EchoTool);
+
+        let event_bus = EventBus::new(16);
+        let mut event_rx = event_bus.subscribe();
+        let engine = ToolEngine::new(registry, None, None, Arc::new(StopOnError), event_bus);
+
+        let sm = session_manager();
+        let c = ctx(&sm);
+
+        let outcome = engine
+            .orchestrate(
+                &SessionId::new(1),
+                &[(
+                    "call_x".to_string(),
+                    "echo".to_string(),
+                    "not-valid-json".to_string(),
+                )],
+                &c,
+                &mut event_rx,
+                std::sync::Arc::new(std::sync::Mutex::new(|_| -> AgentResult<()> { Ok(()) })),
+            )
+            .await
+            .expect("orchestrate should not hard-fail");
+
+        assert_eq!(outcome.failures.len(), 1);
+        match &outcome.failures[0].error {
+            AgentError::ToolArgsInvalid { raw, .. } => {
+                // Should contain the serde error description (e.g., "expected value at line 1 column 1")
+                assert!(
+                    raw.contains("args: not-valid-json"),
+                    "should include original args, got: {}",
+                    raw
+                );
+                assert!(
+                    raw.len() > "not-valid-json".to_string().len(),
+                    "raw should contain serde error in addition to args, got: {}",
+                    raw
+                );
+            }
+            other => panic!("expected ToolArgsInvalid, got {:?}", other),
+        }
     }
 }
