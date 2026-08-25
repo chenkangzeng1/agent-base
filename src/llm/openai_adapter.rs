@@ -366,6 +366,7 @@ fn build_chat_request(
         "model": model,
         "messages": raw_messages,
         "max_tokens": 8192,
+        "stream": true,
     });
 
     if !tools.is_empty()
