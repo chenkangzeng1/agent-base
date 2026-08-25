@@ -156,7 +156,7 @@ impl RuntimeCore {
         loop {
             turn_count += 1;
             let turn_start = std::time::Instant::now();
-            let model = self.llm_engine.get_client().model_name().to_string();
+            let model = self.llm_engine.get_provider().info().model.clone();
 
             // Check for cancellation at the top of each iteration
             if self.is_cancelled() {
@@ -573,6 +573,38 @@ impl RuntimeCore {
                             &metrics,
                             event_rx,
                             on_event.clone(),
+                        )
+                        .await;
+                }
+
+                // ── incomplete tool call: model signalled tool_use but no
+                // complete tool calls were parsed (stream cut off mid-delta,
+                // JSON incomplete, etc.) and finish_reason is normal.  Nudge
+                // the model to retry instead of silently falling through to
+                // the text-only branch. ──
+                if result.is_tool_call && result.tool_calls.is_empty() {
+                    let strikes = self
+                        .with_session_mut(session_id, |session| {
+                            session.run_state.record_empty_response()
+                        })
+                        .await?;
+                    tracing::warn!(
+                        session_id = session_id.id,
+                        turn = turn_count,
+                        strikes,
+                        "model signalled tool call but no complete tool calls were parsed"
+                    );
+                    let guard_ctx = self.build_guard_ctx(&turn_ctx, "").await;
+                    let action = self
+                        .guard
+                        .on_empty_response(&guard_ctx)
+                        .await;
+                    return self
+                        .dispatch_nudge_guard(
+                            action,
+                            &turn_ctx,
+                            &metrics,
+                            "incomplete tool call",
                         )
                         .await;
                 }

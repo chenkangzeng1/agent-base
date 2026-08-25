@@ -1,11 +1,13 @@
 /// 模拟 ops-omni 的实际场景：模型已调完工具，拿到 df -h 结果，需要写文字总结。
 ///
 /// 测试 qwen3.7-max 在"总结回复"场景下是否会产生 content。
-use agent_base::{AgentResult, ChatMessage, OpenAiClient, StreamChunk, StreamClient};
+use agent_base::{AgentResult, ChatMessage};
 use futures_util::StreamExt;
+use llm_trait::{ChatRequest, LlmProvider, ReasoningConfig, StreamChunk};
+use llm_unified::create_provider;
 
 async fn test_summarize(
-    client: &OpenAiClient,
+    provider: &dyn LlmProvider,
     label: &str,
     enable_thinking: bool,
 ) -> AgentResult<()> {
@@ -34,20 +36,14 @@ async fn test_summarize(
         },
     ];
 
-    let reasoning = agent_base::ReasoningConfig {
+    let reasoning = ReasoningConfig {
         enabled: Some(enable_thinking),
         budget_tokens: None,
         effort: None,
     };
 
-    let mut stream = client
-        .stream(
-            &messages,
-            &[] as &[serde_json::Value],
-            Some(&reasoning),
-            None,
-        )
-        .await?;
+    let request = ChatRequest::new(messages).with_reasoning(reasoning);
+    let mut stream = provider.stream(request).await.map_err(|e| agent_base::AgentError::internal(e.to_string()))?;
 
     let mut thought = String::new();
     let mut text = String::new();
@@ -55,7 +51,7 @@ async fn test_summarize(
     let mut has_stop = false;
 
     while let Some(chunk) = stream.next().await {
-        match chunk? {
+        match chunk.map_err(|e| agent_base::AgentError::internal(e.to_string()))? {
             StreamChunk::Thought(t) => {
                 thought.push_str(&t);
             }
@@ -120,13 +116,18 @@ async fn main() -> AgentResult<()> {
     ];
 
     for (model_id, model_label) in &models {
-        let client = OpenAiClient::new(
-            api_key.clone(),
-            model_id.to_string(),
-            Some(base_url.clone()),
-        );
-        test_summarize(&client, model_label, false).await?;
-        test_summarize(&client, model_label, true).await?;
+        let provider = create_provider(&llm_trait::LlmConfig {
+            backend: "custom".to_string(),
+            protocol: Some("openai".to_string()),
+            api_key: api_key.clone(),
+            model: model_id.to_string(),
+            base_url: Some(base_url.clone()),
+            options: std::collections::HashMap::new(),
+        })
+        .map_err(|e| agent_base::AgentError::internal(e.to_string()))?;
+
+        test_summarize(provider.as_ref(), model_label, false).await?;
+        test_summarize(provider.as_ref(), model_label, true).await?;
     }
 
     Ok(())

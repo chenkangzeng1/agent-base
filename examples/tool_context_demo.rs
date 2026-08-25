@@ -80,7 +80,7 @@ use std::io::Write;
 use std::sync::Arc;
 
 use agent_base::{
-    AgentBuilder, AgentResult, ChatMessage, Content, OpenAiClient, RuntimeEvent, Tool, ToolContext,
+    AgentBuilder, AgentResult, ChatMessage, Content, RuntimeEvent, Tool, ToolContext,
     UserEvent,
 };
 use async_trait::async_trait;
@@ -255,7 +255,7 @@ impl Tool for SummarizeTool {
 
         let raw = llm.chat(&messages, &[], None, None).await?;
 
-        // StreamClient::chat() returns the collected text content.
+        // LlmProvider::chat() returns the collected text content.
         let summary = if raw.is_empty() { "(no summary)" } else { &raw };
 
         ctx.emit_progress("Summarize: done!");
@@ -368,8 +368,15 @@ async fn main() -> AgentResult<()> {
         .or_else(|_| std::env::var("DASHSCOPE_BASE_URL"))
         .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
 
-    let llm: Arc<OpenAiClient> =
-        Arc::new(OpenAiClient::new(api_key, model.clone(), Some(base_url)));
+    let llm = llm_unified::create_provider(&llm_trait::LlmConfig {
+        backend: "custom".to_string(),
+        protocol: Some("openai".to_string()),
+        api_key,
+        model,
+        base_url: Some(base_url),
+        options: std::collections::HashMap::new(),
+    })
+    .map_err(|e| agent_base::AgentError::internal(e.to_string()))?;
 
     let runtime = AgentBuilder::new(llm)
         .system_prompt(SYSTEM_PROMPT)

@@ -1,6 +1,6 @@
 use crate::engine::middleware::{Middleware, PostLlmCtx, PreLlmCtx, UserMessageCtx};
 use crate::engine::{AgentBuilder, DenyAllApprovalHandler, RetryOnError};
-use crate::llm::{LlmCapabilities, LlmClient, StreamChunk};
+use crate::llm::StreamChunk;
 use crate::tool::{Content, Tool, ToolContext, ToolPolicy};
 use crate::types::{
     AgentError, AgentResult, ApprovalRequest, ChatMessage, CheckpointData, CheckpointStep,
@@ -8,47 +8,56 @@ use crate::types::{
 };
 use async_trait::async_trait;
 use futures_core::Stream;
+use llm_trait::LlmProvider;
 use serde_json::Value;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::task::{Context, Poll};
 
-/// Minimal LLM client for tests that don't need LLM calls.
-struct DummyClient;
+/// Minimal LLM provider for tests that don't need LLM calls.
+struct DummyProvider;
 
 #[async_trait]
-impl LlmClient for DummyClient {
-    async fn chat(
+impl LlmProvider for DummyProvider {
+    async fn stream(
         &self,
-        _messages: &[ChatMessage],
-        _tools: &[Value],
-        _reasoning: Option<&crate::ReasoningConfig>,
-        _response_format: Option<&ResponseFormat>,
-    ) -> AgentResult<Value> {
-        Ok(Value::Null)
-    }
-
-    async fn chat_stream(
-        &self,
-        _messages: &[ChatMessage],
-        _tools: &[Value],
-        _reasoning: Option<&crate::ReasoningConfig>,
-        _response_format: Option<&ResponseFormat>,
-    ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
+        _request: llm_trait::ChatRequest,
+    ) -> Result<llm_trait::ChatStream, llm_trait::LlmError> {
         unimplemented!("not used")
     }
 
-    fn capabilities(&self) -> LlmCapabilities {
-        LlmCapabilities::default()
+    async fn chat(
+        &self,
+        _request: llm_trait::ChatRequest,
+    ) -> Result<llm_trait::ChatResponse, llm_trait::LlmError> {
+        Ok(llm_trait::ChatResponse {
+            content: String::new(),
+            tool_calls: vec![],
+            usage: Default::default(),
+            finish_reason: llm_trait::response::FinishReason::Stop,
+            raw: None,
+        })
+    }
+
+    fn capabilities(&self) -> llm_trait::Capabilities {
+        Default::default()
+    }
+
+    fn info(&self) -> llm_trait::ProviderInfo {
+        llm_trait::ProviderInfo {
+            name: "test".to_string(),
+            model: "test".to_string(),
+            backend: llm_trait::LlmBackend::Custom("test".to_string()),
+            version: None,
+        }
     }
 }
 
 #[tokio::test]
 async fn run_turn_emits_run_finished_on_session_not_found() {
-    let client = crate::llm::adapt(Arc::new(DummyClient));
-    let runtime = AgentBuilder::new(client)
+    let runtime = AgentBuilder::new(Arc::new(DummyProvider))
         .system_prompt("test")
         .build()
         .expect("build runtime");
@@ -92,8 +101,7 @@ impl Middleware for FailingMiddleware {
 
 #[tokio::test]
 async fn run_turn_emits_run_finished_on_middleware_failure() {
-    let client = crate::llm::adapt(Arc::new(DummyClient));
-    let runtime = AgentBuilder::new(client)
+    let runtime = AgentBuilder::new(Arc::new(DummyProvider))
         .system_prompt("test")
         .middleware(FailingMiddleware)
         .build()
@@ -124,86 +132,103 @@ async fn run_turn_emits_run_finished_on_middleware_failure() {
     );
 }
 
-/// LLM client whose stream immediately yields an error.
-struct ErrorStreamClient;
+/// LLM provider whose stream immediately yields an error.
+struct ErrorStreamProvider;
 
 #[async_trait]
-impl LlmClient for ErrorStreamClient {
-    async fn chat(
+impl LlmProvider for ErrorStreamProvider {
+    async fn stream(
         &self,
-        _messages: &[ChatMessage],
-        _tools: &[Value],
-        _reasoning: Option<&crate::ReasoningConfig>,
-        _response_format: Option<&ResponseFormat>,
-    ) -> AgentResult<Value> {
-        Ok(Value::Null)
-    }
-
-    async fn chat_stream(
-        &self,
-        _messages: &[ChatMessage],
-        _tools: &[Value],
-        _reasoning: Option<&crate::ReasoningConfig>,
-        _response_format: Option<&ResponseFormat>,
-    ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
+        _request: llm_trait::ChatRequest,
+    ) -> Result<llm_trait::ChatStream, llm_trait::LlmError> {
         // Return a stream that immediately yields an error then ends.
         struct ErrorStream;
         impl Stream for ErrorStream {
-            type Item = AgentResult<StreamChunk>;
+            type Item = Result<StreamChunk, llm_trait::LlmError>;
             fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-                Poll::Ready(Some(Err(AgentError::internal("simulated LLM error"))))
+                Poll::Ready(Some(Err(llm_trait::LlmError::llm("simulated LLM error"))))
             }
         }
-        Ok(Box::pin(ErrorStream))
+        Ok(llm_trait::ChatStream::new(Box::pin(ErrorStream)))
     }
 
-    fn capabilities(&self) -> LlmCapabilities {
-        LlmCapabilities::default()
+    async fn chat(
+        &self,
+        _request: llm_trait::ChatRequest,
+    ) -> Result<llm_trait::ChatResponse, llm_trait::LlmError> {
+        Ok(llm_trait::ChatResponse {
+            content: String::new(),
+            tool_calls: vec![],
+            usage: Default::default(),
+            finish_reason: llm_trait::response::FinishReason::Stop,
+            raw: None,
+        })
+    }
+
+    fn capabilities(&self) -> llm_trait::Capabilities {
+        Default::default()
+    }
+
+    fn info(&self) -> llm_trait::ProviderInfo {
+        llm_trait::ProviderInfo {
+            name: "test".to_string(),
+            model: "test".to_string(),
+            backend: llm_trait::LlmBackend::Custom("test".to_string()),
+            version: None,
+        }
     }
 }
 
-/// LLM client whose stream immediately yields a cancellation error, exercising
+/// LLM provider whose stream immediately yields a cancellation error, exercising
 /// the `e.is_cancelled()` branch of the LLM-stream error path.
-struct CancelledStreamClient;
+struct CancelledStreamProvider;
 
 #[async_trait]
-impl LlmClient for CancelledStreamClient {
-    async fn chat(
+impl LlmProvider for CancelledStreamProvider {
+    async fn stream(
         &self,
-        _messages: &[ChatMessage],
-        _tools: &[Value],
-        _reasoning: Option<&crate::ReasoningConfig>,
-        _response_format: Option<&ResponseFormat>,
-    ) -> AgentResult<Value> {
-        Ok(Value::Null)
-    }
-
-    async fn chat_stream(
-        &self,
-        _messages: &[ChatMessage],
-        _tools: &[Value],
-        _reasoning: Option<&crate::ReasoningConfig>,
-        _response_format: Option<&ResponseFormat>,
-    ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
+        _request: llm_trait::ChatRequest,
+    ) -> Result<llm_trait::ChatStream, llm_trait::LlmError> {
         struct CancelledStream;
         impl Stream for CancelledStream {
-            type Item = AgentResult<StreamChunk>;
+            type Item = Result<StreamChunk, llm_trait::LlmError>;
             fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-                Poll::Ready(Some(Err(AgentError::Cancelled)))
+                Poll::Ready(Some(Err(llm_trait::LlmError::llm("cancelled"))))
             }
         }
-        Ok(Box::pin(CancelledStream))
+        Ok(llm_trait::ChatStream::new(Box::pin(CancelledStream)))
     }
 
-    fn capabilities(&self) -> LlmCapabilities {
-        LlmCapabilities::default()
+    async fn chat(
+        &self,
+        _request: llm_trait::ChatRequest,
+    ) -> Result<llm_trait::ChatResponse, llm_trait::LlmError> {
+        Ok(llm_trait::ChatResponse {
+            content: String::new(),
+            tool_calls: vec![],
+            usage: Default::default(),
+            finish_reason: llm_trait::response::FinishReason::Stop,
+            raw: None,
+        })
+    }
+
+    fn capabilities(&self) -> llm_trait::Capabilities {
+        Default::default()
+    }
+
+    fn info(&self) -> llm_trait::ProviderInfo {
+        llm_trait::ProviderInfo {
+            name: "test".to_string(),
+            model: "test".to_string(),
+            backend: llm_trait::LlmBackend::Custom("test".to_string()),
+            version: None,
+        }
     }
 }
 
 #[tokio::test]
 async fn run_turn_emits_run_finished_on_llm_error() {
-    let client = crate::llm::adapt(Arc::new(ErrorStreamClient));
-    let runtime = AgentBuilder::new(client)
+    let runtime = AgentBuilder::new(Arc::new(ErrorStreamProvider))
         .system_prompt("test")
         .build()
         .expect("build runtime");
@@ -233,11 +258,11 @@ async fn run_turn_emits_run_finished_on_llm_error() {
 }
 
 /// Mock LLM that returns scripted responses — one Vec<StreamChunk> per call.
-struct ScriptedClient {
+struct ScriptedProvider {
     script: Mutex<std::vec::IntoIter<Vec<StreamChunk>>>,
 }
 
-impl ScriptedClient {
+impl ScriptedProvider {
     fn new(script: Vec<Vec<StreamChunk>>) -> Self {
         Self {
             script: Mutex::new(script.into_iter()),
@@ -246,25 +271,12 @@ impl ScriptedClient {
 }
 
 #[async_trait]
-impl LlmClient for ScriptedClient {
-    async fn chat(
+impl LlmProvider for ScriptedProvider {
+    async fn stream(
         &self,
-        _messages: &[ChatMessage],
-        _tools: &[Value],
-        _reasoning: Option<&crate::ReasoningConfig>,
-        _response_format: Option<&ResponseFormat>,
-    ) -> AgentResult<Value> {
-        Ok(Value::Null)
-    }
-
-    async fn chat_stream(
-        &self,
-        _messages: &[ChatMessage],
-        _tools: &[Value],
-        _reasoning: Option<&crate::ReasoningConfig>,
-        _response_format: Option<&ResponseFormat>,
-    ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
-        let chunks: Vec<AgentResult<StreamChunk>> = self
+        _request: llm_trait::ChatRequest,
+    ) -> Result<llm_trait::ChatStream, llm_trait::LlmError> {
+        let chunks: Vec<Result<StreamChunk, llm_trait::LlmError>> = self
             .script
             .lock()
             .unwrap()
@@ -273,11 +285,26 @@ impl LlmClient for ScriptedClient {
             .into_iter()
             .map(Ok)
             .collect();
-        Ok(Box::pin(futures_util::stream::iter(chunks)))
+        Ok(llm_trait::ChatStream::new(Box::pin(
+            futures_util::stream::iter(chunks),
+        )))
     }
 
-    fn capabilities(&self) -> LlmCapabilities {
-        LlmCapabilities {
+    async fn chat(
+        &self,
+        _request: llm_trait::ChatRequest,
+    ) -> Result<llm_trait::ChatResponse, llm_trait::LlmError> {
+        Ok(llm_trait::ChatResponse {
+            content: String::new(),
+            tool_calls: vec![],
+            usage: Default::default(),
+            finish_reason: llm_trait::response::FinishReason::Stop,
+            raw: None,
+        })
+    }
+
+    fn capabilities(&self) -> llm_trait::Capabilities {
+        llm_trait::Capabilities {
             supports_streaming: true,
             supports_tools: true,
             supports_vision: false,
@@ -286,13 +313,22 @@ impl LlmClient for ScriptedClient {
             max_output_tokens: None,
         }
     }
+
+    fn info(&self) -> llm_trait::ProviderInfo {
+        llm_trait::ProviderInfo {
+            name: "test".to_string(),
+            model: "test".to_string(),
+            backend: llm_trait::LlmBackend::Custom("test".to_string()),
+            version: None,
+        }
+    }
 }
 
 #[tokio::test]
 async fn truncation_guard_blocks_tool_calls_on_length_finish_reason() {
     // First call: tool call with finish_reason="length" — should be blocked by guard.
     // Second call: model retries with corrected approach (text response).
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![
         // Turn 1: truncated tool call
         vec![
             StreamChunk::ToolCall(serde_json::json!({
@@ -319,12 +355,10 @@ async fn truncation_guard_blocks_tool_calls_on_length_finish_reason() {
                 finish_reason: Some("stop".to_string()),
             },
         ],
-    ])));
-
-    let runtime = AgentBuilder::new(client)
-        .system_prompt("You are a careful assistant.")
-        .build()
-        .expect("build runtime");
+    ])))
+    .system_prompt("You are a careful assistant.")
+    .build()
+    .expect("build runtime");
 
     let sid = runtime.create_session().await;
 
@@ -367,9 +401,9 @@ async fn truncation_guard_blocks_tool_calls_on_length_finish_reason() {
 
 #[tokio::test]
 async fn run_managed_processes_follow_up_messages() {
-    // ScriptedClient: first call returns text "done", second call (triggered
+    // ScriptedProvider: first call returns text "done", second call (triggered
     // by follow-up) returns "follow-up done". run_managed should process both.
-    let scripted = Arc::new(ScriptedClient::new(vec![
+    let scripted = Arc::new(ScriptedProvider::new(vec![
         // Turn 1: initial user input → text response
         vec![
             StreamChunk::Text("done".to_string()),
@@ -385,8 +419,7 @@ async fn run_managed_processes_follow_up_messages() {
             },
         ],
     ]));
-    let client = crate::llm::adapt(scripted);
-    let runtime = AgentBuilder::new(client.clone())
+    let runtime = AgentBuilder::new(scripted)
         .system_prompt("You are a helpful assistant.")
         .build()
         .expect("build runtime");
@@ -455,7 +488,7 @@ impl Tool for EchoTool {
 #[tokio::test]
 async fn run_turn_executes_tool_call_and_returns_text() {
     // Turn 1: model requests the echo tool; Turn 2: model emits a final answer.
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![
         vec![
             StreamChunk::ToolCall(serde_json::json!({
                 "delta": {
@@ -478,13 +511,11 @@ async fn run_turn_executes_tool_call_and_returns_text() {
                 finish_reason: Some("stop".to_string()),
             },
         ],
-    ])));
-
-    let runtime = AgentBuilder::new(client)
-        .system_prompt("test")
-        .register_tool(EchoTool)
-        .build()
-        .expect("build runtime");
+    ])))
+    .system_prompt("test")
+    .register_tool(EchoTool)
+    .build()
+    .expect("build runtime");
 
     let sid = runtime.create_session().await;
 
@@ -648,8 +679,7 @@ impl Middleware for HookMiddleware {
 
 #[tokio::test]
 async fn run_emits_run_finished_on_session_not_found() {
-    let client = crate::llm::adapt(Arc::new(DummyClient));
-    let runtime = AgentBuilder::new(client)
+    let runtime = AgentBuilder::new(Arc::new(DummyProvider))
         .system_prompt("test")
         .build()
         .expect("build runtime");
@@ -679,16 +709,15 @@ async fn run_emits_run_finished_on_session_not_found() {
 
 #[tokio::test]
 async fn run_completes_with_text_response() {
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![vec![
         StreamChunk::Text("answer".to_string()),
         StreamChunk::Stop {
             finish_reason: Some("stop".to_string()),
         },
-    ]])));
-    let runtime = AgentBuilder::new(client)
-        .system_prompt("test")
-        .build()
-        .expect("build runtime");
+    ]])))
+    .system_prompt("test")
+    .build()
+    .expect("build runtime");
 
     let sid = runtime.create_session().await;
     runtime.add_user_message(&sid, "question").await.unwrap();
@@ -720,7 +749,7 @@ async fn run_completes_with_text_response() {
 
 #[tokio::test]
 async fn run_turn_emits_run_cancelled_when_cancelled_mid_run() {
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![vec![
         StreamChunk::ToolCall(serde_json::json!({
             "delta": {
                 "tool_calls": [{
@@ -732,12 +761,11 @@ async fn run_turn_emits_run_cancelled_when_cancelled_mid_run() {
         StreamChunk::Stop {
             finish_reason: Some("tool_calls".to_string()),
         },
-    ]])));
-    let runtime = AgentBuilder::new(client)
-        .system_prompt("test")
-        .register_tool(CancelTool)
-        .build()
-        .expect("build runtime");
+    ]])))
+    .system_prompt("test")
+    .register_tool(CancelTool)
+    .build()
+    .expect("build runtime");
 
     let sid = runtime.create_session().await;
     let events = Arc::new(Mutex::new(Vec::new()));
@@ -767,7 +795,7 @@ async fn run_turn_emits_run_cancelled_when_cancelled_mid_run() {
 #[tokio::test]
 async fn run_turn_failing_tool_stops_with_failed_outcome() {
     // Default recovery is StopOnError — a failing tool should stop the run.
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![vec![
         StreamChunk::ToolCall(serde_json::json!({
             "delta": {
                 "tool_calls": [{
@@ -779,12 +807,11 @@ async fn run_turn_failing_tool_stops_with_failed_outcome() {
         StreamChunk::Stop {
             finish_reason: Some("tool_calls".to_string()),
         },
-    ]])));
-    let runtime = AgentBuilder::new(client)
-        .system_prompt("test")
-        .register_tool(FailingTool)
-        .build()
-        .expect("build runtime");
+    ]])))
+    .system_prompt("test")
+    .register_tool(FailingTool)
+    .build()
+    .expect("build runtime");
 
     let sid = runtime.create_session().await;
     let result = runtime
@@ -801,7 +828,7 @@ async fn run_turn_failing_tool_stops_with_failed_outcome() {
 #[tokio::test]
 async fn run_turn_failing_tool_retries_then_completes() {
     // RetryOnError recovery: first turn fails, second turn (after retry prompt) completes.
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![
         vec![
             StreamChunk::ToolCall(serde_json::json!({
                 "delta": {
@@ -821,13 +848,12 @@ async fn run_turn_failing_tool_retries_then_completes() {
                 finish_reason: Some("stop".to_string()),
             },
         ],
-    ])));
-    let runtime = AgentBuilder::new(client)
-        .system_prompt("test")
-        .register_tool(FailingTool)
-        .error_recovery(Arc::new(RetryOnError))
-        .build()
-        .expect("build runtime");
+    ])))
+    .system_prompt("test")
+    .register_tool(FailingTool)
+    .error_recovery(Arc::new(RetryOnError))
+    .build()
+    .expect("build runtime");
 
     let sid = runtime.create_session().await;
     let result = runtime
@@ -843,7 +869,7 @@ async fn run_turn_failing_tool_retries_then_completes() {
 
 #[tokio::test]
 async fn run_turn_approval_denied_completes_without_executing() {
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![vec![
         StreamChunk::ToolCall(serde_json::json!({
             "delta": {
                 "tool_calls": [{
@@ -855,14 +881,13 @@ async fn run_turn_approval_denied_completes_without_executing() {
         StreamChunk::Stop {
             finish_reason: Some("tool_calls".to_string()),
         },
-    ]])));
-    let runtime = AgentBuilder::new(client)
-        .system_prompt("test")
-        .register_tool(EchoTool)
-        .approval_handler(Arc::new(DenyAllApprovalHandler))
-        .tool_policy(Arc::new(RequireApproval))
-        .build()
-        .expect("build runtime");
+    ]])))
+    .system_prompt("test")
+    .register_tool(EchoTool)
+    .approval_handler(Arc::new(DenyAllApprovalHandler))
+    .tool_policy(Arc::new(RequireApproval))
+    .build()
+    .expect("build runtime");
 
     let sid = runtime.create_session().await;
     let result = runtime
@@ -887,17 +912,16 @@ async fn run_turn_approval_denied_completes_without_executing() {
 
 #[tokio::test]
 async fn resume_from_checkpoint_executes_pending_tool_calls() {
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![vec![
         StreamChunk::Text("resumed answer".to_string()),
         StreamChunk::Stop {
             finish_reason: Some("stop".to_string()),
         },
-    ]])));
-    let runtime = AgentBuilder::new(client)
-        .system_prompt("test")
-        .register_tool(EchoTool)
-        .build()
-        .expect("build runtime");
+    ]])))
+    .system_prompt("test")
+    .register_tool(EchoTool)
+    .build()
+    .expect("build runtime");
 
     let sid = runtime.create_session().await;
 
@@ -941,13 +965,6 @@ async fn resume_from_checkpoint_executes_pending_tool_calls() {
 
 #[tokio::test]
 async fn middleware_on_pre_and_post_llm_hooks_fire() {
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
-        StreamChunk::Text("hello".to_string()),
-        StreamChunk::Stop {
-            finish_reason: Some("stop".to_string()),
-        },
-    ]])));
-
     let pre_called = Arc::new(AtomicBool::new(false));
     let post_called = Arc::new(AtomicBool::new(false));
     let mw = HookMiddleware {
@@ -955,11 +972,16 @@ async fn middleware_on_pre_and_post_llm_hooks_fire() {
         post_called: post_called.clone(),
     };
 
-    let runtime = AgentBuilder::new(client)
-        .system_prompt("test")
-        .middleware(mw)
-        .build()
-        .expect("build runtime");
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![vec![
+        StreamChunk::Text("hello".to_string()),
+        StreamChunk::Stop {
+            finish_reason: Some("stop".to_string()),
+        },
+    ]])))
+    .system_prompt("test")
+    .middleware(mw)
+    .build()
+    .expect("build runtime");
 
     let sid = runtime.create_session().await;
     let result = runtime.run_turn(sid.clone(), "hi", |_| Ok(())).await;
@@ -986,16 +1008,15 @@ async fn middleware_on_pre_and_post_llm_hooks_fire() {
 
 #[tokio::test]
 async fn run_emits_runfinished_exactly_once() {
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![vec![
         StreamChunk::Text("answer".to_string()),
         StreamChunk::Stop {
             finish_reason: Some("stop".to_string()),
         },
-    ]])));
-    let runtime = AgentBuilder::new(client)
-        .system_prompt("test")
-        .build()
-        .expect("build runtime");
+    ]])))
+    .system_prompt("test")
+    .build()
+    .expect("build runtime");
     let sid = runtime.create_session().await;
     runtime.add_user_message(&sid, "question").await.unwrap();
 
@@ -1021,16 +1042,15 @@ async fn run_emits_runfinished_exactly_once() {
 
 #[tokio::test]
 async fn run_managed_emits_runfinished_exactly_once() {
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![vec![
         StreamChunk::Text("done".to_string()),
         StreamChunk::Stop {
             finish_reason: Some("stop".to_string()),
         },
-    ]])));
-    let runtime = AgentBuilder::new(client)
-        .system_prompt("test")
-        .build()
-        .expect("build runtime");
+    ]])))
+    .system_prompt("test")
+    .build()
+    .expect("build runtime");
     let sid = runtime.create_session().await;
 
     let events = Arc::new(Mutex::new(Vec::new()));
@@ -1060,7 +1080,7 @@ async fn run_managed_emits_runfinished_exactly_once() {
 
 #[tokio::test]
 async fn run_managed_cancel_cleans_up_ephemeral_messages() {
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![vec![
         StreamChunk::ToolCall(serde_json::json!({
             "delta": {
                 "tool_calls": [{
@@ -1072,12 +1092,11 @@ async fn run_managed_cancel_cleans_up_ephemeral_messages() {
         StreamChunk::Stop {
             finish_reason: Some("tool_calls".to_string()),
         },
-    ]])));
-    let runtime = AgentBuilder::new(client)
-        .system_prompt("test")
-        .register_tool(CancelTool)
-        .build()
-        .expect("build runtime");
+    ]])))
+    .system_prompt("test")
+    .register_tool(CancelTool)
+    .build()
+    .expect("build runtime");
 
     let sid = runtime.create_session().await;
     // Inject an ephemeral message that must be cleaned up when the run ends.
@@ -1142,8 +1161,7 @@ fn text_script(text: &str) -> Vec<Vec<StreamChunk>> {
 
 #[tokio::test]
 async fn turn_end_callback_receives_correct_context() {
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(text_script("answer"))));
-    let runtime = AgentBuilder::new(client)
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(text_script("answer"))))
         .system_prompt("test")
         .build()
         .expect("build runtime");
@@ -1175,8 +1193,7 @@ async fn turn_end_callback_receives_correct_context() {
 
 #[tokio::test]
 async fn run_turn_text_only_event_order() {
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(text_script("answer"))));
-    let runtime = AgentBuilder::new(client)
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(text_script("answer"))))
         .system_prompt("test")
         .build()
         .expect("build runtime");
@@ -1215,8 +1232,7 @@ fn reasoning_script() -> Vec<Vec<StreamChunk>> {
 /// then fails after `REASONING_ONLY_MAX_STRIKES` consecutive strikes.
 #[tokio::test]
 async fn reasoning_only_with_tools_fails_instead_of_fake_completing() {
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(reasoning_script())));
-    let runtime = AgentBuilder::new(client)
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(reasoning_script())))
         .system_prompt("test")
         .register_tool(EchoTool)
         .build()
@@ -1239,8 +1255,7 @@ async fn reasoning_only_with_tools_fails_instead_of_fake_completing() {
 /// final answer must be nudged and eventually fail, not silently completed.
 #[tokio::test]
 async fn reasoning_only_without_tools_fails_instead_of_promoting() {
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(reasoning_script())));
-    let runtime = AgentBuilder::new(client)
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(reasoning_script())))
         .system_prompt("test")
         .build()
         .expect("build runtime");
@@ -1268,8 +1283,7 @@ async fn empty_response_fails_after_bounded_retries() {
             }]
         })
         .collect();
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(script)));
-    let runtime = AgentBuilder::new(client)
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(script)))
         .system_prompt("test")
         .register_tool(EchoTool)
         .build()
@@ -1289,7 +1303,7 @@ async fn empty_response_fails_after_bounded_retries() {
 
 #[tokio::test]
 async fn run_turn_tool_call_then_text_event_order() {
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![
         vec![
             StreamChunk::ToolCall(serde_json::json!({
                 "delta": {
@@ -1312,12 +1326,11 @@ async fn run_turn_tool_call_then_text_event_order() {
                 finish_reason: Some("stop".to_string()),
             },
         ],
-    ])));
-    let runtime = AgentBuilder::new(client)
-        .system_prompt("test")
-        .register_tool(EchoTool)
-        .build()
-        .expect("build runtime");
+    ])))
+    .system_prompt("test")
+    .register_tool(EchoTool)
+    .build()
+    .expect("build runtime");
     let sid = runtime.create_session().await;
 
     let (events, outcome) = runtime
@@ -1341,7 +1354,7 @@ async fn run_turn_tool_call_then_text_event_order() {
 
 #[tokio::test]
 async fn run_turn_cancel_does_not_emit_runfinished() {
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![vec![
         StreamChunk::ToolCall(serde_json::json!({
             "delta": {
                 "tool_calls": [{
@@ -1353,12 +1366,11 @@ async fn run_turn_cancel_does_not_emit_runfinished() {
         StreamChunk::Stop {
             finish_reason: Some("tool_calls".to_string()),
         },
-    ]])));
-    let runtime = AgentBuilder::new(client)
-        .system_prompt("test")
-        .register_tool(CancelTool)
-        .build()
-        .expect("build runtime");
+    ]])))
+    .system_prompt("test")
+    .register_tool(CancelTool)
+    .build()
+    .expect("build runtime");
     let sid = runtime.create_session().await;
 
     let events = Arc::new(Mutex::new(Vec::new()));
@@ -1391,8 +1403,7 @@ async fn run_turn_cancel_does_not_emit_runfinished() {
 
 #[tokio::test]
 async fn run_text_only_event_order() {
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(text_script("answer"))));
-    let runtime = AgentBuilder::new(client)
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(text_script("answer"))))
         .system_prompt("test")
         .build()
         .expect("build runtime");
@@ -1417,8 +1428,7 @@ async fn run_text_only_event_order() {
 
 #[tokio::test]
 async fn run_managed_text_only_event_order() {
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(text_script("done"))));
-    let runtime = AgentBuilder::new(client)
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(text_script("done"))))
         .system_prompt("test")
         .build()
         .expect("build runtime");
@@ -1444,7 +1454,7 @@ async fn run_managed_text_only_event_order() {
 async fn max_turns_exceeded_event_order() {
     // Turn 1 requests a tool; with max_turns = 1, turn 2 hits the cap
     // before any LLM call, so the second script entry is never consumed.
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![
         vec![
             StreamChunk::ToolCall(serde_json::json!({
                 "delta": {
@@ -1467,13 +1477,12 @@ async fn max_turns_exceeded_event_order() {
                 finish_reason: Some("stop".to_string()),
             },
         ],
-    ])));
-    let runtime = AgentBuilder::new(client)
-        .system_prompt("test")
-        .register_tool(EchoTool)
-        .execution_max_turns(1)
-        .build()
-        .expect("build runtime");
+    ])))
+    .system_prompt("test")
+    .register_tool(EchoTool)
+    .execution_max_turns(1)
+    .build()
+    .expect("build runtime");
     let sid = runtime.create_session().await;
 
     let (events, outcome) = runtime
@@ -1503,7 +1512,7 @@ async fn max_turns_exceeded_event_order() {
 
 #[tokio::test]
 async fn run_turn_tool_cancelled_mid_execution_returns_cancelled() {
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![vec![
         StreamChunk::ToolCall(serde_json::json!({
             "delta": {
                 "tool_calls": [{
@@ -1515,12 +1524,11 @@ async fn run_turn_tool_cancelled_mid_execution_returns_cancelled() {
         StreamChunk::Stop {
             finish_reason: Some("tool_calls".to_string()),
         },
-    ]])));
-    let runtime = AgentBuilder::new(client)
-        .system_prompt("test")
-        .register_tool(CancelPendingTool)
-        .build()
-        .expect("build runtime");
+    ]])))
+    .system_prompt("test")
+    .register_tool(CancelPendingTool)
+    .build()
+    .expect("build runtime");
 
     let sid = runtime.create_session().await;
     let events = Arc::new(Mutex::new(Vec::new()));
@@ -1548,8 +1556,11 @@ async fn run_turn_tool_cancelled_mid_execution_returns_cancelled() {
 
 #[tokio::test]
 async fn run_turn_llm_stream_cancelled_returns_cancelled() {
-    let client = crate::llm::adapt(Arc::new(CancelledStreamClient));
-    let runtime = AgentBuilder::new(client)
+    // With LlmProvider, LlmError has no Cancelled variant — the stream error
+    // converts to AgentError::Llm, which the react loop surfaces as Failed.
+    // Real cancellation (user-triggered) is handled by the cancel_token path
+    // in run_llm_turn_with_retry, not by stream errors.
+    let runtime = AgentBuilder::new(Arc::new(CancelledStreamProvider))
         .system_prompt("test")
         .build()
         .expect("build runtime");
@@ -1567,21 +1578,20 @@ async fn run_turn_llm_stream_cancelled_returns_cancelled() {
     let events = events.lock().unwrap();
 
     assert!(
-        matches!(&result, Err(e) if e.is_cancelled()),
-        "run_turn should surface the cancelled LLM stream error, got: {result:?}"
+        matches!(&result, Ok(RunOutcome::Failed { .. }) | Err(_)),
+        "run_turn should surface the LLM stream error, got: {result:?}"
     );
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, RuntimeEvent::RunCancelled { .. })),
-        "cancelled LLM stream must emit RunCancelled"
+            .any(|e| matches!(e, RuntimeEvent::RunFinished { .. })),
+        "LLM stream error must emit RunFinished"
     );
 }
 
 #[tokio::test]
 async fn run_turn_with_llm_retry_completes() {
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(text_script("answer"))));
-    let runtime = AgentBuilder::new(client)
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(text_script("answer"))))
         .system_prompt("test")
         .llm_retry(crate::types::RetryConfig::default().max_retries(1))
         .build()
@@ -1599,7 +1609,7 @@ async fn run_turn_with_llm_retry_completes() {
 
 #[tokio::test]
 async fn run_managed_tool_cancelled_mid_execution_returns_cancelled() {
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![vec![
         StreamChunk::ToolCall(serde_json::json!({
             "delta": {
                 "tool_calls": [{
@@ -1611,12 +1621,11 @@ async fn run_managed_tool_cancelled_mid_execution_returns_cancelled() {
         StreamChunk::Stop {
             finish_reason: Some("tool_calls".to_string()),
         },
-    ]])));
-    let runtime = AgentBuilder::new(client)
-        .system_prompt("test")
-        .register_tool(CancelPendingTool)
-        .build()
-        .expect("build runtime");
+    ]])))
+    .system_prompt("test")
+    .register_tool(CancelPendingTool)
+    .build()
+    .expect("build runtime");
 
     let sid = runtime.create_session().await;
     let result = runtime
@@ -1634,8 +1643,7 @@ async fn run_managed_max_turns_exceeded() {
     // max_turns = 1 caps the *cumulative* turn budget across follow-ups. The
     // first inner loop consumes the single turn; the seeded follow-up message
     // triggers a second iteration, which hits the cap before any further LLM call.
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(text_script("done"))));
-    let runtime = AgentBuilder::new(client)
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(text_script("done"))))
         .system_prompt("test")
         .execution_max_turns(1)
         .build()
@@ -1663,18 +1671,17 @@ async fn run_managed_max_turns_exceeded() {
 /// The react loop should return `RunOutcome::Failed`.
 #[tokio::test]
 async fn tool_use_with_no_tool_calls_returns_failed() {
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![vec![
         // A ToolCall chunk with no delta.tool_calls — sets is_tool_call=true
         // but leaves tool_calls empty.
         StreamChunk::ToolCall(serde_json::json!({ "no_delta": true })),
         StreamChunk::Stop {
             finish_reason: Some("tool_use".to_string()),
         },
-    ]])));
-    let runtime = AgentBuilder::new(client)
-        .system_prompt("test")
-        .build()
-        .expect("build runtime");
+    ]])))
+    .system_prompt("test")
+    .build()
+    .expect("build runtime");
     let sid = runtime.create_session().await;
 
     let result = runtime.run_turn(sid, "do something", |_| Ok(())).await;
@@ -1690,16 +1697,15 @@ async fn tool_use_with_no_tool_calls_returns_failed() {
 /// The react loop should return `RunOutcome::Failed`.
 #[tokio::test]
 async fn truncated_text_only_returns_failed() {
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![vec![
         StreamChunk::Text("Here is part of my answer before being cut".to_string()),
         StreamChunk::Stop {
             finish_reason: Some("max_tokens".to_string()),
         },
-    ]])));
-    let runtime = AgentBuilder::new(client)
-        .system_prompt("test")
-        .build()
-        .expect("build runtime");
+    ]])))
+    .system_prompt("test")
+    .build()
+    .expect("build runtime");
     let sid = runtime.create_session().await;
 
     let result = runtime.run_turn(sid, "do something", |_| Ok(())).await;
@@ -1715,16 +1721,15 @@ async fn truncated_text_only_returns_failed() {
 /// The react loop should return `RunOutcome::Failed`.
 #[tokio::test]
 async fn openai_length_text_only_returns_failed() {
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![vec![
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![vec![
         StreamChunk::Text("Partial response before length limit".to_string()),
         StreamChunk::Stop {
             finish_reason: Some("length".to_string()),
         },
-    ]])));
-    let runtime = AgentBuilder::new(client)
-        .system_prompt("test")
-        .build()
-        .expect("build runtime");
+    ]])))
+    .system_prompt("test")
+    .build()
+    .expect("build runtime");
     let sid = runtime.create_session().await;
 
     let result = runtime.run_turn(sid, "do something", |_| Ok(())).await;
@@ -1732,6 +1737,53 @@ async fn openai_length_text_only_returns_failed() {
     assert!(
         matches!(result, Ok(RunOutcome::Failed { .. })),
         "OpenAI length with text-only should return Failed: {:?}",
+        result
+    );
+}
+
+/// Model emits a ToolCall chunk (setting `is_tool_call = true`) but the stream
+/// ends with `finish_reason = "stop"` and zero parsed tool calls (no text either).
+///
+/// This mirrors the real-world scenario where the model starts generating a tool
+/// call but the stream produces an incomplete/empty tool call delta.  With
+/// `finish_reason = "stop"` (not `"tool_use"`), the anomaly-detection branch at
+/// line 582 does NOT fire.
+///
+/// After the fix, the react loop should detect this inconsistent state via the
+/// new incomplete-tool-call branch and surface a failure instead of silently
+/// falling through to the text-only branch and completing.
+#[tokio::test]
+async fn tool_call_chunk_with_no_parsed_calls_and_stop_finish_fails() {
+    let guard = Arc::new(RecordingGuard::new(GuardAction::Done));
+    let guard_clone = guard.clone();
+
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![
+        vec![
+            // A ToolCall chunk that sets is_tool_call=true but contains no
+            // actual tool_calls in the delta (simulates incomplete stream).
+            StreamChunk::ToolCall(serde_json::json!({ "no_delta": true })),
+            StreamChunk::Stop {
+                finish_reason: Some("stop".to_string()),
+            },
+        ],
+    ])))
+    .system_prompt("test")
+    .register_tool(EchoTool)
+    .guard_dyn(guard_clone)
+    .build()
+    .expect("build runtime");
+
+    let sid = runtime.create_session().await;
+    let result = runtime
+        .run_turn(sid, "帮我解读一下这个工程", |_| Ok(()))
+        .await;
+
+    // The incomplete tool call should trigger the on_empty_response guard.
+    // dispatch_nudge_guard treats GuardAction::Done as failure, so the run
+    // should return Failed — NOT silently complete.
+    assert!(
+        matches!(result, Ok(RunOutcome::Failed { .. })),
+        "incomplete tool call should fail, not silently complete. Got: {:?}",
         result
     );
 }
@@ -1783,7 +1835,10 @@ impl ReactLoopGuard for RecordingGuard {
 /// must be invoked with `run_has_tool_calls = true`.
 #[tokio::test]
 async fn branch4_guard_called_with_run_has_tool_calls() {
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![
+    let guard = Arc::new(RecordingGuard::new(GuardAction::Done));
+    let guard_clone = guard.clone();
+
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![
         // Turn 1: tool call
         vec![
             StreamChunk::ToolCall(serde_json::json!({
@@ -1808,17 +1863,12 @@ async fn branch4_guard_called_with_run_has_tool_calls() {
                 finish_reason: Some("stop".to_string()),
             },
         ],
-    ])));
-
-    let guard = Arc::new(RecordingGuard::new(GuardAction::Done));
-    let guard_clone = guard.clone();
-
-    let runtime = AgentBuilder::new(client)
-        .system_prompt("test")
-        .register_tool(EchoTool)
-        .guard_dyn(guard_clone)
-        .build()
-        .expect("build runtime");
+    ])))
+    .system_prompt("test")
+    .register_tool(EchoTool)
+    .guard_dyn(guard_clone)
+    .build()
+    .expect("build runtime");
 
     let sid = runtime.create_session().await;
 
@@ -1843,7 +1893,14 @@ async fn branch4_guard_called_with_run_has_tool_calls() {
 /// and call the LLM again — the second text response should complete.
 #[tokio::test]
 async fn branch4_guard_continue_nudges_and_retries() {
-    let client = crate::llm::adapt(Arc::new(ScriptedClient::new(vec![
+    // Guard always returns Continue → nudge each time → loops until max turns.
+    // We verify: (1) guard called multiple times, (2) nudge injected, (3) run_has_tool_calls persists.
+    let guard = Arc::new(RecordingGuard::new(GuardAction::Continue(
+        "please continue".to_string(),
+    )));
+    let guard_clone = guard.clone();
+
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![
         // Turn 1: tool call
         vec![
             StreamChunk::ToolCall(serde_json::json!({
@@ -1875,21 +1932,12 @@ async fn branch4_guard_continue_nudges_and_retries() {
                 finish_reason: Some("stop".to_string()),
             },
         ],
-    ])));
-
-    // Guard always returns Continue → nudge each time → loops until max turns.
-    // We verify: (1) guard called multiple times, (2) nudge injected, (3) run_has_tool_calls persists.
-    let guard = Arc::new(RecordingGuard::new(GuardAction::Continue(
-        "please continue".to_string(),
-    )));
-    let guard_clone = guard.clone();
-
-    let runtime = AgentBuilder::new(client)
-        .system_prompt("test")
-        .register_tool(EchoTool)
-        .guard_dyn(guard_clone)
-        .build()
-        .expect("build runtime");
+    ])))
+    .system_prompt("test")
+    .register_tool(EchoTool)
+    .guard_dyn(guard_clone)
+    .build()
+    .expect("build runtime");
 
     let sid = runtime.create_session().await;
 
@@ -1921,5 +1969,94 @@ async fn branch4_guard_continue_nudges_and_retries() {
     assert!(
         all_have_tools,
         "all on_text_only calls should have run_has_tool_calls = true"
+    );
+}
+
+/// Guard that counts `on_empty_response` calls and returns `Continue` for the
+/// first `max_strikes` calls, then `Fail`.  All other methods return `Done`.
+struct EmptyResponseStrikeGuard {
+    max_strikes: usize,
+    calls: AtomicUsize,
+}
+
+impl EmptyResponseStrikeGuard {
+    fn new(max_strikes: usize) -> Self {
+        Self {
+            max_strikes,
+            calls: AtomicUsize::new(0),
+        }
+    }
+}
+
+#[async_trait]
+impl ReactLoopGuard for EmptyResponseStrikeGuard {
+    async fn on_reasoning_only(&self, _ctx: &GuardCtx) -> GuardAction {
+        GuardAction::Done
+    }
+
+    async fn on_empty_response(&self, _ctx: &GuardCtx) -> GuardAction {
+        let count = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+        if count >= self.max_strikes {
+            GuardAction::Fail(format!(
+                "exceeded max retries ({})",
+                self.max_strikes
+            ))
+        } else {
+            GuardAction::Continue("please retry".to_string())
+        }
+    }
+
+    async fn on_text_only(&self, _ctx: &GuardCtx) -> GuardAction {
+        GuardAction::Done
+    }
+}
+
+/// Incomplete tool calls (is_tool_call=true, tool_calls empty) should trigger
+/// the on_empty_response guard, which nudges the model to retry.  After
+/// `max_strikes` consecutive failures, the guard returns Fail and the run ends
+/// with RunOutcome::Failed — not an infinite loop, not a silent completion.
+#[tokio::test]
+async fn incomplete_tool_calls_fail_after_max_strikes() {
+    let max_strikes = 3;
+    let guard = Arc::new(EmptyResponseStrikeGuard::new(max_strikes));
+    let guard_clone = guard.clone();
+
+    // Every turn returns an incomplete tool call — no turn ever succeeds.
+    let script: Vec<Vec<StreamChunk>> = (0..max_strikes + 1)
+        .map(|_| {
+            vec![
+                StreamChunk::ToolCall(serde_json::json!({ "no_delta": true })),
+                StreamChunk::Stop {
+                    finish_reason: Some("stop".to_string()),
+                },
+            ]
+        })
+        .collect();
+
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(script)))
+        .system_prompt("test")
+        .register_tool(EchoTool)
+        .guard_dyn(guard_clone)
+        .build()
+        .expect("build runtime");
+
+    let sid = runtime.create_session().await;
+    let result = runtime
+        .run_turn(sid, "帮我解读一下这个工程", |_| Ok(()))
+        .await;
+
+    assert!(
+        matches!(result, Ok(RunOutcome::Failed { .. })),
+        "incomplete tool calls should fail after {} strikes, got: {:?}",
+        max_strikes,
+        result
+    );
+
+    // Verify the guard was called exactly max_strikes times.
+    let calls = guard.calls.load(Ordering::SeqCst);
+    assert_eq!(
+        calls, max_strikes,
+        "guard should be called {} times, got: {}",
+        max_strikes, calls
     );
 }

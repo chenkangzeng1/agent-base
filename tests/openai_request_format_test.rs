@@ -1,44 +1,45 @@
-use agent_base::{ChatMessage, OpenAiClient, StreamClient};
+use agent_base::ChatMessage;
+use llm_trait::{ChatRequest, LlmProvider, ReasoningConfig};
+use llm_unified::create_provider;
 use serde_json::{Value, json};
 
-/// 测试 OpenAiClient 生成的请求 body 格式
-/// 这个测试不实际发送 HTTP 请求，而是通过日志验证请求 body 结构
+/// 测试 provider 生成的请求格式
+/// 这个测试不实际发送 HTTP 请求，而是通过验证请求构建逻辑
 #[tokio::test]
-async fn test_openai_client_request_body_format() {
-    // 创建一个测试用的 OpenAiClient（使用无效的 API key，但会记录请求 body）
-    let client = OpenAiClient::new(
-        "test-api-key".to_string(),
-        "qwen-flash".to_string(),
-        Some("https://test.example.com/v1".to_string()),
-    );
+async fn test_provider_request_body_format() {
+    // 创建一个测试用的 provider（使用无效的 API key，但会验证构建逻辑）
+    let provider = create_provider(&llm_trait::LlmConfig {
+        backend: "custom".to_string(),
+        protocol: Some("openai".to_string()),
+        api_key: "test-api-key".to_string(),
+        model: "qwen-flash".to_string(),
+        base_url: Some("https://test.example.com/v1".to_string()),
+        options: std::collections::HashMap::new(),
+    })
+    .expect("should create provider");
 
     let messages = vec![
         ChatMessage::system("你是一个助手"),
         ChatMessage::user("你好"),
     ];
 
-    let tools: Vec<Value> = vec![];
-
-    // 测试 enable_thinking=true, thinking_budget=128 的情况
-    // 由于 URL 无效，这里会失败，但日志会输出请求 body
-    let reasoning = agent_base::ReasoningConfig {
+    let reasoning = ReasoningConfig {
         enabled: Some(true),
         budget_tokens: Some(128),
         effort: None,
     };
-    let result = client
-        .stream(&messages, &tools, Some(&reasoning), None)
-        .await;
 
-    // 我们期望请求失败（因为 URL 无效），但请求 body 格式应该正确
-    // 通过查看日志可以验证请求 body 的格式
+    let request = ChatRequest::new(messages).with_reasoning(reasoning);
+    let result = provider.stream(request).await;
+
+    // 我们期望请求失败（因为 URL 无效），但 provider 应该能正常构建
     assert!(result.is_err(), "Expected error due to invalid URL");
 }
 
 /// 验证请求 body 的 JSON 结构（通过构造相同的 JSON 来验证）
 #[test]
 fn test_request_body_json_structure() {
-    // 模拟 OpenAiClient 生成的请求 body
+    // 模拟 OpenAI 兼容的请求 body
     let mut request_body = json!({
         "model": "qwen-flash",
         "messages": [

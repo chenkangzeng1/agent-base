@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use agent_base::{
     AgentBuilder, AgentError, AgentResult, ApprovalDecision, ApprovalHandler, ApprovalRequest,
-    Content, OpenAiClient, RiskLevel, RuntimeEvent, Tool, ToolContext, ToolPolicy,
+    Content, RiskLevel, RuntimeEvent, Tool, ToolContext, ToolPolicy,
 };
 use async_trait::async_trait;
 use dotenvy::dotenv;
@@ -300,7 +300,15 @@ async fn main() -> AgentResult<()> {
         .or_else(|_| std::env::var("DASHSCOPE_BASE_URL"))
         .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
 
-    let llm_client = Arc::new(OpenAiClient::new(api_key, model.clone(), Some(base_url)));
+    let llm_client = llm_unified::create_provider(&llm_trait::LlmConfig {
+        backend: "custom".to_string(),
+        protocol: Some("openai".to_string()),
+        api_key,
+        model,
+        base_url: Some(base_url),
+        options: std::collections::HashMap::new(),
+    })
+    .map_err(|e| AgentError::internal(e.to_string()))?;
 
     let runtime = AgentBuilder::new(llm_client)
         .system_prompt(SYSTEM_PROMPT)

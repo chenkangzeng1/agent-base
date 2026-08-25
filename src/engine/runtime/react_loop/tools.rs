@@ -418,7 +418,7 @@ impl RuntimeCore {
 
         let ctx = ExecutionContext {
             session_manager: self.session_manager.clone(),
-            llm_client: Some(self.llm_engine.get_client()),
+            llm_client: Some(self.llm_engine.get_provider()),
             language: config.language.clone(),
             tool_timeout_ms: config.tool.tool_timeout_ms,
             max_output_chars: config.tool.max_tool_output_chars,

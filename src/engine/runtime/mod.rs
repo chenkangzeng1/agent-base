@@ -90,14 +90,14 @@ impl AgentRuntime {
         &self.runner.llm_engine
     }
 
-    pub fn client(&self) -> Arc<dyn crate::llm::StreamClient> {
-        self.runner.llm_engine.get_client()
+    pub fn provider(&self) -> Arc<dyn llm_trait::LlmProvider> {
+        self.runner.llm_engine.get_provider()
     }
 
-    /// Replace the LLM client at runtime (e.g., model switch).
+    /// Replace the LLM provider at runtime (e.g., model switch).
     /// Requires `&mut self` — obtain via `runtime.lock().await`.
-    pub fn set_client(&mut self, client: Arc<dyn crate::llm::StreamClient>) {
-        self.runner.llm_engine.set_client(client);
+    pub fn set_client(&mut self, provider: Arc<dyn llm_trait::LlmProvider>) {
+        self.runner.llm_engine.set_provider(provider);
     }
 
     pub fn tools_mut(&self) -> Arc<tokio::sync::RwLock<crate::tool::ToolRegistry>> {
@@ -356,36 +356,45 @@ impl AgentRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::{
-        LlmCapabilities, ReasoningConfig, ReasoningEffort, StreamChunk, StreamClient,
-    };
-    use crate::types::{ChatMessage, ResponseFormat};
+    use crate::llm::ReasoningEffort;
+    use crate::types::{ChatMessage, RuntimeEvent, SessionId};
     use async_trait::async_trait;
-    use futures_core::Stream;
-    use serde_json::Value;
-    use std::pin::Pin;
+    use llm_trait::{Capabilities, ChatRequest, ChatResponse, ChatStream, LlmError, ProviderInfo};
 
-    struct StubClient;
+    struct StubProvider;
 
     #[async_trait]
-    impl StreamClient for StubClient {
-        async fn stream(
-            &self,
-            _messages: &[ChatMessage],
-            _tools: &[Value],
-            _reasoning: Option<&ReasoningConfig>,
-            _response_format: Option<&ResponseFormat>,
-        ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
-            Ok(Box::pin(futures_util::stream::empty()))
+    impl llm_trait::LlmProvider for StubProvider {
+        async fn stream(&self, _request: ChatRequest) -> Result<ChatStream, LlmError> {
+            Ok(ChatStream::new(Box::pin(futures_util::stream::empty())))
         }
 
-        fn capabilities(&self) -> LlmCapabilities {
-            LlmCapabilities::default()
+        async fn chat(&self, _request: ChatRequest) -> Result<ChatResponse, LlmError> {
+            Ok(ChatResponse {
+                content: String::new(),
+                tool_calls: vec![],
+                usage: Default::default(),
+                finish_reason: llm_trait::FinishReason::Stop,
+                raw: None,
+            })
+        }
+
+        fn capabilities(&self) -> Capabilities {
+            Capabilities::default()
+        }
+
+        fn info(&self) -> ProviderInfo {
+            ProviderInfo {
+                name: "stub".to_string(),
+                model: "stub".to_string(),
+                backend: llm_trait::LlmBackend::Custom("stub".to_string()),
+                version: None,
+            }
         }
     }
 
     fn runtime() -> AgentRuntime {
-        crate::engine::AgentBuilder::new(Arc::new(StubClient))
+        crate::engine::AgentBuilder::new(Arc::new(StubProvider))
             .build()
             .unwrap()
     }

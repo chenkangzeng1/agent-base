@@ -102,8 +102,9 @@ impl Tool for DiskCheckTool {
 // src/main.rs
 mod tools;
 
-use std::sync::Arc;
-use agent_base::{AgentBuilder, RuntimeEvent, AgentResult, OpenAiClient, RunOutcome, RetryOnError};
+use agent_base::{AgentBuilder, RuntimeEvent, AgentResult, RunOutcome, RetryOnError};
+use llm_trait::LlmConfig;
+use llm_unified::create_provider;
 use tools::DiskCheckTool;
 
 const SYSTEM_PROMPT: &str = r#"你是一个服务器健康检查助手。
@@ -115,12 +116,15 @@ const SYSTEM_PROMPT: &str = r#"你是一个服务器健康检查助手。
 async fn main() -> AgentResult<()> {
     dotenvy::dotenv().ok();
 
-    // 1. 创建 LLM 客户端（兼容 OpenAI 接口）
-    let llm = Arc::new(OpenAiClient::new(
-        std::env::var("OPENAI_API_KEY").expect("请设置 OPENAI_API_KEY"),
-        "gpt-4o-mini",           // 可换成任何兼容 OpenAI 接口的模型
-        None,                    // 或传入代理地址，如 Some("https://your-proxy.com/v1")
-    ));
+    // 1. 创建 LLM 提供商（兼容 OpenAI 接口）
+    let llm = create_provider(&LlmConfig {
+        backend: "custom".to_string(),
+        protocol: Some("openai".to_string()),
+        api_key: std::env::var("OPENAI_API_KEY").expect("请设置 OPENAI_API_KEY"),
+        model: "gpt-4o-mini".into(),           // 可换成任何兼容 OpenAI 接口的模型
+        base_url: None,                         // 或传入代理地址，如 Some("https://your-proxy.com/v1")
+        options: Default::default(),
+    }).unwrap();
 
     // 2. 构建运行时
     let runtime = AgentBuilder::new(llm)
@@ -446,14 +450,15 @@ impl ToolErrorRecovery for SmartRecovery {
 
 ```rust
 // src/main.rs
-use std::sync::Arc;
 use std::io::{self, Write};
 
 use agent_base::{
-    AgentBuilder, RuntimeEvent, AgentResult, OpenAiClient, RunOutcome,
+    AgentBuilder, RuntimeEvent, AgentResult, RunOutcome,
     Tool, ToolContext, Content,
 };
 use async_trait::async_trait;
+use llm_trait::LlmConfig;
+use llm_unified::create_provider;
 use serde_json::{json, Value};
 
 struct CheckDiskTool;
@@ -500,10 +505,14 @@ fn on_event(event: RuntimeEvent) -> AgentResult<()> {
 async fn main() -> AgentResult<()> {
     dotenvy::dotenv().ok();
 
-    let llm = Arc::new(OpenAiClient::new(
-        std::env::var("OPENAI_API_KEY").expect("请设置 OPENAI_API_KEY"),
-        "gpt-4o-mini", None,
-    ));
+    let llm = create_provider(&LlmConfig {
+        backend: "custom".to_string(),
+        protocol: Some("openai".to_string()),
+        api_key: std::env::var("OPENAI_API_KEY").expect("请设置 OPENAI_API_KEY"),
+        model: "gpt-4o-mini".into(),
+        base_url: None,
+        options: Default::default(),
+    }).unwrap();
 
     let runtime = AgentBuilder::new(llm)
         .system_prompt("你是一个服务器健康检查助手。使用工具来检查状态。回答要简洁。")

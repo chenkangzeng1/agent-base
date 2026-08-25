@@ -3,6 +3,9 @@ pub mod llm;
 pub mod tool;
 pub mod types;
 
+// Re-export llm_trait for downstream use.
+pub use llm_trait;
+
 // ---------------------------------------------------------------------------
 // Prelude — most commonly used types for `use agent_base::prelude::*`
 // ---------------------------------------------------------------------------
@@ -10,9 +13,9 @@ pub mod prelude {
     pub use crate::engine::{
         AgentBuilder, AgentRuntime, AgentSession, AllowAllApprovalHandler, DenyAllApprovalHandler,
     };
-    pub use crate::llm::{
-        AnthropicAdapter, LlmClient, LlmClientBuilder, OpenAiAdapter, OpenAiClient, StreamClient,
-    };
+    pub use crate::llm::provider::LlmProvider as LlmProviderTrait;
+    pub use crate::llm::request::ChatRequest;
+    pub use crate::llm::response::{ChatResponse, ChatStream};
     pub use crate::tool::{
         AutoContinueTool, Content, DenyAllToolPolicy, Tool, ToolContext, ToolMetadata, ToolPolicy,
         ToolRegistry, TypedTool,
@@ -32,11 +35,10 @@ pub use engine::{
 };
 
 // ---------------------------------------------------------------------------
-// LLM Provider
+// LLM Provider (llm-trait re-exports)
 // ---------------------------------------------------------------------------
 pub use llm::{
-    AnthropicAdapter, LlmCapabilities, LlmClient, LlmClientBuilder, LlmProvider, OpenAiAdapter,
-    OpenAiClient, ReasoningConfig, ReasoningEffort, StreamChunk, StreamClient, UsageInfo,
+    ReasoningConfig, ReasoningEffort, StreamChunk, UsageInfo,
 };
 
 // ---------------------------------------------------------------------------

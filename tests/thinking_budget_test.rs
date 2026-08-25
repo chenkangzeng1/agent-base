@@ -1,16 +1,15 @@
-use agent_base::{AgentBuilder, ChatMessage, LlmClient, StreamChunk};
+use agent_base::{AgentBuilder, ChatMessage, StreamChunk};
 use async_trait::async_trait;
 use serde_json::{Value, json};
-use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
-/// 用于捕获请求参数的 Mock LLM Client
-struct CaptureLlmClient {
+/// 用于捕获请求参数的 Mock LLM Provider
+struct CaptureLlmProvider {
     /// 捕获到的请求 body（JSON 格式）
     captured_bodies: Mutex<Vec<Value>>,
 }
 
-impl CaptureLlmClient {
+impl CaptureLlmProvider {
     fn new() -> Self {
         Self {
             captured_bodies: Mutex::new(Vec::new()),
@@ -23,26 +22,11 @@ impl CaptureLlmClient {
 }
 
 #[async_trait]
-impl LlmClient for CaptureLlmClient {
-    async fn chat(
+impl agent_base::llm_trait::LlmProvider for CaptureLlmProvider {
+    async fn stream(
         &self,
-        _messages: &[ChatMessage],
-        _tools: &[Value],
-        _reasoning: Option<&agent_base::ReasoningConfig>,
-        _response_format: Option<&agent_base::ResponseFormat>,
-    ) -> agent_base::AgentResult<Value> {
-        unimplemented!()
-    }
-
-    async fn chat_stream(
-        &self,
-        _messages: &[ChatMessage],
-        _tools: &[Value],
-        reasoning: Option<&agent_base::ReasoningConfig>,
-        _response_format: Option<&agent_base::ResponseFormat>,
-    ) -> agent_base::AgentResult<
-        Pin<Box<dyn futures_core::Stream<Item = agent_base::AgentResult<StreamChunk>> + Send>>,
-    > {
+        request: agent_base::llm_trait::ChatRequest,
+    ) -> Result<agent_base::llm_trait::ChatStream, agent_base::llm_trait::LlmError> {
         // 构造一个模拟的请求 body 来验证参数传递
         let mut body = json!({
             "model": "test-model",
@@ -51,7 +35,7 @@ impl LlmClient for CaptureLlmClient {
             "stream": true,
         });
 
-        if let Some(config) = reasoning {
+        if let Some(ref config) = request.reasoning {
             if let Some(enabled) = config.enabled
                 && let Some(obj) = body.as_object_mut()
             {
@@ -70,11 +54,18 @@ impl LlmClient for CaptureLlmClient {
         let stream = futures_util::stream::iter(vec![Ok(StreamChunk::Stop {
             finish_reason: Some("stop".to_string()),
         })]);
-        Ok(Box::pin(stream))
+        Ok(agent_base::llm_trait::ChatStream::new(Box::pin(stream)))
     }
 
-    fn capabilities(&self) -> agent_base::LlmCapabilities {
-        agent_base::LlmCapabilities {
+    async fn chat(
+        &self,
+        _request: agent_base::llm_trait::ChatRequest,
+    ) -> Result<agent_base::llm_trait::ChatResponse, agent_base::llm_trait::LlmError> {
+        unimplemented!()
+    }
+
+    fn capabilities(&self) -> agent_base::llm_trait::Capabilities {
+        agent_base::llm_trait::Capabilities {
             supports_streaming: true,
             supports_tools: true,
             supports_vision: false,
@@ -83,14 +74,22 @@ impl LlmClient for CaptureLlmClient {
             max_output_tokens: Some(16_384),
         }
     }
+
+    fn info(&self) -> agent_base::llm_trait::ProviderInfo {
+        agent_base::llm_trait::ProviderInfo {
+            name: "capture".to_string(),
+            model: "test-model".to_string(),
+            backend: agent_base::llm_trait::LlmBackend::Custom("capture".to_string()),
+            version: None,
+        }
+    }
 }
 
 #[tokio::test]
 async fn test_thinking_budget_parameter_passed() {
-    let capture = Arc::new(CaptureLlmClient::new());
-    let llm = agent_base::llm::adapt(capture.clone());
+    let capture = Arc::new(CaptureLlmProvider::new());
 
-    let runtime = AgentBuilder::new(llm.clone())
+    let runtime = AgentBuilder::new(capture.clone())
         .system_prompt("test")
         .enable_thinking(true)
         .thinking_budget(128)
@@ -127,13 +126,9 @@ async fn test_thinking_budget_parameter_passed() {
 
 #[tokio::test]
 async fn test_extra_body_format_for_thinking() {
-    // 这个测试验证 OpenAiClient 实际生成的请求 body 格式
-    // 由于 OpenAiClient 的方法不好直接测试，我们通过 AgentBuilder 来间接验证
+    let capture = Arc::new(CaptureLlmProvider::new());
 
-    let capture = Arc::new(CaptureLlmClient::new());
-    let llm = agent_base::llm::adapt(capture.clone());
-
-    let runtime = AgentBuilder::new(llm.clone())
+    let runtime = AgentBuilder::new(capture.clone())
         .system_prompt("test")
         .enable_thinking(true)
         .thinking_budget(128)

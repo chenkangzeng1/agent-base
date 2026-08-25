@@ -1,7 +1,9 @@
-use agent_base::{AgentResult, ChatMessage, OpenAiClient, StreamChunk, StreamClient};
+use agent_base::{AgentResult, ChatMessage};
 use futures_util::StreamExt;
+use llm_trait::{ChatRequest, LlmProvider, ReasoningConfig, StreamChunk};
+use llm_unified::create_provider;
 
-fn usage_summary(usage: &agent_base::UsageInfo) -> String {
+fn usage_summary(usage: &llm_trait::UsageInfo) -> String {
     format!(
         "prompt={}, completion={}, total={}",
         usage.prompt_tokens.unwrap_or(0),
@@ -11,7 +13,7 @@ fn usage_summary(usage: &agent_base::UsageInfo) -> String {
 }
 
 async fn run_test(
-    client: &OpenAiClient,
+    provider: &dyn LlmProvider,
     label: &str,
     system_prompt: &str,
     user_input: &str,
@@ -27,17 +29,14 @@ async fn run_test(
         ChatMessage::user(user_input),
     ];
 
-    let empty_tools: &[serde_json::Value] = &[];
-
-    let reasoning = agent_base::ReasoningConfig {
+    let reasoning = ReasoningConfig {
         enabled: enable_thinking,
         budget_tokens: thinking_budget,
         effort: None,
     };
 
-    let mut stream = client
-        .stream(&messages, empty_tools, Some(&reasoning), None)
-        .await?;
+    let request = ChatRequest::new(messages).with_reasoning(reasoning);
+    let mut stream = provider.stream(request).await.map_err(|e| agent_base::AgentError::internal(e.to_string()))?;
 
     let mut in_thought = false;
     let mut in_text = false;
@@ -45,7 +44,7 @@ async fn run_test(
     let mut text_len = 0;
 
     while let Some(chunk) = stream.next().await {
-        match chunk? {
+        match chunk.map_err(|e| agent_base::AgentError::internal(e.to_string()))? {
             StreamChunk::Thought(text) => {
                 if !in_thought {
                     print!("\n💭 [思考过程]: ");
@@ -100,7 +99,16 @@ async fn main() -> AgentResult<()> {
     println!("enable_thinking 和 thinking_budget 都作为顶级参数传递（DashScope 正确用法）");
     println!();
 
-    let client = OpenAiClient::new(api_key, model, Some(base_url));
+    let provider = create_provider(&llm_trait::LlmConfig {
+        backend: "custom".to_string(),
+        protocol: Some("openai".to_string()),
+        api_key,
+        model,
+        base_url: Some(base_url),
+        options: std::collections::HashMap::new(),
+    })
+    .map_err(|e| agent_base::AgentError::internal(e.to_string()))?;
+
     let user_input = "看下磁盘空间";
     let system_prompt = "你是一个资深的服务器运维工程师助手，回复简洁直接，不要客套。";
 
@@ -109,7 +117,7 @@ async fn main() -> AgentResult<()> {
     // 测试1: enable_thinking=false（无思考，对照）
     results.push(
         run_test(
-            &client,
+            provider.as_ref(),
             "测试1: enable_thinking=false",
             system_prompt,
             user_input,
@@ -122,7 +130,7 @@ async fn main() -> AgentResult<()> {
     // 测试2: enable_thinking=true, 无 budget
     results.push(
         run_test(
-            &client,
+            provider.as_ref(),
             "测试2: enable_thinking=true, 无 thinking_budget",
             system_prompt,
             user_input,
@@ -135,7 +143,7 @@ async fn main() -> AgentResult<()> {
     // 测试3: enable_thinking=true, thinking_budget=128
     results.push(
         run_test(
-            &client,
+            provider.as_ref(),
             "测试3: thinking_budget=128",
             system_prompt,
             user_input,
@@ -148,7 +156,7 @@ async fn main() -> AgentResult<()> {
     // 测试4: enable_thinking=true, thinking_budget=50（极低）
     results.push(
         run_test(
-            &client,
+            provider.as_ref(),
             "测试4: thinking_budget=50",
             system_prompt,
             user_input,
@@ -161,7 +169,7 @@ async fn main() -> AgentResult<()> {
     // 测试5: enable_thinking=true, thinking_budget=10（极低）
     results.push(
         run_test(
-            &client,
+            provider.as_ref(),
             "测试5: thinking_budget=10",
             system_prompt,
             user_input,

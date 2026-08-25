@@ -477,7 +477,7 @@ pub struct OrchestrateOutcome {
 /// Reduces parameter count on `execute_tool` and `process_approval`.
 pub(crate) struct ExecutionContext {
     pub session_manager: SessionManager,
-    pub llm_client: Option<Arc<dyn crate::llm::StreamClient>>,
+    pub llm_client: Option<Arc<dyn llm_trait::LlmProvider>>,
     pub language: Language,
     pub tool_timeout_ms: Option<u64>,
     pub max_output_chars: Option<usize>,

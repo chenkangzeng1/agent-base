@@ -8,30 +8,63 @@ use serde_json::Value;
 use tracing::Span;
 
 use crate::engine::runtime::event_bus::EventBus;
-use crate::llm::{ReasoningConfig, StreamChunk, StreamClient, UsageInfo};
+use crate::llm::{ReasoningConfig, StreamChunk, UsageInfo};
 use crate::types::{AgentResult, ChatMessage, RuntimeEvent, SessionId};
 
+/// Build a `ChatRequest` from individual parameters.
+fn build_chat_request(
+    messages: &[ChatMessage],
+    tool_definitions: &[Value],
+    reasoning: Option<&ReasoningConfig>,
+    response_format: Option<&crate::types::ResponseFormat>,
+) -> llm_trait::ChatRequest {
+    let mut request = llm_trait::ChatRequest::new(messages.to_vec());
+    if !tool_definitions.is_empty() {
+        request = request.with_tools(tool_definitions.to_vec());
+    }
+    if let Some(r) = reasoning {
+        request = request.with_reasoning(r.clone());
+    }
+    request.response_format = response_format.cloned();
+    request
+}
+
+/// Convert a `ChatStream` (new) to the old stream type consumed by `process_stream`.
+fn chat_stream_to_old(
+    chat_stream: llm_trait::ChatStream,
+) -> Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>> {
+    let inner = chat_stream.into_inner();
+    Box::pin(inner.map(|item| item.map_err(Into::into)))
+}
+
 pub struct LlmEngine {
-    client: RwLock<Arc<dyn StreamClient>>,
+    provider: RwLock<Arc<dyn llm_trait::LlmProvider>>,
     event_bus: EventBus,
 }
 
 impl LlmEngine {
-    pub(crate) fn new(client: Arc<dyn StreamClient>, event_bus: EventBus) -> Self {
+    pub(crate) fn new(provider: Arc<dyn llm_trait::LlmProvider>, event_bus: EventBus) -> Self {
         Self {
-            client: RwLock::new(client),
+            provider: RwLock::new(provider),
             event_bus,
         }
     }
 
-    /// Get a clone of the current LLM client.
-    pub fn get_client(&self) -> Arc<dyn StreamClient> {
-        self.client.read().unwrap().clone()
+    /// Get a clone of the current LLM provider.
+    pub fn get_provider(&self) -> Arc<dyn llm_trait::LlmProvider> {
+        self.provider.read().unwrap().clone()
+    }
+
+    /// Replace the LLM provider at runtime (e.g., model switch).
+    pub fn set_provider(&self, provider: Arc<dyn llm_trait::LlmProvider>) {
+        *self.provider.write().unwrap() = provider;
     }
 
     /// Replace the LLM client at runtime (e.g., model switch).
-    pub fn set_client(&self, client: Arc<dyn StreamClient>) {
-        *self.client.write().unwrap() = client;
+    ///
+    /// Accepts an `Arc<dyn llm_trait::LlmProvider>`.
+    pub fn set_client(&self, client: Arc<dyn llm_trait::LlmProvider>) {
+        self.set_provider(client);
     }
 
     pub async fn chat_stream(
@@ -46,15 +79,13 @@ impl LlmEngine {
             tool_count = tool_definitions.len(),
             "LLM chat_stream: sending request to API"
         );
-        let result = self
-            .get_client()
-            .stream(messages, tool_definitions, reasoning, response_format)
-            .await;
+        let request = build_chat_request(messages, tool_definitions, reasoning, response_format);
+        let result = self.get_provider().stream(request).await;
         match &result {
             Ok(_) => tracing::info!("LLM chat_stream: API response received"),
             Err(e) => tracing::error!(error = %e, "LLM chat_stream: API request failed"),
         }
-        result
+        result.map(chat_stream_to_old).map_err(Into::into)
     }
 
     pub async fn run_llm_turn_with_retry(
@@ -66,21 +97,19 @@ impl LlmEngine {
         response_format: Option<&crate::types::ResponseFormat>,
         retry: crate::types::RetryConfig,
     ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
+        let request = build_chat_request(messages, tool_definitions, reasoning, response_format);
         let mut attempt = 1;
         let mut delay_ms = retry.initial_backoff_ms;
         loop {
-            match self
-                .get_client()
-                .stream(messages, tool_definitions, reasoning, response_format)
-                .await
-            {
-                Ok(stream) => return Ok(stream),
+            match self.get_provider().stream(request.clone()).await {
+                Ok(chat_stream) => return Ok(chat_stream_to_old(chat_stream)),
                 Err(e) => {
+                    let agent_err: crate::types::AgentError = e.into();
                     if attempt > retry.max_retries {
-                        tracing::error!(session_id = session_id.id, attempts = attempt, error = %e, "LLM stream retry exhausted");
-                        return Err(e);
+                        tracing::error!(session_id = session_id.id, attempts = attempt, error = %agent_err, "LLM stream retry exhausted");
+                        return Err(agent_err);
                     }
-                    tracing::warn!(session_id = session_id.id, attempt, error = %e, "LLM stream failed, retrying...");
+                    tracing::warn!(session_id = session_id.id, attempt, error = %agent_err, "LLM stream failed, retrying...");
                     tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                     delay_ms = (delay_ms as f64 * retry.backoff_multiplier) as u64;
                     if delay_ms > retry.max_backoff_ms {
@@ -365,50 +394,66 @@ impl StreamAggregator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::LlmCapabilities;
-    use crate::types::{AgentError, ResponseFormat, RetryConfig};
+    use crate::types::{AgentError, RetryConfig};
     use async_trait::async_trait;
+    use llm_trait::{Capabilities, ChatRequest, ChatStream, LlmError, LlmProvider, ProviderInfo};
     use std::pin::Pin;
 
-    struct StubClient(&'static str);
+    struct StubProvider(&'static str);
 
     #[async_trait]
-    impl StreamClient for StubClient {
+    impl LlmProvider for StubProvider {
         async fn stream(
             &self,
-            _messages: &[ChatMessage],
-            _tools: &[Value],
-            _reasoning: Option<&ReasoningConfig>,
-            _response_format: Option<&ResponseFormat>,
-        ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
-            Ok(Box::pin(futures_util::stream::empty()))
+            _request: ChatRequest,
+        ) -> Result<ChatStream, LlmError> {
+            Ok(ChatStream::new(Box::pin(futures_util::stream::empty())))
         }
 
-        fn capabilities(&self) -> LlmCapabilities {
-            LlmCapabilities::default()
+        async fn chat(
+            &self,
+            _request: ChatRequest,
+        ) -> Result<llm_trait::ChatResponse, LlmError> {
+            Err(LlmError::Llm("not implemented".into()))
         }
 
-        fn model_name(&self) -> &str {
-            self.0
+        fn capabilities(&self) -> Capabilities {
+            Capabilities::default()
+        }
+
+        fn info(&self) -> ProviderInfo {
+            ProviderInfo {
+                name: "stub".to_string(),
+                model: self.0.to_string(),
+                backend: llm_trait::LlmBackend::Custom("stub".to_string()),
+                version: None,
+            }
         }
     }
 
     fn engine(model: &'static str) -> LlmEngine {
-        LlmEngine::new(Arc::new(StubClient(model)), EventBus::new(16))
+        LlmEngine::new(Arc::new(StubProvider(model)), EventBus::new(16))
     }
 
     #[test]
-    fn get_client_and_set_client_swap() {
+    fn get_provider_and_set_provider_swap() {
         let engine = engine("model-a");
-        assert_eq!(engine.get_client().model_name(), "model-a");
-        engine.set_client(Arc::new(StubClient("model-b")));
-        assert_eq!(engine.get_client().model_name(), "model-b");
+        assert_eq!(engine.get_provider().info().model, "model-a");
+        engine.set_provider(Arc::new(StubProvider("model-b")));
+        assert_eq!(engine.get_provider().info().model, "model-b");
+    }
+
+    #[test]
+    fn get_provider_returns_provider() {
+        let engine = engine("model-a");
+        let provider = engine.get_provider();
+        assert_eq!(provider.info().model, "model-a");
     }
 
     #[tokio::test]
     async fn process_stream_aggregates_text_usage_and_stop() {
         let bus = EventBus::new(16);
-        let engine = LlmEngine::new(Arc::new(StubClient("x")), bus.clone());
+        let engine = LlmEngine::new(Arc::new(StubProvider("x")), bus.clone());
         let chunks = vec![
             Ok(StreamChunk::Text("Hello".into())),
             Ok(StreamChunk::Text(" world".into())),
@@ -464,7 +509,7 @@ mod tests {
     #[tokio::test]
     async fn process_stream_aggregates_tool_calls() {
         let bus = EventBus::new(16);
-        let engine = LlmEngine::new(Arc::new(StubClient("x")), bus.clone());
+        let engine = LlmEngine::new(Arc::new(StubProvider("x")), bus.clone());
         let chunks = vec![
             Ok(StreamChunk::ToolCall(serde_json::json!({
                 "delta": { "tool_calls": [
@@ -508,7 +553,7 @@ mod tests {
     #[tokio::test]
     async fn process_stream_flags_reasoning_only_without_promoting() {
         let bus = EventBus::new(16);
-        let engine = LlmEngine::new(Arc::new(StubClient("x")), bus.clone());
+        let engine = LlmEngine::new(Arc::new(StubProvider("x")), bus.clone());
         let chunks = vec![Ok(StreamChunk::Thought("deep thought".into()))];
         let stream = Box::pin(futures_util::stream::iter(chunks));
         let mut rx = bus.subscribe();
@@ -535,7 +580,7 @@ mod tests {
     #[tokio::test]
     async fn process_stream_propagates_error() {
         let bus = EventBus::new(16);
-        let engine = LlmEngine::new(Arc::new(StubClient("x")), bus.clone());
+        let engine = LlmEngine::new(Arc::new(StubProvider("x")), bus.clone());
         let chunks = vec![
             Ok(StreamChunk::Text("partial".into())),
             Err(AgentError::internal("boom")),
@@ -561,7 +606,7 @@ mod tests {
     #[tokio::test]
     async fn process_stream_cancelled() {
         let bus = EventBus::new(16);
-        let engine = LlmEngine::new(Arc::new(StubClient("x")), bus.clone());
+        let engine = LlmEngine::new(Arc::new(StubProvider("x")), bus.clone());
         let stream: Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>> =
             Box::pin(futures_util::stream::pending());
         let mut rx = bus.subscribe();
@@ -584,31 +629,34 @@ mod tests {
 
     // ── B5: chat_stream + retry + remaining process_stream branches ────────
 
-    /// A client whose `stream()` always fails.
+    /// A provider whose `stream()` always fails.
     struct AlwaysFail;
 
     #[async_trait]
-    impl StreamClient for AlwaysFail {
-        async fn stream(
-            &self,
-            _messages: &[ChatMessage],
-            _tools: &[Value],
-            _reasoning: Option<&ReasoningConfig>,
-            _response_format: Option<&ResponseFormat>,
-        ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
-            Err(AgentError::internal("api down"))
+    impl LlmProvider for AlwaysFail {
+        async fn stream(&self, _request: ChatRequest) -> Result<ChatStream, LlmError> {
+            Err(LlmError::Llm("api down".into()))
         }
 
-        fn capabilities(&self) -> LlmCapabilities {
-            LlmCapabilities::default()
+        async fn chat(&self, _request: ChatRequest) -> Result<llm_trait::ChatResponse, LlmError> {
+            Err(LlmError::Llm("api down".into()))
         }
 
-        fn model_name(&self) -> &str {
-            "always-fail"
+        fn capabilities(&self) -> Capabilities {
+            Capabilities::default()
+        }
+
+        fn info(&self) -> ProviderInfo {
+            ProviderInfo {
+                name: "always-fail".to_string(),
+                model: "always-fail".to_string(),
+                backend: llm_trait::LlmBackend::Custom("stub".to_string()),
+                version: None,
+            }
         }
     }
 
-    /// A client that fails the first `n` `stream()` calls, then succeeds.
+    /// A provider that fails the first `n` `stream()` calls, then succeeds.
     struct FailThenSucceed {
         remaining: std::sync::Mutex<usize>,
     }
@@ -622,35 +670,38 @@ mod tests {
     }
 
     #[async_trait]
-    impl StreamClient for FailThenSucceed {
-        async fn stream(
-            &self,
-            _messages: &[ChatMessage],
-            _tools: &[Value],
-            _reasoning: Option<&ReasoningConfig>,
-            _response_format: Option<&ResponseFormat>,
-        ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
+    impl LlmProvider for FailThenSucceed {
+        async fn stream(&self, _request: ChatRequest) -> Result<ChatStream, LlmError> {
             let mut remaining = self.remaining.lock().unwrap();
             if *remaining > 0 {
                 *remaining -= 1;
-                Err(AgentError::internal("transient"))
+                Err(LlmError::Llm("transient".into()))
             } else {
-                Ok(Box::pin(futures_util::stream::empty()))
+                Ok(ChatStream::new(Box::pin(futures_util::stream::empty())))
             }
         }
 
-        fn capabilities(&self) -> LlmCapabilities {
-            LlmCapabilities::default()
+        async fn chat(&self, _request: ChatRequest) -> Result<llm_trait::ChatResponse, LlmError> {
+            Err(LlmError::Llm("not implemented".into()))
         }
 
-        fn model_name(&self) -> &str {
-            "fail-then-succeed"
+        fn capabilities(&self) -> Capabilities {
+            Capabilities::default()
+        }
+
+        fn info(&self) -> ProviderInfo {
+            ProviderInfo {
+                name: "fail-then-succeed".to_string(),
+                model: "fail-then-succeed".to_string(),
+                backend: llm_trait::LlmBackend::Custom("stub".to_string()),
+                version: None,
+            }
         }
     }
 
     #[tokio::test]
     async fn chat_stream_returns_stream_on_ok() {
-        let engine = LlmEngine::new(Arc::new(StubClient("x")), EventBus::new(16));
+        let engine = LlmEngine::new(Arc::new(StubProvider("x")), EventBus::new(16));
         let mut stream = engine.chat_stream(&[], &[], None, None).await.unwrap();
         let next = futures_util::StreamExt::next(&mut stream).await;
         assert!(next.is_none());
@@ -704,7 +755,7 @@ mod tests {
     #[tokio::test]
     async fn process_stream_tool_call_missing_delta_continues() {
         let bus = EventBus::new(16);
-        let engine = LlmEngine::new(Arc::new(StubClient("x")), bus.clone());
+        let engine = LlmEngine::new(Arc::new(StubProvider("x")), bus.clone());
         let chunks = vec![
             Ok(StreamChunk::ToolCall(
                 serde_json::json!({ "no_delta": true }),
@@ -734,7 +785,7 @@ mod tests {
     #[tokio::test]
     async fn process_stream_tool_call_empty_id_and_name_ignored() {
         let bus = EventBus::new(16);
-        let engine = LlmEngine::new(Arc::new(StubClient("x")), bus.clone());
+        let engine = LlmEngine::new(Arc::new(StubProvider("x")), bus.clone());
         let chunks = vec![Ok(StreamChunk::ToolCall(serde_json::json!({
             "delta": { "tool_calls": [
                 { "index": 0, "id": "", "function": { "name": "", "arguments": "{}" } }
@@ -766,7 +817,7 @@ mod tests {
     #[tokio::test]
     async fn process_stream_stop_none_finish_reason_ignored() {
         let bus = EventBus::new(16);
-        let engine = LlmEngine::new(Arc::new(StubClient("x")), bus.clone());
+        let engine = LlmEngine::new(Arc::new(StubProvider("x")), bus.clone());
         let chunks = vec![
             Ok(StreamChunk::Stop {
                 finish_reason: Some("length".into()),
@@ -795,7 +846,7 @@ mod tests {
     #[tokio::test]
     async fn process_stream_text_and_thought_while_tool_call_skip_emit() {
         let bus = EventBus::new(16);
-        let engine = LlmEngine::new(Arc::new(StubClient("x")), bus.clone());
+        let engine = LlmEngine::new(Arc::new(StubProvider("x")), bus.clone());
         let chunks = vec![
             Ok(StreamChunk::ToolCall(serde_json::json!({
                 "delta": { "tool_calls": [
@@ -841,7 +892,7 @@ mod tests {
     #[test]
     fn emit_text_delta_emits_event() {
         let bus = EventBus::new(16);
-        let engine = LlmEngine::new(Arc::new(StubClient("x")), bus.clone());
+        let engine = LlmEngine::new(Arc::new(StubProvider("x")), bus.clone());
         let mut rx = bus.subscribe();
         engine.emit_text_delta(&SessionId::new(1), "hello".into());
         let ev = rx.try_recv().expect("event should be emitted");

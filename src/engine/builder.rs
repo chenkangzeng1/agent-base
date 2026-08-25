@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::llm::{ReasoningConfig, StreamClient};
+use crate::llm::ReasoningConfig;
 use crate::tool::{Tool, ToolPolicy, ToolRegistry};
 use crate::types::{
     AgentConfig, AtomicU64SessionIdGenerator, ConvertToLlmFn, ResponseFormat, RetryConfig,
@@ -16,7 +16,7 @@ use super::recovery::{StopOnError, ToolErrorRecovery};
 use super::session_store::{InMemorySessionStore, SessionStore};
 
 pub struct AgentBuilder {
-    client: Arc<dyn StreamClient>,
+    provider: Arc<dyn llm_trait::LlmProvider>,
     config: AgentConfig,
     tools: ToolRegistry,
     approval_handler: Option<Arc<dyn ApprovalHandler>>,
@@ -32,9 +32,10 @@ pub struct AgentBuilder {
 }
 
 impl AgentBuilder {
-    pub fn new(client: Arc<dyn StreamClient>) -> Self {
+    /// Create a new builder with an `LlmProvider`.
+    pub fn new(provider: Arc<dyn llm_trait::LlmProvider>) -> Self {
         Self {
-            client,
+            provider,
             config: AgentConfig::default(),
             tools: ToolRegistry::default(),
             approval_handler: None,
@@ -270,7 +271,7 @@ impl AgentBuilder {
             self.config.session.clone(),
         );
 
-        let llm_engine = super::runtime::LlmEngine::new(self.client.clone(), event_bus.clone());
+        let llm_engine = super::runtime::LlmEngine::new(self.provider.clone(), event_bus.clone());
 
         let tool_engine = super::runtime::ToolEngine::new(
             self.tools,
@@ -300,62 +301,61 @@ impl AgentBuilder {
 mod tests {
     use super::*;
     use crate::engine::DenyAllApprovalHandler;
-    use crate::llm::{LlmClient, ReasoningEffort, StreamChunk};
+    use crate::llm::ReasoningEffort;
     use crate::tool::{Content, ToolContext};
     use crate::types::{
         AgentError, AgentResult, ApprovalRequest, ChatMessage, Language, ResponseFormat,
     };
     use async_trait::async_trait;
-    use futures_core::Stream;
+    use llm_trait::{Capabilities, ChatRequest, ChatResponse, ChatStream, LlmError, ProviderInfo};
     use serde_json::Value;
-    use std::pin::Pin;
 
-    struct DummyClient;
+    struct DummyProvider;
 
     #[async_trait]
-    impl LlmClient for DummyClient {
-        async fn chat(
-            &self,
-            _messages: &[ChatMessage],
-            _tools: &[Value],
-            _reasoning: Option<&ReasoningConfig>,
-            _response_format: Option<&ResponseFormat>,
-        ) -> AgentResult<Value> {
-            Ok(Value::Null)
+    impl llm_trait::LlmProvider for DummyProvider {
+        async fn stream(&self, _request: ChatRequest) -> Result<ChatStream, LlmError> {
+            Ok(ChatStream::new(Box::pin(futures_util::stream::empty())))
         }
 
-        async fn chat_stream(
-            &self,
-            _messages: &[ChatMessage],
-            _tools: &[Value],
-            _reasoning: Option<&ReasoningConfig>,
-            _response_format: Option<&ResponseFormat>,
-        ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
-            unimplemented!("not used in builder tests")
+        async fn chat(&self, _request: ChatRequest) -> Result<ChatResponse, LlmError> {
+            Ok(ChatResponse {
+                content: String::new(),
+                tool_calls: vec![],
+                usage: Default::default(),
+                finish_reason: llm_trait::FinishReason::Stop,
+                raw: None,
+            })
         }
 
-        fn capabilities(&self) -> crate::llm::LlmCapabilities {
-            crate::llm::LlmCapabilities::default()
+        fn capabilities(&self) -> Capabilities {
+            Capabilities::default()
+        }
+
+        fn info(&self) -> ProviderInfo {
+            ProviderInfo {
+                name: "dummy".to_string(),
+                model: "dummy".to_string(),
+                backend: llm_trait::LlmBackend::Custom("dummy".to_string()),
+                version: None,
+            }
         }
     }
 
     #[test]
     fn execution_max_turns_writes_per_run_config() {
-        let client = crate::llm::adapt(Arc::new(DummyClient));
-        let builder = AgentBuilder::new(client).execution_max_turns(200);
-        // The `config` field is private to this module, so the test can assert directly.
+        let builder = AgentBuilder::new(Arc::new(DummyProvider)).execution_max_turns(200);
         assert_eq!(builder.config.execution.max_turns, Some(200));
     }
 
     #[test]
     fn execution_max_turns_defaults_to_none() {
-        let client = crate::llm::adapt(Arc::new(DummyClient));
-        let builder = AgentBuilder::new(client);
+        let builder = AgentBuilder::new(Arc::new(DummyProvider));
         assert_eq!(builder.config.execution.max_turns, None);
     }
 
     fn b() -> AgentBuilder {
-        AgentBuilder::new(crate::llm::adapt(Arc::new(DummyClient)))
+        AgentBuilder::new(Arc::new(DummyProvider))
     }
 
     struct NoopTool;

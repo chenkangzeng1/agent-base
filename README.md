@@ -27,7 +27,7 @@ agent-base = "0.2.1"
 
 ## Features
 
-- **LLM Abstraction** — `LlmClient` trait with built-in OpenAI and Anthropic implementations; `StreamClient` trait for provider-decoupled streaming
+- **LLM Abstraction** — `LlmProvider` trait via `llm-trait`; `llm-unified` provides concrete implementations for OpenAI-compatible, Anthropic, and custom backends
 - **LLM Retry** — Configurable retry with exponential backoff via `RetryConfig`
 - **Tool System** — `Tool` trait + `ToolRegistry` for registration and dispatch; configurable `tool_timeout`
 - **Approval Flow** — `ApprovalHandler` trait with `AllowOnce` / `AllowAlways` / `Deny` decisions + cancellation support
@@ -105,19 +105,22 @@ impl Tool for WeatherTool {
 ### 2. Build the Agent
 
 ```rust
-use std::sync::Arc;
 use agent_base::{
     AgentBuilder, AgentResult, RuntimeEvent, RunOutcome,
-    OpenAiClient,
 };
+use llm_trait::LlmConfig;
+use llm_unified::create_provider;
 
 #[tokio::main]
 async fn main() -> AgentResult<()> {
-    let llm = Arc::new(OpenAiClient::new(
-        std::env::var("OPENAI_API_KEY").unwrap(),
-        "gpt-4o".into(),
-        None,
-    ));
+    let llm = create_provider(&LlmConfig {
+        backend: "custom".to_string(),
+        protocol: Some("openai".to_string()),
+        api_key: std::env::var("OPENAI_API_KEY").unwrap(),
+        model: "gpt-4o".into(),
+        base_url: None,
+        options: Default::default(),
+    }).unwrap();
 
     let runtime = AgentBuilder::new(llm)
         .system_prompt("You are a helpful weather assistant.")

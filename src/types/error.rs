@@ -162,6 +162,25 @@ impl From<serde_json::Error> for AgentError {
     }
 }
 
+impl From<llm_trait::LlmError> for AgentError {
+    fn from(e: llm_trait::LlmError) -> Self {
+        match e {
+            llm_trait::LlmError::Config(msg) => AgentError::ConfigError(msg),
+            llm_trait::LlmError::LlmApi { status, message } => {
+                if status == 429 {
+                    AgentError::RateLimitExceeded
+                } else if status >= 500 {
+                    AgentError::ServiceUnavailable(format!("HTTP {status}: {message}"))
+                } else {
+                    AgentError::LlmApi { message: format!("HTTP {status}: {message}") }
+                }
+            }
+            llm_trait::LlmError::Llm(msg) => AgentError::Llm(msg),
+            llm_trait::LlmError::Stream(msg) => AgentError::LlmStream(msg),
+        }
+    }
+}
+
 /// Classifies an `AgentError` into a broad category for recovery decisions.
 ///
 /// Unlike `AgentError` which carries full context (messages, nested errors, etc.),

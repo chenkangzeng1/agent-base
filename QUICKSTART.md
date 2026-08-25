@@ -102,8 +102,9 @@ The **AgentBuilder** is your entry point. It configures the LLM, registers tools
 // src/main.rs
 mod tools;
 
-use std::sync::Arc;
-use agent_base::{AgentBuilder, RuntimeEvent, AgentResult, OpenAiClient, RunOutcome, RetryOnError};
+use agent_base::{AgentBuilder, RuntimeEvent, AgentResult, RunOutcome, RetryOnError};
+use llm_trait::LlmConfig;
+use llm_unified::create_provider;
 use tools::DiskCheckTool;
 
 const SYSTEM_PROMPT: &str = r#"You are a server health check assistant.
@@ -115,12 +116,15 @@ Be concise. Report findings as bullet points."#;
 async fn main() -> AgentResult<()> {
     dotenvy::dotenv().ok();
 
-    // 1. Create LLM client (OpenAI-compatible)
-    let llm = Arc::new(OpenAiClient::new(
-        std::env::var("OPENAI_API_KEY").expect("Set OPENAI_API_KEY"),
-        "gpt-4o-mini",           // use any OpenAI-compatible model
-        None,                    // or Some("https://your-proxy.com/v1")
-    ));
+    // 1. Create LLM provider (OpenAI-compatible)
+    let llm = create_provider(&LlmConfig {
+        backend: "custom".to_string(),
+        protocol: Some("openai".to_string()),
+        api_key: std::env::var("OPENAI_API_KEY").expect("Set OPENAI_API_KEY"),
+        model: "gpt-4o-mini".into(),           // use any OpenAI-compatible model
+        base_url: None,                         // or Some("https://your-proxy.com/v1")
+        options: Default::default(),
+    }).unwrap();
 
     // 2. Build the runtime
     let runtime = AgentBuilder::new(llm)
@@ -446,14 +450,15 @@ impl ToolErrorRecovery for SmartRecovery {
 
 ```rust
 // src/main.rs
-use std::sync::Arc;
 use std::io::{self, Write};
 
 use agent_base::{
-    AgentBuilder, RuntimeEvent, AgentResult, OpenAiClient, RunOutcome,
+    AgentBuilder, RuntimeEvent, AgentResult, RunOutcome,
     Tool, ToolContext, Content,
 };
 use async_trait::async_trait;
+use llm_trait::LlmConfig;
+use llm_unified::create_provider;
 use serde_json::{json, Value};
 
 struct CheckDiskTool;
@@ -500,10 +505,14 @@ fn on_event(event: RuntimeEvent) -> AgentResult<()> {
 async fn main() -> AgentResult<()> {
     dotenvy::dotenv().ok();
 
-    let llm = Arc::new(OpenAiClient::new(
-        std::env::var("OPENAI_API_KEY").expect("Set OPENAI_API_KEY"),
-        "gpt-4o-mini", None,
-    ));
+    let llm = create_provider(&LlmConfig {
+        backend: "custom".to_string(),
+        protocol: Some("openai".to_string()),
+        api_key: std::env::var("OPENAI_API_KEY").expect("Set OPENAI_API_KEY"),
+        model: "gpt-4o-mini".into(),
+        base_url: None,
+        options: Default::default(),
+    }).unwrap();
 
     let runtime = AgentBuilder::new(llm)
         .system_prompt("You are a server health assistant. Use tools to check status. Be concise.")

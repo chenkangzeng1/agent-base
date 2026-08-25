@@ -35,8 +35,10 @@ Among agent runtime libraries, `agent-base` distinguishes itself through:
 │  └─ ContextWindowManager Token-aware context trimming           │
 ├─────────────────────────────────────────────────────────────────┤
 │  Adapters                                                       │
-│  ├─ OpenAiClient         OpenAI / compatible APIs              │
-│  ├─ AnthropicClient      Anthropic API                         │
+│  ├─ llm-unified          Unified LLM provider implementations  │
+│  │  ├─ OpenAiProtocol    OpenAI / compatible APIs              │
+│  │  ├─ AnthropicProtocol Anthropic API                         │
+│  │  └─ MimoProvider      Mimo API                              │
 │  └─ InMemorySessionStore Default in-memory sessions            │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -69,7 +71,7 @@ UserEvent (public)              Events emitted by tools during execution
 
 | Trait | Scope | Default | Purpose |
 |-------|-------|---------|---------|
-| `LlmClient` | LLM Provider | `OpenAiClient`, `AnthropicClient` | LLM interaction |
+| `LlmProvider` | LLM Provider | `GenericProvider`, `MimoProvider`, etc. | LLM interaction |
 | `Tool` / `TypedTool` | Tool System | User-defined | Agent capabilities |
 | `ToolPolicy` | Tool Approval | None | Sync approval evaluation + before/after hooks |
 | `ApprovalHandler` | Tool Approval | `AllowAll`, `DenyAll` | Async approval interaction |

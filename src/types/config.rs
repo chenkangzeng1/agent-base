@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+
+// Re-export ResponseFormat from llm-trait.
+pub use llm_trait::request::ResponseFormat;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum Language {
@@ -61,31 +63,6 @@ impl RetryConfig {
     pub fn no_jitter(mut self) -> Self {
         self.jitter = false;
         self
-    }
-}
-
-#[derive(Clone, Debug)]
-pub enum ResponseFormat {
-    JsonObject,
-    JsonSchema { name: String, schema: Value },
-}
-
-impl ResponseFormat {
-    pub fn to_api_value(&self) -> Value {
-        match self {
-            ResponseFormat::JsonObject => {
-                serde_json::json!({ "type": "json_object" })
-            }
-            ResponseFormat::JsonSchema { name, schema } => {
-                serde_json::json!({
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": name,
-                        "schema": schema,
-                    }
-                })
-            }
-        }
     }
 }
 

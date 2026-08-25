@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use agent_base::{
-    AgentBuilder, AgentError, AgentResult, ChatMessage, Content, Middleware, OpenAiClient,
+    AgentBuilder, AgentError, AgentResult, ChatMessage, Content, Middleware,
     PostLlmCtx, RuntimeEvent, SessionId, Tool, ToolContext,
 };
 use async_trait::async_trait;
@@ -292,7 +292,15 @@ async fn main() -> AgentResult<()> {
         .or_else(|_| std::env::var("DASHSCOPE_BASE_URL"))
         .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
 
-    let llm_client = Arc::new(OpenAiClient::new(api_key, model.clone(), Some(base_url)));
+    let llm_client = llm_unified::create_provider(&llm_trait::LlmConfig {
+        backend: "custom".to_string(),
+        protocol: Some("openai".to_string()),
+        api_key,
+        model,
+        base_url: Some(base_url),
+        options: std::collections::HashMap::new(),
+    })
+    .map_err(|e| AgentError::internal(e.to_string()))?;
 
     let runtime = AgentBuilder::new(llm_client)
         .system_prompt(SYSTEM_PROMPT)

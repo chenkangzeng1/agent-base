@@ -4,10 +4,12 @@
 /// 这决定了 react_loop 是否会把响应当作"空响应"而无限重试。
 ///
 /// 运行：cargo run --example qwen_model_compare
-use agent_base::{AgentResult, ChatMessage, OpenAiClient, StreamChunk, StreamClient};
+use agent_base::{AgentResult, ChatMessage};
 use futures_util::StreamExt;
+use llm_trait::{ChatRequest, LlmProvider, ReasoningConfig, StreamChunk};
+use llm_unified::create_provider;
 
-fn usage_summary(usage: &agent_base::UsageInfo) -> String {
+fn usage_summary(usage: &llm_trait::UsageInfo) -> String {
     format!(
         "prompt={}, completion={}, total={}",
         usage.prompt_tokens.unwrap_or(0),
@@ -28,7 +30,7 @@ struct TestResult {
 
 /// 对单个模型执行一次流式请求，收集 thinking / text / tool_call 数据。
 async fn probe_model(
-    client: &OpenAiClient,
+    provider: &dyn LlmProvider,
     model_label: &str,
     system_prompt: &str,
     user_input: &str,
@@ -65,16 +67,15 @@ async fn probe_model(
         }
     })];
 
-    let reasoning = agent_base::ReasoningConfig {
+    let reasoning = ReasoningConfig {
         enabled: Some(enable_thinking),
         budget_tokens: thinking_budget,
         effort: None,
     };
 
+    let request = ChatRequest::new(messages).with_tools(tools).with_reasoning(reasoning);
     let start = std::time::Instant::now();
-    let mut stream = client
-        .stream(&messages, &tools, Some(&reasoning), None)
-        .await?;
+    let mut stream = provider.stream(request).await.map_err(|e| agent_base::AgentError::internal(e.to_string()))?;
 
     let mut thought_chars: usize = 0;
     let mut text_chars: usize = 0;
@@ -84,7 +85,7 @@ async fn probe_model(
     let mut text_sample = String::new();
 
     while let Some(chunk) = stream.next().await {
-        match chunk? {
+        match chunk.map_err(|e| agent_base::AgentError::internal(e.to_string()))? {
             StreamChunk::Thought(t) => {
                 thought_chars += t.len();
                 if thought_sample.len() < 200 {
@@ -170,17 +171,22 @@ async fn main() -> AgentResult<()> {
     let mut all_results: Vec<(&str, Vec<TestResult>)> = Vec::new();
 
     for (model_id, model_label) in &models {
-        let client = OpenAiClient::new(
-            api_key.clone(),
-            model_id.to_string(),
-            Some(base_url.clone()),
-        );
+        let provider = create_provider(&llm_trait::LlmConfig {
+            backend: "custom".to_string(),
+            protocol: Some("openai".to_string()),
+            api_key: api_key.clone(),
+            model: model_id.to_string(),
+            base_url: Some(base_url.clone()),
+            options: std::collections::HashMap::new(),
+        })
+        .map_err(|e| agent_base::AgentError::internal(e.to_string()))?;
+
         let mut results = Vec::new();
 
         // 测试 A: 不开 thinking（对照组）
         results.push(
             probe_model(
-                &client,
+                provider.as_ref(),
                 &format!("{} (无思考)", model_label),
                 system_prompt,
                 user_input,
@@ -193,7 +199,7 @@ async fn main() -> AgentResult<()> {
         // 测试 B: 开 thinking，不限 budget
         results.push(
             probe_model(
-                &client,
+                provider.as_ref(),
                 &format!("{} (thinking=on, 无budget)", model_label),
                 system_prompt,
                 user_input,
@@ -206,7 +212,7 @@ async fn main() -> AgentResult<()> {
         // 测试 C: 开 thinking，budget=2000（和 ops-omni 实际配置一致）
         results.push(
             probe_model(
-                &client,
+                provider.as_ref(),
                 &format!("{} (thinking=on, budget=2000)", model_label),
                 system_prompt,
                 user_input,
