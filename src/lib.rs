@@ -13,9 +13,9 @@ pub mod prelude {
     pub use crate::engine::{
         AgentBuilder, AgentRuntime, AgentSession, AllowAllApprovalHandler, DenyAllApprovalHandler,
     };
-    pub use crate::llm::provider::LlmProvider as LlmProviderTrait;
-    pub use crate::llm::request::ChatRequest;
-    pub use crate::llm::response::{ChatResponse, ChatStream};
+    pub use crate::llm::LlmProvider as LlmProviderTrait;
+    pub use crate::llm::ChatRequest;
+    pub use crate::llm::{ChatResponse, ChatStream};
     pub use crate::tool::{
         AutoContinueTool, Content, DenyAllToolPolicy, Tool, ToolContext, ToolMetadata, ToolPolicy,
         ToolRegistry, TypedTool,
