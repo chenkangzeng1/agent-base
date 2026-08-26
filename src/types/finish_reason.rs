@@ -198,3 +198,54 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod proptest_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn from_openai_never_panics(s in proptest::option::of(".*")) {
+            let result = FinishReason::from_openai(s.as_deref());
+            // Verify it returns a valid variant
+            match result {
+                FinishReason::Stop | FinishReason::ToolUse |
+                FinishReason::Truncated { .. } | FinishReason::Other(_) => {}
+            }
+        }
+
+        #[test]
+        fn from_anthropic_never_panics(s in proptest::option::of(".*")) {
+            let result = FinishReason::from_anthropic(s.as_deref());
+            match result {
+                FinishReason::Stop | FinishReason::ToolUse |
+                FinishReason::Truncated { .. } | FinishReason::Other(_) => {}
+            }
+        }
+
+        #[test]
+        fn from_raw_never_panics(s in proptest::option::of(".*")) {
+            let result = FinishReason::from_raw(s.as_deref());
+            match result {
+                FinishReason::Stop | FinishReason::ToolUse |
+                FinishReason::Truncated { .. } | FinishReason::Other(_) => {}
+            }
+        }
+
+        #[test]
+        fn from_responses_never_panics(s in proptest::option::of(".*")) {
+            let result = FinishReason::from_responses(s.as_deref());
+            match result {
+                FinishReason::Stop | FinishReason::ToolUse |
+                FinishReason::Truncated { .. } | FinishReason::Other(_) => {}
+            }
+        }
+
+        #[test]
+        fn truncated_is_always_truncated(reason in proptest::option::of(".*")) {
+            let fr = FinishReason::Truncated { reason };
+            assert!(fr.is_truncated());
+        }
+    }
+}

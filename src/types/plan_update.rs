@@ -116,3 +116,88 @@ mod tests {
         assert!(args.validate().is_err());
     }
 }
+
+#[cfg(test)]
+mod proptest_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    #[test]
+    fn validate_rejects_empty_plan() {
+        let args = UpdatePlanArgs {
+            objective: None,
+            explanation: None,
+            plan: vec![],
+        };
+        assert!(args.validate().is_err());
+    }
+
+    proptest! {
+        #[test]
+        fn validate_accepts_1_to_50_steps(count in 1usize..=50) {
+            let plan: Vec<PlanItem> = (0..count)
+                .map(|i| PlanItem {
+                    step: format!("step {}", i),
+                    status: PlanStepStatus::Pending,
+                })
+                .collect();
+            let args = UpdatePlanArgs {
+                objective: None,
+                explanation: None,
+                plan,
+            };
+            assert!(args.validate().is_ok());
+        }
+
+        #[test]
+        fn validate_rejects_more_than_50_steps(count in 51usize..100) {
+            let plan: Vec<PlanItem> = (0..count)
+                .map(|i| PlanItem {
+                    step: format!("step {}", i),
+                    status: PlanStepStatus::Pending,
+                })
+                .collect();
+            let args = UpdatePlanArgs {
+                objective: None,
+                explanation: None,
+                plan,
+            };
+            assert!(args.validate().is_err());
+        }
+
+        #[test]
+        fn validate_rejects_empty_step_text(step_text in r"[ \t\r\n]{0,20}") {
+            let args = UpdatePlanArgs {
+                objective: None,
+                explanation: None,
+                plan: vec![PlanItem {
+                    step: step_text,
+                    status: PlanStepStatus::Pending,
+                }],
+            };
+            assert!(args.validate().is_err());
+        }
+
+        #[test]
+        fn validate_objective_length_boundary(len in 0usize..300) {
+            let objective = "x".repeat(len);
+            let args = UpdatePlanArgs {
+                objective: Some(objective),
+                explanation: None,
+                plan: vec![PlanItem {
+                    step: "do something".into(),
+                    status: PlanStepStatus::Pending,
+                }],
+            };
+            if len == 0 {
+                // Empty after trim → fails
+                assert!(args.validate().is_err());
+            } else if len <= 200 {
+                assert!(args.validate().is_ok());
+            } else {
+                // Over 200 chars → fails
+                assert!(args.validate().is_err());
+            }
+        }
+    }
+}

@@ -240,19 +240,52 @@ impl AgentSession {
         &mut self,
         tool_calls: &[(String, String, String)],
         reasoning: Option<String>,
+        content: Option<String>,
     ) {
         let calls: Vec<ToolCallMessage> = tool_calls
             .iter()
-            .map(|(id, name, args)| ToolCallMessage {
-                id: id.clone(),
-                name: name.clone(),
-                arguments: args.clone(),
+            .map(|(id, name, args)| {
+                // Validate that arguments are valid JSON.
+                // If not (e.g., truncated by token limit), wrap in an error object
+                // so the API doesn't reject the entire request with 400.
+                let valid_args = if serde_json::from_str::<serde_json::Value>(args).is_ok() {
+                    args.clone()
+                } else {
+                    tracing::warn!(
+                        tool_name = %name,
+                        args_len = args.len(),
+                        "tool call arguments are not valid JSON (possibly truncated), wrapping in error object"
+                    );
+                    // Find a safe char boundary at or before byte 200 to avoid
+                    // panicking on multi-byte UTF-8 chars (CJK, emoji, etc.).
+                    let max_preview = 200;
+                    let safe_end = if args.len() <= max_preview {
+                        args.len()
+                    } else {
+                        args.char_indices()
+                            .find(|(i, _)| *i >= max_preview)
+                            .map(|(i, _)| i)
+                            .unwrap_or(args.len())
+                    };
+                    serde_json::json!({
+                        "error": "tool_call_arguments_truncated",
+                        "original_args_preview": &args[..safe_end],
+                        "message": "The tool call arguments were truncated or invalid. Please retry with complete arguments."
+                    })
+                    .to_string()
+                };
+                ToolCallMessage {
+                    id: id.clone(),
+                    name: name.clone(),
+                    arguments: valid_args,
+                }
             })
             .collect();
         self.chat_messages.push(ChatMessage::Assistant {
-            content: None,
+            content,
             reasoning_content: reasoning,
             tool_calls: Some(calls),
+            thinking_signature: None,
         });
     }
 
@@ -479,7 +512,7 @@ mod tests {
     fn test_turn_count_with_tool_calls() {
         let mut s = make_session();
         s.push_message(MessageRole::User, "do something");
-        s.push_assistant_tool_calls(&[("id1".into(), "tool".into(), "{}".into())], None);
+        s.push_assistant_tool_calls(&[("id1".into(), "tool".into(), "{}".into())], None, None);
         s.push_tool_result("id1", "result");
         s.push_message(MessageRole::Assistant, "done");
         // One user turn: User -> Assistant(tool_calls) -> Tool -> Assistant(text)
@@ -525,7 +558,7 @@ mod tests {
         let mut s = make_session();
         // Turn 1 with tool call
         s.push_message(MessageRole::User, "u1");
-        s.push_assistant_tool_calls(&[("id1".into(), "t".into(), "{}".into())], None);
+        s.push_assistant_tool_calls(&[("id1".into(), "t".into(), "{}".into())], None, None);
         s.push_tool_result("id1", "r1");
         s.push_message(MessageRole::Assistant, "a1");
         // Turn 2
@@ -557,7 +590,7 @@ mod tests {
     fn test_pop_last_message_tool_calls_only() {
         let mut s = make_session();
         s.push_message(MessageRole::User, "do it");
-        s.push_assistant_tool_calls(&[("id1".into(), "t".into(), "{}".into())], None);
+        s.push_assistant_tool_calls(&[("id1".into(), "t".into(), "{}".into())], None, None);
         assert_eq!(s.chat_messages().len(), 2);
         assert_eq!(s.simple_messages().len(), 1); // only User in simple_messages (tool_calls-only filtered)
         s.pop_last_message();
@@ -659,6 +692,7 @@ mod tests {
                 name: "t".into(),
                 arguments: "{}".into(),
             }]),
+            thinking_signature: None,
         });
         assert!(s.simple_messages().is_empty());
     }
@@ -697,6 +731,7 @@ mod tests {
                 ("c2".into(), "t".into(), "{}".into()),
             ],
             None,
+            None,
         );
         s.push_tool_result("c1", "ok"); // only c1 answered
         s.close_dangling_tool_calls("failed");
@@ -707,6 +742,7 @@ mod tests {
             .filter_map(|m| match m {
                 ChatMessage::Tool {
                     tool_call_id,
+                    name: _,
                     content,
                 } => Some((tool_call_id.clone(), content.clone())),
                 _ => None,
@@ -773,6 +809,7 @@ mod validate_tests {
                         arguments: "{}".into(),
                     },
                 ]),
+                thinking_signature: None,
             },
             ChatMessage::tool("call_1", "result1"),
             ChatMessage::tool("call_2", "result2"),
@@ -1054,5 +1091,200 @@ mod validate_tests {
         assert_eq!(restored.run_state.turn_tool_calls, 3);
         assert!(restored.run_state.run_has_tool_calls);
         assert_eq!(restored.run_state.reasoning_only_strikes, 2);
+    }
+
+    #[test]
+    fn push_assistant_tool_calls_validates_json_args() {
+        let mut s = make_session();
+
+        // Valid JSON args should pass through unchanged
+        let valid_args = r#"{"path": "src/main.rs", "content": "fn main() {}"}"#;
+        s.push_assistant_tool_calls(
+            &[("id1".into(), "write_file".into(), valid_args.into())],
+            None,
+            None,
+        );
+        if let ChatMessage::Assistant { tool_calls: Some(ref tc), .. } = s.chat_messages[0] {
+            assert_eq!(tc[0].arguments, valid_args);
+        } else {
+            panic!("expected Assistant message with tool_calls");
+        }
+
+        // Truncated (invalid JSON) args should be wrapped in an error object
+        let truncated_args = r#"{"path": "src/ui/markdown.rs", "content": "#;
+        s.push_assistant_tool_calls(
+            &[("id2".into(), "write_file".into(), truncated_args.into())],
+            None,
+            None,
+        );
+        if let ChatMessage::Assistant { tool_calls: Some(ref tc), .. } = s.chat_messages[1] {
+            // The arguments should now be valid JSON (the error wrapper)
+            let parsed: serde_json::Value = serde_json::from_str(&tc[0].arguments)
+                .expect("wrapped arguments should be valid JSON");
+            assert_eq!(parsed["error"], "tool_call_arguments_truncated");
+            assert!(parsed["message"].as_str().unwrap().contains("truncated"));
+        } else {
+            panic!("expected Assistant message with tool_calls");
+        }
+    }
+
+    #[test]
+    fn push_assistant_tool_calls_truncated_multibyte_no_panic() {
+        // Bug-2: Invalid JSON args with multi-byte UTF-8 chars near byte 200
+        // cause a panic at char boundary when slicing &args[..args.len().min(200)].
+        let mut s = make_session();
+
+        // Build invalid JSON with CJK chars that straddle the 200-byte boundary.
+        // "あ" = 3 bytes in UTF-8. Repeating ~70 times = ~210 bytes, then add invalid suffix.
+        let mut bad_args = "あ".repeat(70); // 70 * 3 = 210 bytes
+        bad_args.push_str("truncated");    // makes it invalid JSON
+
+        // This must NOT panic — the preview slice should respect char boundaries.
+        s.push_assistant_tool_calls(
+            &[("id1".into(), "tool".into(), bad_args.into())],
+            None,
+            None,
+        );
+
+        if let ChatMessage::Assistant { tool_calls: Some(ref tc), .. } = s.chat_messages[0] {
+            // Should be wrapped in error object (valid JSON)
+            let parsed: serde_json::Value = serde_json::from_str(&tc[0].arguments)
+                .expect("wrapped arguments should be valid JSON even with multibyte chars");
+            assert_eq!(parsed["error"], "tool_call_arguments_truncated");
+        } else {
+            panic!("expected Assistant message with tool_calls");
+        }
+    }
+}
+
+#[cfg(test)]
+mod proptest_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        // ── RunState property tests ─────────────────────────────────────────
+
+        #[test]
+        fn reset_for_new_run_zeros_all_fields(
+            turn_tool_calls in 0usize..1000,
+            run_has_tool_calls in proptest::bool::ANY,
+            reasoning_only_strikes in 0usize..100,
+            empty_response_strikes in 0usize..100,
+            nudge_count in 0usize..100,
+        ) {
+            let mut rs = RunState {
+                turn_tool_calls,
+                run_has_tool_calls,
+                reasoning_only_strikes,
+                empty_response_strikes,
+                nudge_count,
+            };
+            rs.reset_for_new_run();
+            assert_eq!(rs.turn_tool_calls, 0);
+            assert!(!rs.run_has_tool_calls);
+            assert_eq!(rs.reasoning_only_strikes, 0);
+            assert_eq!(rs.empty_response_strikes, 0);
+            assert_eq!(rs.nudge_count, 0);
+        }
+
+        #[test]
+        fn record_tool_calls_accumulates(n in 0usize..100) {
+            let mut rs = RunState::default();
+            rs.record_tool_calls(n);
+            assert_eq!(rs.turn_tool_calls, n);
+            assert!(rs.run_has_tool_calls);
+            assert_eq!(rs.reasoning_only_strikes, 0);
+            assert_eq!(rs.empty_response_strikes, 0);
+        }
+
+        #[test]
+        fn record_reasoning_only_increments(count in 1usize..50) {
+            let mut rs = RunState::default();
+            for i in 1..=count {
+                let strikes = rs.record_reasoning_only();
+                assert_eq!(strikes, i);
+                assert_eq!(rs.empty_response_strikes, 0);
+            }
+        }
+
+        #[test]
+        fn record_empty_response_increments(count in 1usize..50) {
+            let mut rs = RunState::default();
+            for i in 1..=count {
+                let strikes = rs.record_empty_response();
+                assert_eq!(strikes, i);
+                assert_eq!(rs.reasoning_only_strikes, 0);
+            }
+        }
+
+        // ── push_assistant_tool_calls property tests ────────────────────────
+
+        #[test]
+        fn push_assistant_tool_calls_valid_json_unchanged(args in r"\{[^{}]{0,200}\}") {
+            // Only test strings that are actually valid JSON objects
+            if serde_json::from_str::<serde_json::Value>(&args).is_err() {
+                return Ok(());
+            }
+            let mut s = make_session();
+            s.push_assistant_tool_calls(
+                &[("id".into(), "tool".into(), args.clone())],
+                None,
+                None,
+            );
+            if let ChatMessage::Assistant { tool_calls: Some(ref tc), .. } = s.chat_messages()[0] {
+                assert_eq!(tc[0].arguments, args);
+            } else {
+                panic!("expected Assistant with tool_calls");
+            }
+        }
+
+        #[test]
+        fn push_assistant_tool_calls_invalid_json_wrapped_safely(
+            bad_args in "[a-z\u{4e00}-\u{9fff}]{0,300}"
+        ) {
+            // Skip if it happens to be valid JSON
+            if serde_json::from_str::<serde_json::Value>(&bad_args).is_ok() {
+                return Ok(());
+            }
+            let mut s = make_session();
+            s.push_assistant_tool_calls(
+                &[("id".into(), "tool".into(), bad_args)],
+                None,
+                None,
+            );
+            if let ChatMessage::Assistant { tool_calls: Some(ref tc), .. } = s.chat_messages()[0] {
+                let parsed: serde_json::Value = serde_json::from_str(&tc[0].arguments)
+                    .expect("wrapped args must be valid JSON");
+                assert_eq!(parsed["error"], "tool_call_arguments_truncated");
+            } else {
+                panic!("expected Assistant with tool_calls");
+            }
+        }
+
+        // ── trim_oldest_turns property tests ────────────────────────────────
+
+        #[test]
+        fn trim_oldest_turns_never_exceeds_max(turns in 1usize..20, max in 1usize..20) {
+            let mut s = make_session();
+            for i in 0..turns {
+                s.push_message(MessageRole::User, format!("u{}", i));
+                s.push_message(MessageRole::Assistant, format!("a{}", i));
+            }
+            s.trim_oldest_turns(max);
+            assert!(s.turn_count() <= max || turns <= max);
+        }
+
+        // ── validate_message_sequence property tests ────────────────────────
+
+        #[test]
+        fn validate_simple_user_assistant_always_passes(count in 1usize..20) {
+            let mut msgs = Vec::new();
+            for i in 0..count {
+                msgs.push(ChatMessage::user(format!("msg{}", i)));
+                msgs.push(ChatMessage::assistant(format!("reply{}", i)));
+            }
+            assert!(validate_message_sequence(&msgs).is_ok());
+        }
     }
 }

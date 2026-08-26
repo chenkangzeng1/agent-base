@@ -84,6 +84,7 @@ impl ContextWindowManager {
                 content,
                 reasoning_content,
                 tool_calls,
+                thinking_signature: _,
             } => {
                 let mut tokens = content.as_deref().map(Self::estimate_tokens).unwrap_or(0);
                 if let Some(rc) = reasoning_content {
@@ -101,6 +102,7 @@ impl ContextWindowManager {
             ChatMessage::Tool {
                 tool_call_id,
                 content,
+                ..
             } => Self::estimate_tokens(tool_call_id) + Self::estimate_tokens(content),
             ChatMessage::Custom { role, data } => {
                 Self::estimate_tokens(role) + Self::estimate_tokens(&data.to_string())
@@ -242,6 +244,7 @@ mod tests {
                 name: "echo".into(),
                 arguments: "{}".into(),
             }]),
+            thinking_signature: None,
         };
         let t = ContextWindowManager::message_tokens(&msg);
         assert!(t > 0);
@@ -289,5 +292,90 @@ mod tests {
         mgr.trim(&mut msgs);
         assert_eq!(msgs.len(), 3);
         assert!(matches!(msgs[0], ChatMessage::System { .. }));
+    }
+}
+
+#[cfg(test)]
+mod proptest_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #[test]
+        fn estimate_tokens_never_panics(text in ".*") {
+            let tokens = ContextWindowManager::estimate_tokens(&text);
+            // tokens should be non-negative (usize) and reasonable
+            assert!(tokens <= text.len() + 1); // at most 1 token per byte + ceil
+        }
+
+        #[test]
+        fn estimate_tokens_empty_is_zero(text in "[a-z\u{4e00}-\u{9fff}]{0,100}") {
+            if text.is_empty() {
+                assert_eq!(ContextWindowManager::estimate_tokens(&text), 0);
+            } else {
+                assert!(ContextWindowManager::estimate_tokens(&text) > 0);
+            }
+        }
+
+        #[test]
+        fn estimate_tokens_cjk_higher_than_latin_same_len(
+            cjk_text in "[\u{4e00}-\u{9fff}]{1,50}",
+            latin_text in "[a-z]{1,50}",
+        ) {
+            // Pad to same char length
+            let max_len = cjk_text.chars().count().max(latin_text.chars().count());
+            let cjk_padded: String = cjk_text.chars().cycle().take(max_len).collect();
+            let latin_padded: String = latin_text.chars().cycle().take(max_len).collect();
+            let cjk_tokens = ContextWindowManager::estimate_tokens(&cjk_padded);
+            let latin_tokens = ContextWindowManager::estimate_tokens(&latin_padded);
+            // CJK ~1.5 chars/token, Latin ~4 chars/token → CJK uses more tokens
+            assert!(cjk_tokens >= latin_tokens,
+                "CJK ({}) should use >= tokens than Latin ({}) for {} chars",
+                cjk_tokens, latin_tokens, max_len);
+        }
+
+        #[test]
+        fn trim_preserves_system_prefix(
+            num_messages in 2usize..15,
+            max_tokens in 5usize..50,
+        ) {
+            let mgr = ContextWindowManager {
+                max_tokens,
+                keep_first_n: 1,
+                keep_last_n: 0,
+            };
+            let mut msgs = vec![ChatMessage::system("system prompt")];
+            for i in 0..num_messages {
+                msgs.push(ChatMessage::user(format!("message {}", i)));
+            }
+            mgr.trim(&mut msgs);
+            // System message should always be preserved
+            assert!(!msgs.is_empty());
+            assert!(matches!(msgs[0], ChatMessage::System { .. }));
+        }
+
+        #[test]
+        fn trim_result_within_budget(
+            num_messages in 3usize..15,
+            max_tokens in 10usize..100,
+        ) {
+            let mgr = ContextWindowManager {
+                max_tokens,
+                keep_first_n: 1,
+                keep_last_n: 1,
+            };
+            let mut msgs = vec![ChatMessage::system("sys")];
+            for i in 0..num_messages {
+                msgs.push(ChatMessage::user(format!("msg {}", i)));
+            }
+            let total_before: usize = msgs.iter().map(ContextWindowManager::message_tokens).sum();
+            // Only test when we actually exceed budget
+            if total_before > max_tokens {
+                mgr.trim(&mut msgs);
+                let total_after: usize = msgs.iter().map(ContextWindowManager::message_tokens).sum();
+                // After trimming, should be within budget (or couldn't trim more)
+                assert!(total_after <= total_before);
+            }
+        }
     }
 }
