@@ -73,6 +73,12 @@ async fn run_test(
             StreamChunk::Usage(usage) => {
                 println!("\n📊 Token 用量: {}", usage_summary(&usage));
             }
+            StreamChunk::ThinkingSignature(_) => {
+                // Thinking signature — not needed for this test
+            }
+            StreamChunk::Error(e) => {
+                eprintln!("\n❌ Stream error: {}", e);
+            }
         }
     }
 
@@ -100,11 +106,10 @@ async fn main() -> AgentResult<()> {
     println!();
 
     let provider = create_provider(&llm_trait::LlmConfig {
-        backend: "custom".to_string(),
-        protocol: Some("openai".to_string()),
+        protocol: Some(llm_trait::Protocol::OpenAi),
         api_key,
         model,
-        base_url: Some(base_url),
+        base_url,
         options: std::collections::HashMap::new(),
     })
     .map_err(|e| agent_base::AgentError::internal(e.to_string()))?;

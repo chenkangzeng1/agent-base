@@ -3,18 +3,22 @@ use serde::{Deserialize, Serialize};
 
 use crate::types::{FinishReason, SessionId};
 
-/// Guard decision result
+/// Guard decision — returned by guard, executed by base loop.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum GuardAction {
-    /// Continue loop, inject nudge message
-    Continue(String),
-    /// End loop, return done
-    Done,
-    /// End loop, return failure
-    Fail(String),
+pub enum GuardDecision {
+    /// Continue loop, optionally inject nudge message
+    Continue {
+        nudge: Option<String>,
+    },
+    /// Normal completion (fire_turn_end + RunOutcome::Completed)
+    Complete,
+    /// Abnormal termination (fire_guard_fail + RunOutcome::Failed)
+    Fail {
+        error: String,
+    },
 }
 
-/// Guard context information
+/// Guard context information — built by runtime, passed to guard.
 #[derive(Debug, Clone)]
 pub struct GuardCtx {
     pub session_id: SessionId,
@@ -31,45 +35,45 @@ pub struct GuardCtx {
     /// Guards can use this to reconstruct full conversation context
     /// (e.g. "继续" after a multi-turn discussion).
     pub all_user_inputs: Vec<String>,
+    // Scene hints (runtime detected, guard can trust or ignore)
+    pub is_reasoning_only: bool,
+    pub is_empty_response: bool,
+    pub is_text_only: bool,
+    // Environment state
+    pub thinking_disabled: bool,
 }
 
-/// React Loop Guard trait
+/// React Loop Guard trait — single unified entry point.
 ///
-/// Each method corresponds to an abnormal branch, returns GuardAction to decide next step.
-/// Implementors can:
-/// - Use Focus for intelligent judgment
-/// - Use counters + thresholds
-/// - Pass through or intercept directly
+/// Runtime builds GuardCtx (with scene hints), guard decides what to do.
+/// The guard has full control: it can trust the hints or re-detect.
 #[async_trait]
 pub trait ReactLoopGuard: Send + Sync {
-    /// Model returns only reasoning, no text/tool call
-    async fn on_reasoning_only(&self, ctx: &GuardCtx) -> GuardAction;
-
-    /// Model returns empty (no text, no reasoning, no tool call)
-    async fn on_empty_response(&self, ctx: &GuardCtx) -> GuardAction;
-
-    /// Model returns text-only (no tool call)
-    ///
-    /// Note: This method is called after middleware.
-    /// If middleware has set follow_up_message, this branch won't be entered.
-    async fn on_text_only(&self, ctx: &GuardCtx) -> GuardAction;
+    /// Unified entry point — guard judges the scene and returns a decision.
+    async fn on_turn(&self, ctx: &GuardCtx) -> GuardDecision;
 }
 
-/// No-op guard for backward compatibility
+/// Default guard — fails on degenerate states, completes on normal flow.
+///
+/// This is the default guard injected when no custom guard is set.
+/// It provides basic safety: reasoning-only and empty responses fail,
+/// text-only responses complete normally.
 pub struct NoopGuard;
 
 #[async_trait]
 impl ReactLoopGuard for NoopGuard {
-    async fn on_reasoning_only(&self, _ctx: &GuardCtx) -> GuardAction {
-        GuardAction::Done
-    }
-
-    async fn on_empty_response(&self, _ctx: &GuardCtx) -> GuardAction {
-        GuardAction::Done
-    }
-
-    async fn on_text_only(&self, _ctx: &GuardCtx) -> GuardAction {
-        GuardAction::Done
+    async fn on_turn(&self, ctx: &GuardCtx) -> GuardDecision {
+        if ctx.is_reasoning_only || ctx.is_empty_response {
+            GuardDecision::Fail {
+                error: if ctx.is_reasoning_only {
+                    "model produced only reasoning, no output".to_string()
+                } else {
+                    "model returned empty response".to_string()
+                },
+            }
+        } else {
+            GuardDecision::Complete
+        }
     }
 }
 
@@ -78,7 +82,7 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    async fn test_noop_guard_always_done() {
+    async fn test_noop_guard_returns_complete() {
         let guard = NoopGuard;
         let ctx = GuardCtx {
             session_id: SessionId {
@@ -94,16 +98,70 @@ mod tests {
             empty_response_strikes: 0,
             run_has_tool_calls: false,
             all_user_inputs: vec!["test".to_string()],
+            is_reasoning_only: false,
+            is_empty_response: false,
+            is_text_only: false,
+            thinking_disabled: false,
         };
 
         assert!(matches!(
-            guard.on_reasoning_only(&ctx).await,
-            GuardAction::Done
+            guard.on_turn(&ctx).await,
+            GuardDecision::Complete
         ));
+    }
+
+    #[tokio::test]
+    async fn test_noop_guard_handles_degenerate_states() {
+        let guard = NoopGuard;
+
+        // reasoning-only → Fail
+        let ctx = GuardCtx {
+            session_id: SessionId::new(1),
+            turn_count: 1,
+            user_input: "test".to_string(),
+            model_response: "".to_string(),
+            finish_reason: FinishReason::Stop,
+            available_tools: vec![],
+            reasoning_only_strikes: 1,
+            empty_response_strikes: 0,
+            run_has_tool_calls: false,
+            all_user_inputs: vec!["test".to_string()],
+            is_reasoning_only: true,
+            is_empty_response: false,
+            is_text_only: false,
+            thinking_disabled: false,
+        };
         assert!(matches!(
-            guard.on_empty_response(&ctx).await,
-            GuardAction::Done
+            guard.on_turn(&ctx).await,
+            GuardDecision::Fail { .. }
         ));
-        assert!(matches!(guard.on_text_only(&ctx).await, GuardAction::Done));
+
+        // empty response → Fail
+        let mut ctx2 = ctx.clone();
+        ctx2.is_reasoning_only = false;
+        ctx2.is_empty_response = true;
+        assert!(matches!(
+            guard.on_turn(&ctx2).await,
+            GuardDecision::Fail { .. }
+        ));
+
+        // text-only → Complete
+        let mut ctx3 = ctx.clone();
+        ctx3.is_reasoning_only = false;
+        ctx3.is_empty_response = false;
+        ctx3.is_text_only = true;
+        assert!(matches!(
+            guard.on_turn(&ctx3).await,
+            GuardDecision::Complete
+        ));
+
+        // no flags → Complete
+        let mut ctx4 = ctx.clone();
+        ctx4.is_reasoning_only = false;
+        ctx4.is_text_only = false;
+        assert!(matches!(
+            guard.on_turn(&ctx4).await,
+            GuardDecision::Complete
+        ));
     }
 }

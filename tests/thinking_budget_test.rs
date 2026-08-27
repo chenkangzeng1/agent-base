@@ -79,7 +79,6 @@ impl agent_base::llm_trait::LlmProvider for CaptureLlmProvider {
         agent_base::llm_trait::ProviderInfo {
             name: "capture".to_string(),
             model: "test-model".to_string(),
-            backend: agent_base::llm_trait::LlmBackend::Custom("capture".to_string()),
             version: None,
         }
     }

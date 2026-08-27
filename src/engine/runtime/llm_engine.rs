@@ -17,13 +17,20 @@ fn build_chat_request(
     tool_definitions: &[Value],
     reasoning: Option<&ReasoningConfig>,
     response_format: Option<&crate::types::ResponseFormat>,
+    thinking_disabled: bool,
 ) -> llm_trait::ChatRequest {
     let mut request = llm_trait::ChatRequest::new(messages.to_vec());
     if !tool_definitions.is_empty() {
         request = request.with_tools(tool_definitions.to_vec());
     }
+    // Only include reasoning if not disabled
+    // This is a workaround for LLM providers that ignore budget_tokens limit
     if let Some(r) = reasoning {
-        request = request.with_reasoning(r.clone());
+        if !thinking_disabled {
+            request = request.with_reasoning(r.clone());
+        } else {
+            tracing::info!("thinking disabled for rest of run due to too many reasoning-only responses");
+        }
     }
     request.response_format = response_format.cloned();
     request
@@ -73,13 +80,15 @@ impl LlmEngine {
         tool_definitions: &[Value],
         reasoning: Option<&ReasoningConfig>,
         response_format: Option<&crate::types::ResponseFormat>,
+        thinking_disabled: bool,
     ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
         tracing::info!(
             msg_count = messages.len(),
             tool_count = tool_definitions.len(),
+            thinking_disabled,
             "LLM chat_stream: sending request to API"
         );
-        let request = build_chat_request(messages, tool_definitions, reasoning, response_format);
+        let request = build_chat_request(messages, tool_definitions, reasoning, response_format, thinking_disabled);
         let result = self.get_provider().stream(request).await;
         match &result {
             Ok(_) => tracing::info!("LLM chat_stream: API response received"),
@@ -96,8 +105,9 @@ impl LlmEngine {
         reasoning: Option<&ReasoningConfig>,
         response_format: Option<&crate::types::ResponseFormat>,
         retry: crate::types::RetryConfig,
+        thinking_disabled: bool,
     ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
-        let request = build_chat_request(messages, tool_definitions, reasoning, response_format);
+        let request = build_chat_request(messages, tool_definitions, reasoning, response_format, thinking_disabled);
         let mut attempt = 1;
         let mut delay_ms = retry.initial_backoff_ms;
         loop {
@@ -262,6 +272,13 @@ impl LlmEngine {
                             tracing::error!(session_id = session_id.id, error = %e, "LLM stream error");
                             return Err(e);
                         }
+                        Ok(StreamChunk::ThinkingSignature(sig)) => {
+                            aggregator.thinking_signature = Some(sig);
+                        }
+                        Ok(StreamChunk::Error(e)) => {
+                            tracing::error!(session_id = session_id.id, error = %e, "LLM stream protocol error");
+                            return Err(crate::types::AgentError::Llm(e));
+                        }
                     }
 
                     {
@@ -328,6 +345,7 @@ impl LlmEngine {
             ttft_ms: aggregator.ttft_ms,
             llm_duration_ms: total_elapsed.as_millis() as u64,
             reasoning_only,
+            thinking_signature: aggregator.thinking_signature,
         })
     }
 
@@ -361,6 +379,8 @@ pub struct LlmTurnResult {
     /// committed to a tool call nor produced an answer); the react loop nudges and
     /// eventually fails rather than promoting the reasoning into `full_text`.
     pub reasoning_only: bool,
+    /// Thinking signature from the provider (e.g. Anthropic extended thinking).
+    pub thinking_signature: Option<String>,
 }
 
 struct StreamAggregator {
@@ -375,6 +395,8 @@ struct StreamAggregator {
     pub finish_reason: Option<String>,
     /// Time to first token in milliseconds.
     pub ttft_ms: u64,
+    /// Thinking signature from StreamChunk::ThinkingSignature.
+    pub thinking_signature: Option<String>,
 }
 
 impl StreamAggregator {
@@ -387,6 +409,7 @@ impl StreamAggregator {
             usage: None,
             finish_reason: None,
             ttft_ms: 0,
+            thinking_signature: None,
         }
     }
 }
@@ -425,7 +448,6 @@ mod tests {
             ProviderInfo {
                 name: "stub".to_string(),
                 model: self.0.to_string(),
-                backend: llm_trait::LlmBackend::Custom("stub".to_string()),
                 version: None,
             }
         }
@@ -650,7 +672,6 @@ mod tests {
             ProviderInfo {
                 name: "always-fail".to_string(),
                 model: "always-fail".to_string(),
-                backend: llm_trait::LlmBackend::Custom("stub".to_string()),
                 version: None,
             }
         }
@@ -693,7 +714,6 @@ mod tests {
             ProviderInfo {
                 name: "fail-then-succeed".to_string(),
                 model: "fail-then-succeed".to_string(),
-                backend: llm_trait::LlmBackend::Custom("stub".to_string()),
                 version: None,
             }
         }
@@ -702,7 +722,16 @@ mod tests {
     #[tokio::test]
     async fn chat_stream_returns_stream_on_ok() {
         let engine = LlmEngine::new(Arc::new(StubProvider("x")), EventBus::new(16));
-        let mut stream = engine.chat_stream(&[], &[], None, None).await.unwrap();
+        let mut stream = engine.chat_stream(&[], &[], None, None, false).await.unwrap();
+        let next = futures_util::StreamExt::next(&mut stream).await;
+        assert!(next.is_none());
+    }
+
+    #[tokio::test]
+    async fn chat_stream_with_thinking_disabled() {
+        let engine = LlmEngine::new(Arc::new(StubProvider("x")), EventBus::new(16));
+        // Test with thinking_disabled=true — should still work, just without reasoning
+        let mut stream = engine.chat_stream(&[], &[], None, None, true).await.unwrap();
         let next = futures_util::StreamExt::next(&mut stream).await;
         assert!(next.is_none());
     }
@@ -711,7 +740,7 @@ mod tests {
     async fn chat_stream_forwards_error() {
         let engine = LlmEngine::new(Arc::new(AlwaysFail), EventBus::new(16));
         let err = engine
-            .chat_stream(&[], &[], None, None)
+            .chat_stream(&[], &[], None, None, false)
             .await
             .err()
             .expect("should fail");
@@ -729,7 +758,7 @@ mod tests {
             jitter: false,
         };
         let _stream = engine
-            .run_llm_turn_with_retry(&SessionId::new(1), &[], &[], None, None, cfg)
+            .run_llm_turn_with_retry(&SessionId::new(1), &[], &[], None, None, cfg, false)
             .await
             .expect("should succeed after retries");
     }
@@ -745,7 +774,7 @@ mod tests {
             jitter: false,
         };
         let err = engine
-            .run_llm_turn_with_retry(&SessionId::new(1), &[], &[], None, None, cfg)
+            .run_llm_turn_with_retry(&SessionId::new(1), &[], &[], None, None, cfg, false)
             .await
             .err()
             .expect("should be exhausted");

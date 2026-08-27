@@ -1,7 +1,7 @@
 /// 对比 qwen-flash / qwen-plus / qwen3.7-max 在 thinking 模式下的行为差异。
 ///
 /// 重点验证：模型思考完后是否产生 text content，还是只有 reasoning_content。
-/// 这决定了 react_loop 是否会把响应当作"空响应"而无限重试。
+/// 这决定了 react 是否会把响应当作"空响应"而无限重试。
 ///
 /// 运行：cargo run --example qwen_model_compare
 use agent_base::{AgentResult, ChatMessage};
@@ -107,6 +107,12 @@ async fn probe_model(
             StreamChunk::Usage(u) => {
                 println!("  📊 {}", usage_summary(&u));
             }
+            StreamChunk::ThinkingSignature(_) => {
+                // Thinking signature — not needed for comparison
+            }
+            StreamChunk::Error(e) => {
+                eprintln!("  ❌ Stream error: {}", e);
+            }
         }
     }
 
@@ -129,7 +135,7 @@ async fn probe_model(
 
     // 关键判断
     if thought_chars > 0 && text_chars == 0 && tool_calls == 0 {
-        println!("  ⚠️  问题：有思考但无正文无工具调用 → react_loop 会当作空响应!");
+        println!("  ⚠️  问题：有思考但无正文无工具调用 → react 会当作空响应!");
     } else if text_chars > 0 {
         println!("  ✅ 正常：有正文输出");
     } else if tool_calls > 0 {
@@ -172,11 +178,10 @@ async fn main() -> AgentResult<()> {
 
     for (model_id, model_label) in &models {
         let provider = create_provider(&llm_trait::LlmConfig {
-            backend: "custom".to_string(),
-            protocol: Some("openai".to_string()),
+            protocol: Some(llm_trait::Protocol::OpenAi),
             api_key: api_key.clone(),
             model: model_id.to_string(),
-            base_url: Some(base_url.clone()),
+            base_url: base_url.clone(),
             options: std::collections::HashMap::new(),
         })
         .map_err(|e| agent_base::AgentError::internal(e.to_string()))?;
@@ -257,7 +262,7 @@ async fn main() -> AgentResult<()> {
         }
     }
 
-    println!("\n⚠️  = 有思考但无正文无工具调用，react_loop 会当作空响应无限重试");
+    println!("\n⚠️  = 有思考但无正文无工具调用，react 会当作空响应无限重试");
 
     Ok(())
 }

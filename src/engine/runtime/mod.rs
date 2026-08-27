@@ -17,7 +17,7 @@ pub(crate) use event_bus::EventBus;
 mod llm_engine;
 mod message_queue;
 mod plan_runner;
-mod react_loop;
+mod react;
 mod session_manager;
 mod tool_engine;
 
@@ -372,10 +372,12 @@ mod tests {
         async fn chat(&self, _request: ChatRequest) -> Result<ChatResponse, LlmError> {
             Ok(ChatResponse {
                 content: String::new(),
+                reasoning_content: None,
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: llm_trait::FinishReason::Stop,
                 raw: None,
+                thinking_signature: None,
             })
         }
 
@@ -387,7 +389,6 @@ mod tests {
             ProviderInfo {
                 name: "stub".to_string(),
                 model: "stub".to_string(),
-                backend: llm_trait::LlmBackend::Custom("stub".to_string()),
                 version: None,
             }
         }

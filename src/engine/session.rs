@@ -40,6 +40,13 @@ pub struct RunState {
     /// Reset to 0 at the start of each turn (when a new user message arrives).
     /// Used by `ToolEnforcementMiddleware` to cap nudge attempts per turn.
     pub nudge_count: usize,
+    /// Thinking is disabled for the rest of the current run.
+    /// Set to true when reasoning_only_strikes reaches the maximum (3).
+    /// Reset to false at the start of each new run (when a new user message arrives).
+    /// This allows the model to continue without thinking after too many
+    /// reasoning-only responses.
+    #[serde(default)]
+    pub thinking_disabled_for_rest_of_run: bool,
 }
 
 impl RunState {
@@ -50,6 +57,7 @@ impl RunState {
         self.reasoning_only_strikes = 0;
         self.empty_response_strikes = 0;
         self.nudge_count = 0;
+        self.thinking_disabled_for_rest_of_run = false;
     }
 
     /// Record tool calls (branch 3: tool calls).
@@ -64,9 +72,17 @@ impl RunState {
     /// Record reasoning-only response (branch 1).
     /// Resets empty_response_strikes.
     /// Returns the new strike count.
+    /// If strikes reach 3, disables thinking for the rest of the run.
     pub fn record_reasoning_only(&mut self) -> usize {
         self.empty_response_strikes = 0;
         self.reasoning_only_strikes += 1;
+        if self.reasoning_only_strikes >= 3 {
+            tracing::info!(
+                strikes = self.reasoning_only_strikes,
+                "reasoning_only_strikes reached 3, disabling thinking for rest of run"
+            );
+            self.thinking_disabled_for_rest_of_run = true;
+        }
         self.reasoning_only_strikes
     }
 
@@ -874,6 +890,7 @@ mod validate_tests {
             reasoning_only_strikes: 2,
             empty_response_strikes: 1,
             nudge_count: 3,
+            thinking_disabled_for_rest_of_run: true,
         };
 
         rs.reset_for_new_run();
@@ -883,6 +900,7 @@ mod validate_tests {
         assert_eq!(rs.reasoning_only_strikes, 0);
         assert_eq!(rs.empty_response_strikes, 0);
         assert_eq!(rs.nudge_count, 0);
+        assert!(!rs.thinking_disabled_for_rest_of_run);
     }
 
     #[test]
@@ -989,6 +1007,66 @@ mod validate_tests {
         rs.record_reasoning_only();
         assert_eq!(rs.empty_response_strikes, 0);
         assert_eq!(rs.reasoning_only_strikes, 1);
+    }
+
+    #[test]
+    fn run_state_thinking_disabled_default() {
+        let rs = RunState::default();
+        assert!(!rs.thinking_disabled_for_rest_of_run);
+    }
+
+    #[test]
+    fn run_state_thinking_disabled_after_3_strikes() {
+        let mut rs = RunState::default();
+
+        // After 1st reasoning-only: not disabled
+        rs.record_reasoning_only();
+        assert!(!rs.thinking_disabled_for_rest_of_run);
+        assert_eq!(rs.reasoning_only_strikes, 1);
+
+        // After 2nd reasoning-only: not disabled
+        rs.record_reasoning_only();
+        assert!(!rs.thinking_disabled_for_rest_of_run);
+        assert_eq!(rs.reasoning_only_strikes, 2);
+
+        // After 3rd reasoning-only: disabled!
+        rs.record_reasoning_only();
+        assert!(rs.thinking_disabled_for_rest_of_run);
+        assert_eq!(rs.reasoning_only_strikes, 3);
+    }
+
+    #[test]
+    fn run_state_thinking_disabled_resets_on_new_run() {
+        let mut rs = RunState::default();
+
+        // Simulate 3 reasoning-only responses
+        rs.record_reasoning_only();
+        rs.record_reasoning_only();
+        rs.record_reasoning_only();
+        assert!(rs.thinking_disabled_for_rest_of_run);
+        assert_eq!(rs.reasoning_only_strikes, 3);
+
+        // Reset for new run (new user message)
+        rs.reset_for_new_run();
+        assert!(!rs.thinking_disabled_for_rest_of_run);
+        assert_eq!(rs.reasoning_only_strikes, 0);
+    }
+
+    #[test]
+    fn run_state_thinking_disabled_stays_after_tool_calls() {
+        let mut rs = RunState::default();
+
+        // Simulate 3 reasoning-only responses
+        rs.record_reasoning_only();
+        rs.record_reasoning_only();
+        rs.record_reasoning_only();
+        assert!(rs.thinking_disabled_for_rest_of_run);
+
+        // Tool calls should NOT reset thinking_disabled_for_rest_of_run
+        // (it should stay disabled for the rest of the run)
+        rs.record_tool_calls(2);
+        assert!(rs.thinking_disabled_for_rest_of_run);
+        assert_eq!(rs.reasoning_only_strikes, 0); // strikes reset, but thinking stays disabled
     }
 
     // ── Backward-compatible deserialization ────────────────────────────────
@@ -1155,6 +1233,65 @@ mod validate_tests {
             panic!("expected Assistant message with tool_calls");
         }
     }
+
+    #[test]
+    fn push_assistant_tool_calls_then_tool_result_matches_anthropic_protocol() {
+        // Regression test for: when LLM response is truncated (finish_reason=max_tokens),
+        // the code must push assistant message WITH tool_use blocks (not plain text)
+        // so that subsequent tool_result messages can match the tool_use_id.
+        // This is required by Anthropic protocol.
+        let mut s = make_session();
+
+        // Simulate truncated tool call response
+        let tool_calls = vec![
+            ("call_00_VJtlnKha0ZZ2Yo8t5ysQ8883".to_string(), "write_file".to_string(), "{}".to_string()),
+            ("call_01_abc123".to_string(), "bash".to_string(), r#"{"command": "ls"}"#.to_string()),
+        ];
+
+        // Push assistant message with tool_calls (as the fix does)
+        s.push_assistant_tool_calls(
+            &tool_calls,
+            Some("thinking...".to_string()),
+            Some("I'll help you".to_string()),
+        );
+
+        // Push tool results for each tool call
+        for (tc_id, _, _) in &tool_calls {
+            s.push_tool_result(
+                tc_id,
+                "Tool call was not executed: the response hit the output token limit.",
+            );
+        }
+
+        // Verify the message sequence is valid
+        // 1. Assistant message should have tool_calls
+        if let ChatMessage::Assistant { tool_calls: Some(ref tc), .. } = s.chat_messages[0] {
+            assert_eq!(tc.len(), 2);
+            assert_eq!(tc[0].id, "call_00_VJtlnKha0ZZ2Yo8t5ysQ8883");
+            assert_eq!(tc[0].name, "write_file");
+            assert_eq!(tc[1].id, "call_01_abc123");
+            assert_eq!(tc[1].name, "bash");
+        } else {
+            panic!("expected Assistant message with tool_calls");
+        }
+
+        // 2. Tool result messages should have matching tool_use_id
+        if let ChatMessage::Tool { tool_call_id, .. } = &s.chat_messages[1] {
+            assert_eq!(tool_call_id, "call_00_VJtlnKha0ZZ2Yo8t5ysQ8883");
+        } else {
+            panic!("expected Tool message for first tool call");
+        }
+
+        if let ChatMessage::Tool { tool_call_id, .. } = &s.chat_messages[2] {
+            assert_eq!(tool_call_id, "call_01_abc123");
+        } else {
+            panic!("expected Tool message for second tool call");
+        }
+
+        // 3. Validate message sequence (this would catch the bug)
+        assert!(validate_message_sequence(&s.chat_messages).is_ok(),
+            "message sequence should be valid with matching tool_use and tool_result");
+    }
 }
 
 #[cfg(test)]
@@ -1179,6 +1316,7 @@ mod proptest_tests {
                 reasoning_only_strikes,
                 empty_response_strikes,
                 nudge_count,
+                thinking_disabled_for_rest_of_run: true,
             };
             rs.reset_for_new_run();
             assert_eq!(rs.turn_tool_calls, 0);
@@ -1186,6 +1324,7 @@ mod proptest_tests {
             assert_eq!(rs.reasoning_only_strikes, 0);
             assert_eq!(rs.empty_response_strikes, 0);
             assert_eq!(rs.nudge_count, 0);
+            assert!(!rs.thinking_disabled_for_rest_of_run);
         }
 
         #[test]

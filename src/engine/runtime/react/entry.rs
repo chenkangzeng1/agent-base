@@ -100,7 +100,7 @@ impl RuntimeCore {
         let all_user_inputs = self.collect_user_inputs(&session_id).await?;
 
         let result = self
-            .run_turn_loop(
+            .run_react_loop(
                 &session_id,
                 &user_input_owned,
                 &tool_definitions,
@@ -235,11 +235,11 @@ impl RuntimeCore {
 
         tracing::info!(
             session_id = session_id.id,
-            "run_turn: entering run_turn_loop"
+            "run_turn: entering run_react_loop"
         );
         let all_user_inputs = self.collect_user_inputs(&session_id).await?;
         let result = self
-            .run_turn_loop(
+            .run_react_loop(
                 &session_id,
                 &user_input_owned,
                 &tool_definitions,
@@ -365,7 +365,8 @@ impl RuntimeCore {
                     &tool_calls,
                     &mut event_rx,
                     on_event.clone(),
-                    String::new(),
+                    "",
+                    "",
                 )
                 .await
             {
@@ -390,7 +391,7 @@ impl RuntimeCore {
         let all_user_inputs = self.collect_user_inputs(&session_id).await?;
 
         let result = self
-            .run_turn_loop(
+            .run_react_loop(
                 &session_id,
                 &user_input,
                 &tool_definitions,
@@ -540,7 +541,7 @@ impl RuntimeCore {
             // Run inner turn loop (steering drained at each iteration inside)
             let all_user_inputs = self.collect_user_inputs(&session_id).await?;
             let result = self
-                .run_turn_loop(
+                .run_react_loop(
                     &session_id,
                     &current_input,
                     &tool_definitions,

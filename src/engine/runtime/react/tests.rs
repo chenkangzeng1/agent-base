@@ -34,10 +34,12 @@ impl LlmProvider for DummyProvider {
     ) -> Result<llm_trait::ChatResponse, llm_trait::LlmError> {
         Ok(llm_trait::ChatResponse {
             content: String::new(),
+            reasoning_content: None,
             tool_calls: vec![],
             usage: Default::default(),
             finish_reason: llm_trait::response::FinishReason::Stop,
             raw: None,
+            thinking_signature: None,
         })
     }
 
@@ -49,7 +51,6 @@ impl LlmProvider for DummyProvider {
         llm_trait::ProviderInfo {
             name: "test".to_string(),
             model: "test".to_string(),
-            backend: llm_trait::LlmBackend::Custom("test".to_string()),
             version: None,
         }
     }
@@ -158,10 +159,12 @@ impl LlmProvider for ErrorStreamProvider {
     ) -> Result<llm_trait::ChatResponse, llm_trait::LlmError> {
         Ok(llm_trait::ChatResponse {
             content: String::new(),
+            reasoning_content: None,
             tool_calls: vec![],
             usage: Default::default(),
             finish_reason: llm_trait::response::FinishReason::Stop,
             raw: None,
+            thinking_signature: None,
         })
     }
 
@@ -173,7 +176,6 @@ impl LlmProvider for ErrorStreamProvider {
         llm_trait::ProviderInfo {
             name: "test".to_string(),
             model: "test".to_string(),
-            backend: llm_trait::LlmBackend::Custom("test".to_string()),
             version: None,
         }
     }
@@ -205,10 +207,12 @@ impl LlmProvider for CancelledStreamProvider {
     ) -> Result<llm_trait::ChatResponse, llm_trait::LlmError> {
         Ok(llm_trait::ChatResponse {
             content: String::new(),
+            reasoning_content: None,
             tool_calls: vec![],
             usage: Default::default(),
             finish_reason: llm_trait::response::FinishReason::Stop,
             raw: None,
+            thinking_signature: None,
         })
     }
 
@@ -220,7 +224,6 @@ impl LlmProvider for CancelledStreamProvider {
         llm_trait::ProviderInfo {
             name: "test".to_string(),
             model: "test".to_string(),
-            backend: llm_trait::LlmBackend::Custom("test".to_string()),
             version: None,
         }
     }
@@ -296,10 +299,12 @@ impl LlmProvider for ScriptedProvider {
     ) -> Result<llm_trait::ChatResponse, llm_trait::LlmError> {
         Ok(llm_trait::ChatResponse {
             content: String::new(),
+            reasoning_content: None,
             tool_calls: vec![],
             usage: Default::default(),
             finish_reason: llm_trait::response::FinishReason::Stop,
             raw: None,
+            thinking_signature: None,
         })
     }
 
@@ -318,7 +323,6 @@ impl LlmProvider for ScriptedProvider {
         llm_trait::ProviderInfo {
             name: "test".to_string(),
             model: "test".to_string(),
-            backend: llm_trait::LlmBackend::Custom("test".to_string()),
             version: None,
         }
     }
@@ -1503,7 +1507,7 @@ async fn max_turns_exceeded_event_order() {
     );
 }
 
-// ── Cancel / error-recovery branch coverage (react_loop coverage trough) ──
+// ── Cancel / error-recovery branch coverage (react coverage trough) ──
 //
 // The following tests target the cancel and error sub-paths that the happy-path
 // suite never reached: mid-execution tool cancellation, cancelled LLM stream
@@ -1754,7 +1758,9 @@ async fn openai_length_text_only_returns_failed() {
 /// falling through to the text-only branch and completing.
 #[tokio::test]
 async fn tool_call_chunk_with_no_parsed_calls_and_stop_finish_fails() {
-    let guard = Arc::new(RecordingGuard::new(GuardAction::Done));
+    let guard = Arc::new(RecordingGuard::new(GuardDecision::Fail {
+        error: "incomplete tool call".to_string(),
+    }));
     let guard_clone = guard.clone();
 
     let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![
@@ -1778,8 +1784,7 @@ async fn tool_call_chunk_with_no_parsed_calls_and_stop_finish_fails() {
         .run_turn(sid, "帮我解读一下这个工程", |_| Ok(()))
         .await;
 
-    // The incomplete tool call should trigger the on_empty_response guard.
-    // dispatch_nudge_guard treats GuardAction::Done as failure, so the run
+    // The guard returns Fail for incomplete tool calls, so the run
     // should return Failed — NOT silently complete.
     assert!(
         matches!(result, Ok(RunOutcome::Failed { .. })),
@@ -1792,42 +1797,37 @@ async fn tool_call_chunk_with_no_parsed_calls_and_stop_finish_fails() {
 // Branch 4 (text-only after tools): guard integration tests
 // ---------------------------------------------------------------------------
 
-use crate::engine::react_loop_guard::{GuardAction, GuardCtx, ReactLoopGuard};
+use crate::engine::react_loop_guard::{GuardCtx, GuardDecision, ReactLoopGuard};
 
-/// A guard that records every `on_text_only` call for later inspection,
-/// and delegates all methods to a configurable action.
+/// A guard that records every `on_turn` call for later inspection,
+/// and returns a configurable decision.
 struct RecordingGuard {
-    /// Recorded (run_has_tool_calls, model_response) from on_text_only calls.
+    /// Recorded (run_has_tool_calls, model_response) from on_turn calls
+    /// where is_text_only was true.
     calls: Mutex<Vec<(bool, String)>>,
-    /// What to return from on_text_only.
-    text_only_action: GuardAction,
+    /// What to return from on_turn.
+    decision: GuardDecision,
 }
 
 impl RecordingGuard {
-    fn new(text_only_action: GuardAction) -> Self {
+    fn new(decision: GuardDecision) -> Self {
         Self {
             calls: Mutex::new(Vec::new()),
-            text_only_action,
+            decision,
         }
     }
 }
 
 #[async_trait]
 impl ReactLoopGuard for RecordingGuard {
-    async fn on_reasoning_only(&self, _ctx: &GuardCtx) -> GuardAction {
-        GuardAction::Done
-    }
-
-    async fn on_empty_response(&self, _ctx: &GuardCtx) -> GuardAction {
-        GuardAction::Done
-    }
-
-    async fn on_text_only(&self, ctx: &GuardCtx) -> GuardAction {
-        self.calls
-            .lock()
-            .unwrap()
-            .push((ctx.run_has_tool_calls, ctx.model_response.clone()));
-        self.text_only_action.clone()
+    async fn on_turn(&self, ctx: &GuardCtx) -> GuardDecision {
+        if ctx.is_text_only {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((ctx.run_has_tool_calls, ctx.model_response.clone()));
+        }
+        self.decision.clone()
     }
 }
 
@@ -1835,7 +1835,7 @@ impl ReactLoopGuard for RecordingGuard {
 /// must be invoked with `run_has_tool_calls = true`.
 #[tokio::test]
 async fn branch4_guard_called_with_run_has_tool_calls() {
-    let guard = Arc::new(RecordingGuard::new(GuardAction::Done));
+    let guard = Arc::new(RecordingGuard::new(GuardDecision::Complete));
     let guard_clone = guard.clone();
 
     let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![
@@ -1895,9 +1895,9 @@ async fn branch4_guard_called_with_run_has_tool_calls() {
 async fn branch4_guard_continue_nudges_and_retries() {
     // Guard always returns Continue → nudge each time → loops until max turns.
     // We verify: (1) guard called multiple times, (2) nudge injected, (3) run_has_tool_calls persists.
-    let guard = Arc::new(RecordingGuard::new(GuardAction::Continue(
-        "please continue".to_string(),
-    )));
+    let guard = Arc::new(RecordingGuard::new(GuardDecision::Continue {
+        nudge: Some("please continue".to_string()),
+    }));
     let guard_clone = guard.clone();
 
     let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![
@@ -1972,8 +1972,9 @@ async fn branch4_guard_continue_nudges_and_retries() {
     );
 }
 
-/// Guard that counts `on_empty_response` calls and returns `Continue` for the
-/// first `max_strikes` calls, then `Fail`.  All other methods return `Done`.
+/// Guard that counts calls when `is_empty_response` is true and returns
+/// `Continue` for the first `max_strikes` calls, then `Fail`.
+/// All other scenes return `Complete`.
 struct EmptyResponseStrikeGuard {
     max_strikes: usize,
     calls: AtomicUsize,
@@ -1990,24 +1991,21 @@ impl EmptyResponseStrikeGuard {
 
 #[async_trait]
 impl ReactLoopGuard for EmptyResponseStrikeGuard {
-    async fn on_reasoning_only(&self, _ctx: &GuardCtx) -> GuardAction {
-        GuardAction::Done
-    }
-
-    async fn on_empty_response(&self, _ctx: &GuardCtx) -> GuardAction {
-        let count = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
-        if count >= self.max_strikes {
-            GuardAction::Fail(format!(
-                "exceeded max retries ({})",
-                self.max_strikes
-            ))
+    async fn on_turn(&self, ctx: &GuardCtx) -> GuardDecision {
+        if ctx.is_empty_response {
+            let count = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+            if count >= self.max_strikes {
+                GuardDecision::Fail {
+                    error: format!("exceeded max retries ({})", self.max_strikes),
+                }
+            } else {
+                GuardDecision::Continue {
+                    nudge: Some("please retry".to_string()),
+                }
+            }
         } else {
-            GuardAction::Continue("please retry".to_string())
+            GuardDecision::Complete
         }
-    }
-
-    async fn on_text_only(&self, _ctx: &GuardCtx) -> GuardAction {
-        GuardAction::Done
     }
 }
 

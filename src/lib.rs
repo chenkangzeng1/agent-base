@@ -46,8 +46,8 @@ pub use llm::{
 // ---------------------------------------------------------------------------
 pub use engine::{
     AllowAllApprovalHandler, ApprovalDecision, ApprovalHandler, ApprovalRequest,
-    ConsecutiveFailureRecovery, ContextWindowManager, DenyAllApprovalHandler, GuardAction,
-    GuardCtx, Middleware, NoopGuard, PostLlmCtx, PreLlmCtx, ReactLoopGuard, RetryOnError,
+    ConsecutiveFailureRecovery, ContextWindowManager, DenyAllApprovalHandler,
+    GuardCtx, GuardDecision, Middleware, NoopGuard, PostLlmCtx, PreLlmCtx, ReactLoopGuard, RetryOnError,
     RiskLevel, StopOnError, ToolEnforcementConfig, ToolEnforcementMiddleware, ToolErrorAction,
     ToolErrorRecovery, TurnFactMiddleware, TurnToolLimitMiddleware, UserMessageCtx,
 };

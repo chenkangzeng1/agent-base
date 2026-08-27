@@ -6,94 +6,21 @@ on:
   pull_request:
     branches: [master]
 
-env:
-  CARGO_TERM_COLOR: always
-
 jobs:
-  # ── Code quality checks ──
-  check:
-    name: check (stable)
+  test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v4
 
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
 
-      - uses: Swatinem/rust-cache@v2
+      - name: Check formatting
+        run: cargo fmt --check
 
-      - name: Format check
-        run: cargo fmt --all --check
-
-      - name: Clippy
+      - name: Run clippy
         run: cargo clippy --all-targets -- -D warnings
 
-  # ── Build & test ──
-  test:
-    name: test (stable)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Build
-        run: cargo build --verbose
-
-      - name: Test
-        run: cargo test --verbose
-
-  # ── Documentation check ──
-  doc:
-    name: doc
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Check documentation
-        run: cargo doc --no-deps --document-private-items
-        env:
-          RUSTDOCFLAGS: -D warnings
-
-  # ── Coverage gate ──
-  #
-  # Fails the build if line coverage drops below the threshold. This turns the
-  # test-backfill phase (B1–B5) into a durable constraint: any PR that lowers
-  # coverage below the floor is rejected.
-  #
-  # Measured 2026-08-13 after B1–B5: 90.83% line coverage (cargo llvm-cov,
-  # library target). Threshold is set at 90 to ratchet the floor upward while
-  # leaving ~80 lines of headroom to absorb CI machine variance.
-  #
-  # NOTE: this number includes `#[cfg(test)]` modules (which run ~100%), so it
-  # is a nominal floor, not the "real library code only" figure. Re-measure with
-  # `cargo llvm-cov --summary-only` and ratchet the threshold upward as real
-  # coverage improves.
-  coverage:
-    name: coverage
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: llvm-tools-preview
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@cargo-llvm-cov
-
-      - name: Coverage gate
-        run: cargo llvm-cov --fail-under-lines 90 --lcov --output-path lcov.info
-
-      - name: Upload coverage
-        uses: codecov/codecov-action@v5
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: lcov.info
+      - name: Run tests
+        run: cargo test

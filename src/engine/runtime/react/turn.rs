@@ -132,7 +132,7 @@ impl RuntimeCore {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(super) async fn run_turn_loop<F>(
+    pub(super) async fn run_react_loop<F>(
         &self,
         session_id: &SessionId,
         user_input_owned: &str,
@@ -160,7 +160,7 @@ impl RuntimeCore {
 
             // Check for cancellation at the top of each iteration
             if self.is_cancelled() {
-                tracing::info!(session_id = session_id.id, "run_turn_loop cancelled");
+                tracing::info!(session_id = session_id.id, "run_react_loop cancelled");
                 self.fire_turn_end(TurnEndCtx::new(
                     session_id,
                     turn_count,
@@ -225,6 +225,9 @@ impl RuntimeCore {
 
             let session = self.session_manager.session_or_err(session_id).await?;
             let messages: Vec<_> = session.chat_messages().to_vec();
+            let thinking_disabled = session.run_state.thinking_disabled_for_rest_of_run;
+
+            drop(session);
 
             // Apply message conversion before sending to LLM.
             // Default: strip Custom messages that providers don't understand.
@@ -307,6 +310,7 @@ impl RuntimeCore {
                             config.reasoning.as_ref(),
                             config.llm.response_format.as_ref(),
                             retry.clone(),
+                            thinking_disabled,
                         )
                         .await?
                 }
@@ -322,6 +326,7 @@ impl RuntimeCore {
                             &tools_for_turn,
                             config.reasoning.as_ref(),
                             config.llm.response_format.as_ref(),
+                            thinking_disabled,
                         )
                         .await?
                 }
@@ -404,6 +409,7 @@ impl RuntimeCore {
                 ttft_ms,
                 llm_duration_ms,
                 reasoning_only,
+                thinking_signature: _thinking_signature,
             }) => {
                 // Normalise provider-specific finish_reason into a semantic enum.
                 let finish_reason = FinishReason::from_raw(finish_reason.as_deref());
@@ -482,22 +488,25 @@ impl RuntimeCore {
                             session.run_state.record_reasoning_only()
                         })
                         .await?;
+                    let thinking_disabled = self
+                        .with_session_mut(session_id, |session| {
+                            session.run_state.thinking_disabled_for_rest_of_run
+                        })
+                        .await?;
                     tracing::warn!(
                         session_id = session_id.id,
                         turn = turn_count,
                         strikes,
+                        thinking_disabled,
                         "reasoning-only response with tools available — nudging the model to commit"
                     );
 
-                    let guard_ctx = self.build_guard_ctx(&turn_ctx, "").await;
-                    let action = self.guard.on_reasoning_only(&guard_ctx).await;
+                    let guard_ctx = self
+                        .build_guard_ctx(&turn_ctx, "", true, false, false, thinking_disabled)
+                        .await;
+                    let decision = self.guard.on_turn(&guard_ctx).await;
                     return self
-                        .dispatch_nudge_guard(
-                            action,
-                            &turn_ctx,
-                            &metrics,
-                            "reasoning-only response",
-                        )
+                        .execute_guard_decision(decision, &turn_ctx, &metrics)
                         .await;
                 }
 
@@ -513,7 +522,9 @@ impl RuntimeCore {
                     )
                     .await?;
 
-                if !result.skip_push && !result.full_text.is_empty() {
+                // Only push text-only assistant message when there are NO tool calls.
+                // When tool calls exist, text + tool_calls are pushed together in run_tool_turn.
+                if !result.skip_push && !result.full_text.is_empty() && !result.is_tool_call {
                     // Preserve reasoning so the LLM can see its own prior thinking
                     // in subsequent turns, avoiding "amnesia" re-derivation.
                     let reasoning = reasoning_text.clone();
@@ -552,10 +563,12 @@ impl RuntimeCore {
                         "empty LLM response (no text, no reasoning, no tool call)"
                     );
 
-                    let guard_ctx = self.build_guard_ctx(&turn_ctx, "").await;
-                    let action = self.guard.on_empty_response(&guard_ctx).await;
+                    let guard_ctx = self
+                        .build_guard_ctx(&turn_ctx, "", false, true, false, false)
+                        .await;
+                    let decision = self.guard.on_turn(&guard_ctx).await;
                     return self
-                        .dispatch_nudge_guard(action, &turn_ctx, &metrics, "empty response")
+                        .execute_guard_decision(decision, &turn_ctx, &metrics)
                         .await;
                 }
 
@@ -570,6 +583,7 @@ impl RuntimeCore {
                             result.tool_calls,
                             &finish_reason,
                             reasoning_text,
+                            result.full_text,
                             &metrics,
                             event_rx,
                             on_event.clone(),
@@ -594,18 +608,12 @@ impl RuntimeCore {
                         strikes,
                         "model signalled tool call but no complete tool calls were parsed"
                     );
-                    let guard_ctx = self.build_guard_ctx(&turn_ctx, "").await;
-                    let action = self
-                        .guard
-                        .on_empty_response(&guard_ctx)
+                    let guard_ctx = self
+                        .build_guard_ctx(&turn_ctx, "", false, true, false, false)
                         .await;
+                    let decision = self.guard.on_turn(&guard_ctx).await;
                     return self
-                        .dispatch_nudge_guard(
-                            action,
-                            &turn_ctx,
-                            &metrics,
-                            "incomplete tool call",
-                        )
+                        .execute_guard_decision(decision, &turn_ctx, &metrics)
                         .await;
                 }
 
@@ -680,9 +688,11 @@ impl RuntimeCore {
 
                 // ── text-only branch ──
                 // Use the guard to determine if the task is actually complete.
-                let guard_ctx = self.build_guard_ctx(&turn_ctx, &result.full_text).await;
-                let action = self.guard.on_text_only(&guard_ctx).await;
-                self.dispatch_text_only_guard(action, &turn_ctx, &metrics)
+                let guard_ctx = self
+                    .build_guard_ctx(&turn_ctx, &result.full_text, false, false, true, false)
+                    .await;
+                let decision = self.guard.on_turn(&guard_ctx).await;
+                self.execute_guard_decision(decision, &turn_ctx, &metrics)
                     .await
             }
             Err(e) => {
@@ -713,6 +723,85 @@ impl RuntimeCore {
                     let _ = self.session_manager.session_store().save(&session).await;
                 }
                 Err(e)
+            }
+        }
+    }
+
+    /// Execute a guard decision — fire events, inject nudge, or terminate.
+    async fn execute_guard_decision(
+        &self,
+        decision: crate::engine::react_loop_guard::GuardDecision,
+        turn_ctx: &TurnCtx<'_>,
+        metrics: &TurnMetrics<'_>,
+    ) -> AgentResult<TurnFlow> {
+        use crate::engine::react_loop_guard::GuardDecision;
+        match decision {
+            GuardDecision::Continue { nudge } => {
+                tracing::info!(
+                    session_id = turn_ctx.session_id.id,
+                    turn = turn_ctx.turn_count,
+                    "guard decided to continue"
+                );
+                // Flush the current turn's output to the UI before injecting nudge.
+                self.fire_turn_end(TurnEndCtx {
+                    ttft_ms: metrics.ttft_ms,
+                    llm_duration_ms: metrics.llm_duration_ms,
+                    usage: metrics.usage,
+                    text_length: metrics.text_len,
+                    has_thinking: metrics.has_thinking,
+                    llm_calls: 1,
+                    ..TurnEndCtx::new(
+                        turn_ctx.session_id,
+                        turn_ctx.turn_count,
+                        turn_ctx.turn_start,
+                        turn_ctx.model,
+                        turn_ctx.user_input,
+                        RunOutcome::Continuing,
+                    )
+                })
+                .await;
+                if let Some(msg) = nudge {
+                    self.with_session_mut(turn_ctx.session_id, |session| {
+                        session.push_message(MessageRole::User, &msg);
+                    })
+                    .await?;
+                }
+                Ok(TurnFlow::Continue)
+            }
+            GuardDecision::Complete => {
+                tracing::info!(
+                    session_id = turn_ctx.session_id.id,
+                    turn = turn_ctx.turn_count,
+                    "guard decided task is complete"
+                );
+                self.fire_turn_end(TurnEndCtx {
+                    ttft_ms: metrics.ttft_ms,
+                    llm_duration_ms: metrics.llm_duration_ms,
+                    usage: metrics.usage,
+                    text_length: metrics.text_len,
+                    has_thinking: metrics.has_thinking,
+                    llm_calls: 1,
+                    ..TurnEndCtx::new(
+                        turn_ctx.session_id,
+                        turn_ctx.turn_count,
+                        turn_ctx.turn_start,
+                        turn_ctx.model,
+                        turn_ctx.user_input,
+                        RunOutcome::Completed,
+                    )
+                })
+                .await;
+                Ok(TurnFlow::Done(RunOutcome::Completed))
+            }
+            GuardDecision::Fail { error } => {
+                tracing::warn!(
+                    session_id = turn_ctx.session_id.id,
+                    turn = turn_ctx.turn_count,
+                    error = %error,
+                    "guard decided to fail"
+                );
+                self.fire_guard_fail(turn_ctx, metrics, &error).await;
+                Ok(TurnFlow::Done(RunOutcome::Failed { error }))
             }
         }
     }

@@ -1,0 +1,37 @@
+[package]
+name = "agent-base-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+serde_json = "1"
+
+[dependencies.agent-base]
+path = ".."
+features = ["fuzzing"]
+
+[[bin]]
+name = "finish_reason_fuzz"
+path = "fuzz_targets/finish_reason_fuzz.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "tool_call_parse_fuzz"
+path = "fuzz_targets/tool_call_parse_fuzz.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "validate_message_sequence_fuzz"
+path = "fuzz_targets/validate_message_sequence_fuzz.rs"
+test = false
+doc = false
+bench = false

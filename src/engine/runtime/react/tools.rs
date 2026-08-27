@@ -30,6 +30,7 @@ impl RuntimeCore {
         tool_calls: Vec<(String, String, String)>,
         finish_reason: &FinishReason,
         reasoning_text: String,
+        full_text: String,
         metrics: &TurnMetrics<'_>,
         event_rx: &mut broadcast::Receiver<RuntimeEvent>,
         on_event: Arc<Mutex<F>>,
@@ -47,20 +48,24 @@ impl RuntimeCore {
                 tool_count = tool_calls.len(),
                 "LLM response truncated (finish_reason=length) — tool calls may have incomplete arguments, marking as errors"
             );
-            for (tc_id, tc_name, _) in &tool_calls {
-                self.with_session_mut(session_id, |session| {
-                    session.push_message(
-                        MessageRole::Assistant,
-                        format!("[would call tool: {}]", tc_name),
-                    );
+            // Push the assistant message WITH tool_calls so that the
+            // subsequent tool_result messages have matching tool_use blocks
+            // (required by Anthropic protocol).
+            self.with_session_mut(session_id, |session| {
+                session.push_assistant_tool_calls(
+                    &tool_calls,
+                    Some(reasoning_text),
+                    Some(full_text),
+                );
+                for (tc_id, _, _) in &tool_calls {
                     session.push_tool_result(
                         tc_id,
                         "Tool call was not executed: the response hit the output token limit, \
                          so its arguments may be truncated. Re-issue the tool call with complete arguments.",
                     );
-                })
-                .await?;
-            }
+                }
+            })
+            .await?;
             return Ok(TurnFlow::Continue);
         }
 
@@ -94,7 +99,8 @@ impl RuntimeCore {
                 &tool_calls,
                 event_rx,
                 on_event.clone(),
-                reasoning_text,
+                &reasoning_text,
+                &full_text,
             )
             .await
         {
@@ -399,7 +405,8 @@ impl RuntimeCore {
         tool_calls: &[(String, String, String)],
         event_rx: &mut broadcast::Receiver<RuntimeEvent>,
         on_event: Arc<Mutex<F>>,
-        reasoning: String,
+        reasoning: &str,
+        full_text: &str,
     ) -> AgentResult<()>
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
@@ -436,13 +443,10 @@ impl RuntimeCore {
         // Push assistant tool calls to session after all approvals pass
         {
             let tc: Vec<(String, String, String)> = tool_calls.to_vec();
+            let ft = if full_text.is_empty() { None } else { Some(full_text.to_string()) };
+            let rt = if reasoning.is_empty() { None } else { Some(reasoning.to_string()) };
             self.with_session_mut(session_id, |session| {
-                let r = if reasoning.is_empty() {
-                    None
-                } else {
-                    Some(reasoning.clone())
-                };
-                session.push_assistant_tool_calls(&tc, r);
+                session.push_assistant_tool_calls(&tc, rt, ft);
             })
             .await?;
         }

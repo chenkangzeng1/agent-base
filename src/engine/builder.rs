@@ -321,10 +321,12 @@ mod tests {
         async fn chat(&self, _request: ChatRequest) -> Result<ChatResponse, LlmError> {
             Ok(ChatResponse {
                 content: String::new(),
+                reasoning_content: None,
                 tool_calls: vec![],
                 usage: Default::default(),
                 finish_reason: llm_trait::FinishReason::Stop,
                 raw: None,
+                thinking_signature: None,
             })
         }
 
@@ -336,7 +338,6 @@ mod tests {
             ProviderInfo {
                 name: "dummy".to_string(),
                 model: "dummy".to_string(),
-                backend: llm_trait::LlmBackend::Custom("dummy".to_string()),
                 version: None,
             }
         }

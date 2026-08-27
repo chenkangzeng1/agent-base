@@ -118,7 +118,7 @@ impl Middleware for AntiHallucinationMiddleware {
         // 静默丢弃当前 assistant 消息
         ctx.skip_push = true;
 
-        // 设置 nudge 跟进消息，react_loop 会注入并 continue
+        // 设置 nudge 跟进消息，react 会注入并 continue
         ctx.follow_up_message = Some(
             "CRITICAL: You have tools available but did not call any. \
              Do NOT describe what you would do — actually DO it by calling tools. \
@@ -293,11 +293,10 @@ async fn main() -> AgentResult<()> {
         .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
 
     let llm_client = llm_unified::create_provider(&llm_trait::LlmConfig {
-        backend: "custom".to_string(),
-        protocol: Some("openai".to_string()),
+        protocol: Some(llm_trait::Protocol::OpenAi),
         api_key,
-        model,
-        base_url: Some(base_url),
+        model: model.clone(),
+        base_url,
         options: std::collections::HashMap::new(),
     })
     .map_err(|e| AgentError::internal(e.to_string()))?;

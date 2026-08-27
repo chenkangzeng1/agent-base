@@ -28,10 +28,12 @@ async fn test_summarize(
                 name: "execute_command".to_string(),
                 arguments: r#"{"command":"df -h","target_host":"10.0.0.1"}"#.to_string(),
             }]),
+            thinking_signature: None,
         },
         // 工具返回的结果
         ChatMessage::Tool {
             tool_call_id: "call_001".to_string(),
+            name: None,
             content: "Filesystem      Size  Used Avail Use% Mounted on\n/dev/vda3        40G  8.0G   30G  22% /\ntmpfs           1.8G     0  1.8G   0% /dev/shm\n/dev/vda2       197M  6.3M  191M   4% /boot/efi".to_string(),
         },
     ];
@@ -71,6 +73,12 @@ async fn test_summarize(
                     u.completion_tokens.unwrap_or(0)
                 );
             }
+            StreamChunk::ThinkingSignature(_) => {
+                // Thinking signature — not needed for this test
+            }
+            StreamChunk::Error(e) => {
+                eprintln!("  ❌ Stream error: {}", e);
+            }
         }
     }
 
@@ -87,7 +95,7 @@ async fn test_summarize(
     println!("  🔧 工具调用: {} | 🏁 Stop: {}", tool_calls, has_stop);
 
     if text.is_empty() && tool_calls == 0 {
-        println!("  ⚠️  空响应！react_loop 会重试");
+        println!("  ⚠️  空响应！react 会重试");
     } else if text.is_empty() && !thought.is_empty() {
         println!("  ⚠️  有思考无正文（思考内容应该作为兜底输出）");
     } else {
@@ -117,11 +125,10 @@ async fn main() -> AgentResult<()> {
 
     for (model_id, model_label) in &models {
         let provider = create_provider(&llm_trait::LlmConfig {
-            backend: "custom".to_string(),
-            protocol: Some("openai".to_string()),
+            protocol: Some(llm_trait::Protocol::OpenAi),
             api_key: api_key.clone(),
             model: model_id.to_string(),
-            base_url: Some(base_url.clone()),
+            base_url: base_url.clone(),
             options: std::collections::HashMap::new(),
         })
         .map_err(|e| agent_base::AgentError::internal(e.to_string()))?;

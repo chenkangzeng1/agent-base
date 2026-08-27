@@ -9,11 +9,10 @@ use serde_json::{Value, json};
 async fn test_provider_request_body_format() {
     // 创建一个测试用的 provider（使用无效的 API key，但会验证构建逻辑）
     let provider = create_provider(&llm_trait::LlmConfig {
-        backend: "custom".to_string(),
-        protocol: Some("openai".to_string()),
+        protocol: Some(llm_trait::Protocol::OpenAi),
         api_key: "test-api-key".to_string(),
         model: "qwen-flash".to_string(),
-        base_url: Some("https://test.example.com/v1".to_string()),
+        base_url: "https://test.example.com/v1".to_string(),
         options: std::collections::HashMap::new(),
     })
     .expect("should create provider");

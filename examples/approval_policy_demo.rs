@@ -3,7 +3,7 @@ use std::collections::HashMap;
 /// 演示 ToolPolicy 如何根据计划状态决定是否需要审批
 ///
 /// 问题场景：
-/// - create_plan 成功后，react_loop 自动执行 execute_plan
+/// - create_plan 成功后，react 自动执行 execute_plan
 /// - 但 ToolPolicy 不知道用户已确认，仍然请求审批
 ///
 /// 解决方案：

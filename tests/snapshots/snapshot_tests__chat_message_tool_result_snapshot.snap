@@ -5,6 +5,7 @@ expression: json
 {
   "Tool": {
     "content": "echo: hi",
+    "name": null,
     "tool_call_id": "call_1"
   }
 }

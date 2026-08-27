@@ -301,11 +301,10 @@ async fn main() -> AgentResult<()> {
         .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
 
     let llm_client = llm_unified::create_provider(&llm_trait::LlmConfig {
-        backend: "custom".to_string(),
-        protocol: Some("openai".to_string()),
+        protocol: Some(llm_trait::Protocol::OpenAi),
         api_key,
-        model,
-        base_url: Some(base_url),
+        model: model.clone(),
+        base_url,
         options: std::collections::HashMap::new(),
     })
     .map_err(|e| AgentError::internal(e.to_string()))?;

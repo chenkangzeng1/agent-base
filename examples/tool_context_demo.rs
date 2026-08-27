@@ -253,10 +253,10 @@ impl Tool for SummarizeTool {
             ChatMessage::user(format!("Summarize this:\n\n{}", text)),
         ];
 
-        let raw = llm.chat(&messages, &[], None, None).await?;
+        let raw = llm.chat(llm_trait::ChatRequest::new(messages)).await?;
 
-        // LlmProvider::chat() returns the collected text content.
-        let summary = if raw.is_empty() { "(no summary)" } else { &raw };
+        // LlmProvider::chat() returns a ChatResponse; check content.
+        let summary = if raw.content.is_empty() { "(no summary)" } else { &raw.content };
 
         ctx.emit_progress("Summarize: done!");
 
@@ -369,11 +369,10 @@ async fn main() -> AgentResult<()> {
         .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
 
     let llm = llm_unified::create_provider(&llm_trait::LlmConfig {
-        backend: "custom".to_string(),
-        protocol: Some("openai".to_string()),
+        protocol: Some(llm_trait::Protocol::OpenAi),
         api_key,
-        model,
-        base_url: Some(base_url),
+        model: model.clone(),
+        base_url,
         options: std::collections::HashMap::new(),
     })
     .map_err(|e| agent_base::AgentError::internal(e.to_string()))?;
