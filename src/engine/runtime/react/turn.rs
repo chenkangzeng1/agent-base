@@ -377,6 +377,7 @@ impl RuntimeCore {
                     event_rx,
                     on_event.clone(),
                     all_user_inputs,
+                    max_turns,
                 )
                 .await?
             {
@@ -443,6 +444,7 @@ impl RuntimeCore {
         event_rx: &mut broadcast::Receiver<RuntimeEvent>,
         on_event: Arc<Mutex<F>>,
         all_user_inputs: &[String],
+        max_turns: u32,
     ) -> AgentResult<TurnFlow>
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send + 'static,
@@ -517,6 +519,7 @@ impl RuntimeCore {
                     turn_start,
                     model,
                     all_user_inputs,
+                    max_turns,
                 };
                 let metrics = TurnMetrics {
                     ttft_ms,

@@ -60,6 +60,11 @@ pub struct GuardCtx {
     ///
     /// From RunState.original_thinking_enabled
     pub original_thinking_enabled: bool,
+    /// Remaining turns before hitting max_turns limit
+    ///
+    /// Guards can use this to nudge the model to wrap up when running low on turns.
+    /// When remaining_turns == 0, the run will be terminated with MaxTurnsExceeded.
+    pub remaining_turns: u32,
 }
 
 /// React Loop Guard trait — single unified entry point.

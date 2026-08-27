@@ -25,6 +25,7 @@ pub(super) struct TurnCtx<'a> {
     pub turn_start: Instant,
     pub model: &'a str,
     pub all_user_inputs: &'a [String],
+    pub max_turns: u32,
 }
 
 impl RuntimeCore {
@@ -74,6 +75,7 @@ impl RuntimeCore {
             is_text_only,
             thinking_disabled,
             original_thinking_enabled: session_data.3,
+            remaining_turns: turn_ctx.max_turns.saturating_sub(turn_ctx.turn_count),
         }
     }
 
