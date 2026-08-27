@@ -36,6 +36,8 @@ impl RuntimeCore {
         messages: Vec<crate::types::ChatMessage>,
         tools: Vec<serde_json::Value>,
         on_event: Arc<Mutex<F>>,
+        turn_count: u32,
+        max_turns: u32,
     ) -> AgentResult<(Vec<crate::types::ChatMessage>, Vec<serde_json::Value>)>
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send + 'static,
@@ -72,6 +74,8 @@ impl RuntimeCore {
             messages,
             tools,
             emit_fn: Some(emit_fn),
+            turn_count,
+            max_turns,
         };
 
         for mw in &self.middlewares {
@@ -258,7 +262,7 @@ impl RuntimeCore {
             }
 
             let (messages, tools_for_turn) = self
-                .apply_pre_llm_mw(session_id, messages, tools_for_turn, on_event.clone())
+                .apply_pre_llm_mw(session_id, messages, tools_for_turn, on_event.clone(), turn_count, max_turns)
                 .await?;
 
             // Drain UserEvent copies from event_rx that were written by

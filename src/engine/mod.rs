@@ -2,6 +2,7 @@ mod approval;
 pub mod auto_continue;
 mod builder;
 mod context;
+pub mod max_turns_nudge;
 mod middleware;
 mod pipeline;
 pub mod react_loop_guard;
@@ -36,6 +37,7 @@ pub use session::validate_message_sequence;
 pub use session_store::{InMemorySessionStore, SessionStore};
 
 pub use auto_continue::AutoContinueMiddleware;
+pub use max_turns_nudge::{MaxTurnsNudgeConfig, MaxTurnsNudgeMiddleware};
 #[cfg(feature = "sqlite-session")]
 pub use session_store::SqliteSessionStore;
 pub use tool_enforcement::{ToolEnforcementConfig, ToolEnforcementMiddleware};

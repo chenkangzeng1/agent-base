@@ -140,6 +140,7 @@ mod tests {
             is_text_only: false,
             thinking_disabled: false,
             original_thinking_enabled: true,
+            remaining_turns: 50,
         };
 
         assert!(matches!(guard.on_turn(&ctx).await, GuardDecision::Complete));
@@ -166,6 +167,7 @@ mod tests {
             is_text_only: false,
             thinking_disabled: false,
             original_thinking_enabled: true,
+            remaining_turns: 50,
         };
         assert!(matches!(
             guard.on_turn(&ctx).await,

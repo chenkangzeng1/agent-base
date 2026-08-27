@@ -21,7 +21,7 @@ mod react;
 mod session_manager;
 mod tool_engine;
 
-pub(super) const DEFAULT_MAX_TURNS: u32 = 50;
+pub(super) const DEFAULT_MAX_TURNS: u32 = 160;
 
 pub use llm_engine::LlmEngine;
 pub use message_queue::QueueMode;

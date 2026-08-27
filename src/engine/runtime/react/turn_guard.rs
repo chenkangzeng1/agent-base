@@ -177,6 +177,7 @@ mod tests {
             is_text_only: false,
             thinking_disabled: false,
             original_thinking_enabled: true,
+            remaining_turns: 50,
         };
         let debug_str = format!("{:?}", ctx);
         assert!(debug_str.contains("session_id"));
@@ -202,6 +203,7 @@ mod tests {
             is_text_only: false,
             thinking_disabled: true,
             original_thinking_enabled: true,
+            remaining_turns: 50,
         };
         assert!(ctx.is_reasoning_only);
         assert!(!ctx.is_empty_response);
@@ -231,6 +233,7 @@ mod tests {
             is_text_only: false,
             thinking_disabled: false,
             original_thinking_enabled: true,
+            remaining_turns: 50,
         };
 
         let decision = guard.on_turn(&ctx).await;

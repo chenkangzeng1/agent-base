@@ -22,6 +22,10 @@ pub struct PreLlmCtx {
     /// The closure captures the renderer callback and the event bus, so middleware
     /// never needs to know about broadcast channels or drain mechanics.
     pub emit_fn: Option<Box<dyn Fn(UserEvent) + Send + Sync>>,
+    /// Current turn count (1-indexed).
+    pub turn_count: u32,
+    /// Maximum turns allowed for this run.
+    pub max_turns: u32,
 }
 
 impl PreLlmCtx {
