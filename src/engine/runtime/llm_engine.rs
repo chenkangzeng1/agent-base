@@ -29,7 +29,9 @@ fn build_chat_request(
         if !thinking_disabled {
             request = request.with_reasoning(r.clone());
         } else {
-            tracing::info!("thinking disabled for rest of run due to too many reasoning-only responses");
+            tracing::info!(
+                "thinking disabled for rest of run due to too many reasoning-only responses"
+            );
         }
     }
     request.response_format = response_format.cloned();
@@ -88,7 +90,13 @@ impl LlmEngine {
             thinking_disabled,
             "LLM chat_stream: sending request to API"
         );
-        let request = build_chat_request(messages, tool_definitions, reasoning, response_format, thinking_disabled);
+        let request = build_chat_request(
+            messages,
+            tool_definitions,
+            reasoning,
+            response_format,
+            thinking_disabled,
+        );
         let result = self.get_provider().stream(request).await;
         match &result {
             Ok(_) => tracing::info!("LLM chat_stream: API response received"),
@@ -97,6 +105,7 @@ impl LlmEngine {
         result.map(chat_stream_to_old).map_err(Into::into)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn run_llm_turn_with_retry(
         &self,
         session_id: &SessionId,
@@ -107,7 +116,13 @@ impl LlmEngine {
         retry: crate::types::RetryConfig,
         thinking_disabled: bool,
     ) -> AgentResult<Pin<Box<dyn Stream<Item = AgentResult<StreamChunk>> + Send>>> {
-        let request = build_chat_request(messages, tool_definitions, reasoning, response_format, thinking_disabled);
+        let request = build_chat_request(
+            messages,
+            tool_definitions,
+            reasoning,
+            response_format,
+            thinking_disabled,
+        );
         let mut attempt = 1;
         let mut delay_ms = retry.initial_backoff_ms;
         loop {
@@ -426,17 +441,11 @@ mod tests {
 
     #[async_trait]
     impl LlmProvider for StubProvider {
-        async fn stream(
-            &self,
-            _request: ChatRequest,
-        ) -> Result<ChatStream, LlmError> {
+        async fn stream(&self, _request: ChatRequest) -> Result<ChatStream, LlmError> {
             Ok(ChatStream::new(Box::pin(futures_util::stream::empty())))
         }
 
-        async fn chat(
-            &self,
-            _request: ChatRequest,
-        ) -> Result<llm_trait::ChatResponse, LlmError> {
+        async fn chat(&self, _request: ChatRequest) -> Result<llm_trait::ChatResponse, LlmError> {
             Err(LlmError::Llm("not implemented".into()))
         }
 
@@ -722,7 +731,10 @@ mod tests {
     #[tokio::test]
     async fn chat_stream_returns_stream_on_ok() {
         let engine = LlmEngine::new(Arc::new(StubProvider("x")), EventBus::new(16));
-        let mut stream = engine.chat_stream(&[], &[], None, None, false).await.unwrap();
+        let mut stream = engine
+            .chat_stream(&[], &[], None, None, false)
+            .await
+            .unwrap();
         let next = futures_util::StreamExt::next(&mut stream).await;
         assert!(next.is_none());
     }
@@ -731,7 +743,10 @@ mod tests {
     async fn chat_stream_with_thinking_disabled() {
         let engine = LlmEngine::new(Arc::new(StubProvider("x")), EventBus::new(16));
         // Test with thinking_disabled=true — should still work, just without reasoning
-        let mut stream = engine.chat_stream(&[], &[], None, None, true).await.unwrap();
+        let mut stream = engine
+            .chat_stream(&[], &[], None, None, true)
+            .await
+            .unwrap();
         let next = futures_util::StreamExt::next(&mut stream).await;
         assert!(next.is_none());
     }

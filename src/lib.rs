@@ -13,12 +13,12 @@ pub mod prelude {
     pub use crate::engine::{
         AgentBuilder, AgentRuntime, AgentSession, AllowAllApprovalHandler, DenyAllApprovalHandler,
     };
-    pub use crate::llm::LlmProvider as LlmProviderTrait;
     pub use crate::llm::ChatRequest;
+    pub use crate::llm::LlmProvider as LlmProviderTrait;
     pub use crate::llm::{ChatResponse, ChatStream};
     pub use crate::tool::{
-        AutoContinueTool, Content, DenyAllToolPolicy, Tool, ToolContext, ToolMetadata, ToolPolicy,
-        ToolRegistry, TypedTool,
+        AutoContinueTool, Content, DenyAllToolPolicy, Tool, ToolContext, ToolDecision,
+        ToolMetadata, ToolPolicy, ToolRegistry, TypedTool,
     };
     pub use crate::types::{
         AgentConfig, AgentError, AgentResult, ChatMessage, FinishReason, Language, Message,
@@ -37,27 +37,26 @@ pub use engine::{
 // ---------------------------------------------------------------------------
 // LLM Provider (llm-trait re-exports)
 // ---------------------------------------------------------------------------
-pub use llm::{
-    ReasoningConfig, ReasoningEffort, StreamChunk, UsageInfo,
-};
+pub use llm::{ReasoningConfig, ReasoningEffort, StreamChunk, UsageInfo};
 
 // ---------------------------------------------------------------------------
 // Approval
 // ---------------------------------------------------------------------------
 pub use engine::{
     AllowAllApprovalHandler, ApprovalDecision, ApprovalHandler, ApprovalRequest,
-    ConsecutiveFailureRecovery, ContextWindowManager, DenyAllApprovalHandler,
-    GuardCtx, GuardDecision, Middleware, NoopGuard, PostLlmCtx, PreLlmCtx, ReactLoopGuard, RetryOnError,
-    RiskLevel, StopOnError, ToolEnforcementConfig, ToolEnforcementMiddleware, ToolErrorAction,
-    ToolErrorRecovery, TurnFactMiddleware, TurnToolLimitMiddleware, UserMessageCtx,
+    ConsecutiveFailureRecovery, ContextCompaction, ContextWindowManager, DenyAllApprovalHandler,
+    GuardCtx, GuardDecision, Middleware, NoopGuard, PostLlmCtx, PreLlmCtx, ReactLoopGuard,
+    RetryOnError, RiskLevel, StopOnError, ToolEnforcementConfig, ToolEnforcementMiddleware,
+    ToolErrorAction, ToolErrorRecovery, TurnFactMiddleware, TurnToolLimitMiddleware,
+    UserMessageCtx,
 };
 
 // ---------------------------------------------------------------------------
 // Tools
 // ---------------------------------------------------------------------------
 pub use tool::{
-    AutoContinueTool, Content, DenyAllToolPolicy, Tool, ToolContext, ToolMetadata, ToolPolicy,
-    ToolRegistry, TypedTool, UpdatePlanTool,
+    ActivationContext, AutoContinueTool, Content, DenyAllToolPolicy, Tool, ToolContext,
+    ToolDecision, ToolExposure, ToolMetadata, ToolPolicy, ToolRegistry, TypedTool, UpdatePlanTool,
 };
 
 // ---------------------------------------------------------------------------

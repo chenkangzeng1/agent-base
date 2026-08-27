@@ -136,7 +136,6 @@ impl RuntimeCore {
         &self,
         session_id: &SessionId,
         user_input_owned: &str,
-        tool_definitions: &[serde_json::Value],
         mut turn_count: u32,
         event_rx: &mut broadcast::Receiver<RuntimeEvent>,
         on_event: Arc<Mutex<F>>,
@@ -236,7 +235,15 @@ impl RuntimeCore {
                 None => default_convert_to_llm(&messages),
             };
 
-            let tools_for_turn = tool_definitions.to_vec();
+            // Refresh tool definitions each iteration (supports MCP dynamic tools)
+            // Respects ToolExposure: Direct always visible, Deferred conditional, Hidden never.
+            let activation_ctx = crate::tool::ActivationContext {
+                session_id: session_id.clone(),
+                current_tools: vec![],
+                workspace: std::env::current_dir().unwrap_or_default(),
+            };
+            let tool_definitions = self.tool_engine.definitions_filtered(&activation_ctx).await;
+            let tools_for_turn = tool_definitions.clone();
 
             if let Some(ref ctx_mgr) = self.context_manager {
                 let before = messages.len();
@@ -362,7 +369,7 @@ impl RuntimeCore {
                 .handle_llm_turn(
                     session_id,
                     user_input_owned,
-                    tool_definitions,
+                    &tool_definitions,
                     turn_count,
                     turn_start,
                     &model,
@@ -373,7 +380,49 @@ impl RuntimeCore {
                 )
                 .await?
             {
-                TurnFlow::Continue => continue,
+                TurnFlow::Continue => {
+                    // Inline compaction check — context may have grown after
+                    // tool execution. Compact if we exceed the configured
+                    // threshold to prevent context window overflow.
+                    if let Some(ref compactor) = self.context_compactor {
+                        let token_count = self.estimate_session_tokens(session_id).await;
+                        let config = self.config_snapshot_async().await;
+                        let threshold = config.session.max_message_tokens.unwrap_or(128_000);
+                        if token_count > threshold {
+                            tracing::info!(
+                                session_id = session_id.id,
+                                turn = turn_count,
+                                token_count,
+                                threshold,
+                                "context exceeds threshold, compacting inline"
+                            );
+                            // Read messages, compact, write back
+                            let messages = {
+                                let session = self.session_manager.session_or_err(session_id).await;
+                                session.ok().map(|s| s.chat_messages().to_vec())
+                            };
+                            if let Some(msgs) = messages
+                                && let Some(compacted) = compactor.compact(session_id, &msgs).await
+                            {
+                                self.with_session_mut(session_id, |session| {
+                                    if let Err(e) = session.set_chat_messages(compacted) {
+                                        tracing::warn!(
+                                            session_id = session_id.id,
+                                            error = %e,
+                                            "compaction produced invalid message sequence, discarding"
+                                        );
+                                    }
+                                })
+                                .await?;
+                                tracing::info!(
+                                    session_id = session_id.id,
+                                    "inline compaction completed"
+                                );
+                            }
+                        }
+                    }
+                    continue;
+                }
                 TurnFlow::Done(outcome) => return Ok((outcome, turn_count)),
             }
         }
@@ -396,7 +445,7 @@ impl RuntimeCore {
         all_user_inputs: &[String],
     ) -> AgentResult<TurnFlow>
     where
-        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send + 'static,
     {
         match result {
             Ok(LlmTurnResult {
@@ -573,6 +622,29 @@ impl RuntimeCore {
                 }
 
                 if result.is_tool_call && !result.tool_calls.is_empty() {
+                    // 1. Notify guard about tool call
+                    let thinking_disabled = self
+                        .session_manager
+                        .session_or_err(session_id)
+                        .await
+                        .map(|s| s.run_state.thinking_disabled_for_rest_of_run)
+                        .unwrap_or(false);
+                    let guard_ctx = self
+                        .build_guard_ctx(&turn_ctx, "", false, false, false, thinking_disabled)
+                        .await;
+                    let decision = self.guard.on_tool_call(&guard_ctx).await;
+
+                    // 2. Handle RestoreThinking (update RunState)
+                    if matches!(
+                        decision,
+                        crate::engine::react_loop_guard::GuardDecision::RestoreThinking
+                    ) {
+                        self.execute_guard_decision(decision, &turn_ctx, &metrics)
+                            .await?;
+                    }
+
+                    // 3. Regardless of guard decision, continue executing tools
+                    //    (tool call is a fact that already happened, guard cannot prevent it)
                     return self
                         .run_tool_turn(
                             session_id,
@@ -802,6 +874,69 @@ impl RuntimeCore {
                 );
                 self.fire_guard_fail(turn_ctx, metrics, &error).await;
                 Ok(TurnFlow::Done(RunOutcome::Failed { error }))
+            }
+
+            // ─── New: thinking control ─────────────────────────────
+
+            GuardDecision::DisableThinking { nudge } => {
+                // 1. Update RunState
+                self.with_session_mut(turn_ctx.session_id, |session| {
+                    session.run_state.thinking_disabled_for_rest_of_run = true;
+                    session.push_message(MessageRole::User, &nudge);
+                })
+                .await?;
+
+                // 2. Flush turn end
+                self.fire_turn_end(TurnEndCtx {
+                    ttft_ms: metrics.ttft_ms,
+                    llm_duration_ms: metrics.llm_duration_ms,
+                    usage: metrics.usage,
+                    text_length: metrics.text_len,
+                    has_thinking: metrics.has_thinking,
+                    llm_calls: 1,
+                    ..TurnEndCtx::new(
+                        turn_ctx.session_id,
+                        turn_ctx.turn_count,
+                        turn_ctx.turn_start,
+                        turn_ctx.model,
+                        turn_ctx.user_input,
+                        RunOutcome::Continuing,
+                    )
+                })
+                .await;
+
+                // 3. Log
+                tracing::info!(
+                    session_id = turn_ctx.session_id.id,
+                    turn = turn_ctx.turn_count,
+                    "thinking disabled by guard"
+                );
+
+                Ok(TurnFlow::Continue)
+            }
+            GuardDecision::RestoreThinking => {
+                // 1. Restore original configuration
+                let original = self
+                    .session_manager
+                    .session_or_err(turn_ctx.session_id)
+                    .await
+                    .map(|s| s.run_state.original_thinking_enabled)
+                    .unwrap_or(false);
+
+                self.with_session_mut(turn_ctx.session_id, |session| {
+                    session.run_state.thinking_disabled_for_rest_of_run = !original;
+                })
+                .await?;
+
+                // 2. Log
+                tracing::info!(
+                    session_id = turn_ctx.session_id.id,
+                    turn = turn_ctx.turn_count,
+                    thinking_enabled = original,
+                    "thinking restored by guard"
+                );
+
+                Ok(TurnFlow::Continue)
             }
         }
     }

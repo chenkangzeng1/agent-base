@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex, RwLock as StdRwLock};
 use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 
-use crate::engine::context::ContextWindowManager;
+use crate::engine::context::{ContextCompaction, ContextWindowManager};
 use crate::engine::middleware::MiddlewareRef;
 use crate::engine::react_loop_guard::{NoopGuard, ReactLoopGuard};
 use crate::engine::runtime::event_bus::EventBus;
@@ -34,6 +34,8 @@ pub(crate) struct RuntimeCore {
     pub(crate) convert_to_llm: Option<ConvertToLlmFn>,
     /// Guard for react loop completion detection.
     pub(crate) guard: Arc<dyn ReactLoopGuard>,
+    /// Optional inline context compactor (e.g., agent-works ContextCompactor).
+    pub(crate) context_compactor: Option<Arc<dyn ContextCompaction>>,
 }
 
 impl RuntimeCore {
@@ -48,6 +50,7 @@ impl RuntimeCore {
         middlewares: Vec<MiddlewareRef>,
         convert_to_llm: Option<ConvertToLlmFn>,
         guard: Option<Arc<dyn ReactLoopGuard>>,
+        context_compactor: Option<Arc<dyn ContextCompaction>>,
     ) -> Self {
         Self {
             config: Arc::new(RwLock::new(config)),
@@ -62,6 +65,7 @@ impl RuntimeCore {
             message_queue: MessageQueue::new(),
             convert_to_llm,
             guard: guard.unwrap_or_else(|| Arc::new(NoopGuard)),
+            context_compactor,
         }
     }
 
@@ -102,6 +106,29 @@ impl RuntimeCore {
         F: FnOnce(&mut crate::engine::AgentSession) -> R,
     {
         self.session_manager.with_session_mut(session_id, f).await
+    }
+
+    /// Estimate the total token count for a session's message history.
+    ///
+    /// Uses `ContextWindowManager::estimate_tokens` per message, or the
+    /// compactor's `token_count_hint` if available.
+    pub(crate) async fn estimate_session_tokens(&self, session_id: &SessionId) -> usize {
+        // Try the compactor's hint first
+        if let Some(ref compactor) = self.context_compactor
+            && let Some(hint) = compactor.token_count_hint(session_id)
+        {
+            return hint;
+        }
+        // Fall back to ContextWindowManager estimation
+        if let Ok(session) = self.session_manager.session_or_err(session_id).await {
+            let messages = session.chat_messages();
+            messages
+                .iter()
+                .map(ContextWindowManager::message_tokens)
+                .sum()
+        } else {
+            0
+        }
     }
 }
 

@@ -7,15 +7,30 @@ use crate::types::{FinishReason, SessionId};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum GuardDecision {
     /// Continue loop, optionally inject nudge message
-    Continue {
-        nudge: Option<String>,
-    },
+    Continue { nudge: Option<String> },
     /// Normal completion (fire_turn_end + RunOutcome::Completed)
     Complete,
     /// Abnormal termination (fire_guard_fail + RunOutcome::Failed)
-    Fail {
-        error: String,
-    },
+    Fail { error: String },
+
+    // ─── Thinking control ─────────────────────────────────────
+
+    /// Temporarily disable thinking functionality
+    ///
+    /// Used for reasoning-only loop scenarios: model keeps thinking but produces no output.
+    /// After calling, runtime will:
+    /// 1. Set thinking_disabled_for_rest_of_run = true
+    /// 2. Inject nudge message
+    /// 3. Continue loop
+    DisableThinking { nudge: String },
+
+    /// Restore thinking functionality to previous state
+    ///
+    /// Used for thinking recovery scenarios: model starts working normally (has text or tool call).
+    /// After calling, runtime will:
+    /// 1. Restore thinking_disabled_for_rest_of_run to original state
+    /// 2. Reset related counters
+    RestoreThinking,
 }
 
 /// Guard context information — built by runtime, passed to guard.
@@ -41,6 +56,10 @@ pub struct GuardCtx {
     pub is_text_only: bool,
     // Environment state
     pub thinking_disabled: bool,
+    /// Original thinking configuration (for restoration)
+    ///
+    /// From RunState.original_thinking_enabled
+    pub original_thinking_enabled: bool,
 }
 
 /// React Loop Guard trait — single unified entry point.
@@ -51,6 +70,19 @@ pub struct GuardCtx {
 pub trait ReactLoopGuard: Send + Sync {
     /// Unified entry point — guard judges the scene and returns a decision.
     async fn on_turn(&self, ctx: &GuardCtx) -> GuardDecision;
+
+    /// Callback when model calls a tool (new)
+    ///
+    /// Default implementation: returns Complete (let other logic continue)
+    ///
+    /// Usage:
+    /// - DefaultGuard can return RestoreThinking here
+    /// - Other guards can record tool call history
+    ///
+    /// Note: This callback is called before tool execution, Guard cannot prevent tool execution
+    async fn on_tool_call(&self, _ctx: &GuardCtx) -> GuardDecision {
+        GuardDecision::Complete
+    }
 }
 
 /// Default guard — fails on degenerate states, completes on normal flow.
@@ -102,12 +134,10 @@ mod tests {
             is_empty_response: false,
             is_text_only: false,
             thinking_disabled: false,
+            original_thinking_enabled: true,
         };
 
-        assert!(matches!(
-            guard.on_turn(&ctx).await,
-            GuardDecision::Complete
-        ));
+        assert!(matches!(guard.on_turn(&ctx).await, GuardDecision::Complete));
     }
 
     #[tokio::test]
@@ -130,6 +160,7 @@ mod tests {
             is_empty_response: false,
             is_text_only: false,
             thinking_disabled: false,
+            original_thinking_enabled: true,
         };
         assert!(matches!(
             guard.on_turn(&ctx).await,

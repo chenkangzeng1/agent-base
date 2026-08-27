@@ -2,7 +2,6 @@
 ///
 /// 测试 qwen3.7-max 在"总结回复"场景下是否会产生 content。
 use agent_base::{AgentResult, ChatMessage};
-use futures_util::StreamExt;
 use llm_trait::{ChatRequest, LlmProvider, ReasoningConfig, StreamChunk};
 use llm_unified::create_provider;
 
@@ -45,7 +44,10 @@ async fn test_summarize(
     };
 
     let request = ChatRequest::new(messages).with_reasoning(reasoning);
-    let mut stream = provider.stream(request).await.map_err(|e| agent_base::AgentError::internal(e.to_string()))?;
+    let mut stream = provider
+        .stream(request)
+        .await
+        .map_err(|e| agent_base::AgentError::internal(e.to_string()))?;
 
     let mut thought = String::new();
     let mut text = String::new();

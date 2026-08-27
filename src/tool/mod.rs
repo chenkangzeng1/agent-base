@@ -15,57 +15,10 @@ pub mod update_plan;
 pub use auto_continue::AutoContinueTool;
 pub use update_plan::UpdatePlanTool;
 
-pub use policy::{DenyAllToolPolicy, ToolPolicy};
+pub use policy::{DenyAllToolPolicy, ToolDecision, ToolPolicy};
 
-/// Structured content returned by a tool, aligned with the MCP `content`
-/// array shape (no envelope, no orchestration/failure/truncation semantics).
-///
-/// Only `Text` is consumed by the first LLM adapter; `Image` is shape-reserved
-/// and the adapter reports "not supported" rather than silently dropping it.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum Content {
-    Text {
-        text: String,
-    },
-    /// Base64-encoded image payload.
-    Image {
-        data: String,
-        mime_type: String,
-    },
-}
-
-impl Content {
-    pub fn text(s: impl Into<String>) -> Self {
-        Content::Text { text: s.into() }
-    }
-
-    pub fn image(data: impl Into<String>, mime_type: impl Into<String>) -> Self {
-        Content::Image {
-            data: data.into(),
-            mime_type: mime_type.into(),
-        }
-    }
-}
-
-impl From<Content> for Vec<Content> {
-    fn from(c: Content) -> Self {
-        vec![c]
-    }
-}
-
-/// Join the textual portion of tool output into a single string for display
-/// and session history. Non-text variants (e.g. `Image`) are skipped.
-pub fn content_text(contents: &[Content]) -> String {
-    contents
-        .iter()
-        .filter_map(|c| match c {
-            Content::Text { text } => Some(text.as_str()),
-            Content::Image { .. } => None,
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
+// Re-export pure types from agent-types
+pub use agent_types::{ActivationContext, Content, ToolExposure, ToolMetadata, content_text};
 
 #[derive(Clone)]
 pub struct ToolContext {
@@ -134,27 +87,6 @@ impl ToolContext {
     }
 }
 
-/// Machine-readable metadata for a registered tool — origin, version, and
-/// runtime requirements in a stable shape consumers can inspect without
-/// parsing the LLM-facing definition JSON.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct ToolMetadata {
-    /// Tool name (matches [`Tool::name`]).
-    pub name: String,
-    /// Human-readable description (matches the description in [`Tool::description`]).
-    pub description: String,
-    /// Where this tool comes from: a crate name (e.g. `"phi-tools"`), a
-    /// framework identifier (`"agent-base"`, `"agent-works"`), or
-    /// `"custom"` for user-defined tools.
-    pub origin: String,
-    /// Crate / package version, or `"unknown"` when built outside a crate.
-    pub version: String,
-    /// Optional runtime requirements or capabilities this tool depends on
-    /// (e.g. `["chrome-cdp"]` for browser tools). Empty when there are
-    /// none.
-    pub requirements: Vec<String>,
-}
-
 #[async_trait]
 pub trait Tool: Send + Sync {
     fn name(&self) -> &'static str;
@@ -189,6 +121,24 @@ pub trait Tool: Send + Sync {
             requirements: vec![],
         }
     }
+
+    /// Visibility level for this tool. Default: `Direct` (always visible).
+    ///
+    /// Override to return `Deferred` (conditionally visible) or `Hidden`
+    /// (never visible to the model). `Deferred` tools are only included
+    /// when [`Tool::should_activate`] returns `true`.
+    fn exposure(&self) -> ToolExposure {
+        ToolExposure::Direct
+    }
+
+    /// Activation condition for `Deferred` tools.
+    ///
+    /// Called once per turn for each `Deferred` tool. Return `true` to
+    /// include this tool in the model's tool list this turn. Ignored for
+    /// `Direct` and `Hidden` tools.
+    fn should_activate(&self, _ctx: &ActivationContext) -> bool {
+        true
+    }
 }
 
 #[async_trait]
@@ -220,6 +170,16 @@ pub trait TypedTool: Send + Sync {
     /// Crate/package version, or `"unknown"` when built outside a crate.
     fn version(&self) -> &'static str {
         "unknown"
+    }
+
+    /// Visibility level for this tool. Default: `Direct` (always visible).
+    fn exposure(&self) -> ToolExposure {
+        ToolExposure::Direct
+    }
+
+    /// Activation condition for `Deferred` tools. Ignored for `Direct`/`Hidden`.
+    fn should_activate(&self, _ctx: &ActivationContext) -> bool {
+        true
     }
 }
 
@@ -256,6 +216,14 @@ impl<T: TypedTool + Send + Sync + 'static> Tool for T {
             version: self.version().to_string(),
             requirements: vec![],
         }
+    }
+
+    fn exposure(&self) -> ToolExposure {
+        TypedTool::exposure(self)
+    }
+
+    fn should_activate(&self, ctx: &ActivationContext) -> bool {
+        TypedTool::should_activate(self, ctx)
     }
 
     async fn call(&self, args: &Value, ctx: &ToolContext) -> AgentResult<Vec<Content>> {
@@ -314,6 +282,48 @@ impl ToolRegistry {
         tools.sort_by_key(|t| t.name());
         tools
             .into_iter()
+            .map(|t| render_tool_definition(t.as_ref()))
+            .collect()
+    }
+
+    /// Return tool definitions filtered by [`ToolExposure`].
+    ///
+    /// - `Direct` tools are always included.
+    /// - `Deferred` tools are included only when `should_activate(ctx)` returns `true`.
+    /// - `Hidden` tools are never included.
+    pub fn definitions_filtered(&self, ctx: &ActivationContext) -> Vec<Value> {
+        let mut tools: Vec<_> = self.tools.values().collect();
+        tools.sort_by_key(|t| t.name());
+
+        // Single sequential pass: collect Direct names first, then evaluate
+        // Deferred tools in sorted order. Each Deferred tool sees the names of
+        // all Direct + previously-activated Deferred tools in ctx.current_tools.
+        // Evaluation order matters: a later Deferred tool can see an earlier one,
+        // but not vice versa.
+        let direct_names: Vec<String> = tools
+            .iter()
+            .filter(|t| t.exposure() == ToolExposure::Direct)
+            .map(|t| t.name().to_string())
+            .collect();
+
+        let mut activated_names = direct_names.clone();
+        for t in &tools {
+            if t.exposure() == ToolExposure::Deferred {
+                let mut ctx_with_tools = ctx.clone();
+                ctx_with_tools.current_tools = activated_names.clone();
+                if t.should_activate(&ctx_with_tools) {
+                    activated_names.push(t.name().to_string());
+                }
+            }
+        }
+
+        tools
+            .into_iter()
+            .filter(|t| match t.exposure() {
+                ToolExposure::Direct => true,
+                ToolExposure::Deferred => activated_names.contains(&t.name().to_string()),
+                ToolExposure::Hidden => false,
+            })
             .map(|t| render_tool_definition(t.as_ref()))
             .collect()
     }
@@ -672,5 +682,137 @@ mod tests {
         assert_eq!(names, vec!["alpha", "zeta"]);
         assert_eq!(metas[0].origin, "custom");
         assert_eq!(metas[0].version, "unknown");
+    }
+
+    // ── Phase 2: ToolExposure + definitions_filtered ────────────────────
+
+    struct ExposureTool(&'static str, ToolExposure);
+    #[async_trait]
+    impl Tool for ExposureTool {
+        fn name(&self) -> &'static str {
+            self.0
+        }
+        fn description(&self) -> &'static str {
+            ""
+        }
+        fn schema(&self) -> serde_json::Value {
+            serde_json::Value::Null
+        }
+        async fn call(
+            &self,
+            _args: &serde_json::Value,
+            _ctx: &ToolContext,
+        ) -> AgentResult<Vec<Content>> {
+            Ok(vec![])
+        }
+        fn exposure(&self) -> ToolExposure {
+            self.1.clone()
+        }
+    }
+
+    struct ConditionalTool(&'static str, bool);
+    #[async_trait]
+    impl Tool for ConditionalTool {
+        fn name(&self) -> &'static str {
+            self.0
+        }
+        fn description(&self) -> &'static str {
+            ""
+        }
+        fn schema(&self) -> serde_json::Value {
+            serde_json::Value::Null
+        }
+        async fn call(
+            &self,
+            _args: &serde_json::Value,
+            _ctx: &ToolContext,
+        ) -> AgentResult<Vec<Content>> {
+            Ok(vec![])
+        }
+        fn exposure(&self) -> ToolExposure {
+            ToolExposure::Deferred
+        }
+        fn should_activate(&self, _ctx: &ActivationContext) -> bool {
+            self.1
+        }
+    }
+
+    fn default_ctx() -> ActivationContext {
+        ActivationContext {
+            session_id: crate::types::SessionId::new(0),
+            current_tools: vec![],
+            workspace: std::path::PathBuf::from("/tmp"),
+        }
+    }
+
+    #[test]
+    fn tool_exposure_default_is_direct() {
+        // NamedTool doesn't override exposure() → default Direct
+        let t = NamedTool("x");
+        assert_eq!(t.exposure(), ToolExposure::Direct);
+    }
+
+    #[test]
+    fn tool_should_activate_default_is_true() {
+        let t = NamedTool("x");
+        assert!(t.should_activate(&default_ctx()));
+    }
+
+    #[test]
+    fn definitions_filtered_includes_direct_excludes_hidden() {
+        let mut r = ToolRegistry::default();
+        r.register(ExposureTool("direct_a", ToolExposure::Direct));
+        r.register(ExposureTool("hidden_a", ToolExposure::Hidden));
+        r.register(ExposureTool("direct_b", ToolExposure::Direct));
+
+        let defs = r.definitions_filtered(&default_ctx());
+        let names: Vec<&str> = defs
+            .iter()
+            .map(|d| d["function"]["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["direct_a", "direct_b"]);
+    }
+
+    #[test]
+    fn definitions_filtered_includes_deferred_when_activated() {
+        let mut r = ToolRegistry::default();
+        r.register(ExposureTool("always", ToolExposure::Direct));
+        r.register(ConditionalTool("maybe", true)); // should_activate = true
+        r.register(ConditionalTool("never", false)); // should_activate = false
+
+        let defs = r.definitions_filtered(&default_ctx());
+        let names: Vec<&str> = defs
+            .iter()
+            .map(|d| d["function"]["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(names, vec!["always", "maybe"]);
+    }
+
+    #[test]
+    fn definitions_filtered_all_hidden_returns_empty() {
+        let mut r = ToolRegistry::default();
+        r.register(ExposureTool("h1", ToolExposure::Hidden));
+        r.register(ExposureTool("h2", ToolExposure::Hidden));
+
+        let defs = r.definitions_filtered(&default_ctx());
+        assert!(defs.is_empty());
+    }
+
+    #[test]
+    fn definitions_filtered_empty_registry() {
+        let r = ToolRegistry::default();
+        let defs = r.definitions_filtered(&default_ctx());
+        assert!(defs.is_empty());
+    }
+
+    #[test]
+    fn definitions_unfiltered_includes_hidden() {
+        // The original definitions() method does NOT filter — all tools appear.
+        let mut r = ToolRegistry::default();
+        r.register(ExposureTool("visible", ToolExposure::Direct));
+        r.register(ExposureTool("secret", ToolExposure::Hidden));
+
+        let defs = r.definitions();
+        assert_eq!(defs.len(), 2);
     }
 }

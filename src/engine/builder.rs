@@ -9,7 +9,7 @@ use crate::types::{
 
 use super::AgentRuntime;
 use super::approval::ApprovalHandler;
-use super::context::ContextWindowManager;
+use super::context::{ContextCompaction, ContextWindowManager};
 use super::middleware::{Middleware, MiddlewareRef};
 use super::react_loop_guard::ReactLoopGuard;
 use super::recovery::{StopOnError, ToolErrorRecovery};
@@ -29,6 +29,7 @@ pub struct AgentBuilder {
     session_id_generator: Option<Arc<dyn SessionIdGenerator>>,
     convert_to_llm: Option<ConvertToLlmFn>,
     guard: Option<Arc<dyn ReactLoopGuard>>,
+    context_compactor: Option<Arc<dyn ContextCompaction>>,
 }
 
 impl AgentBuilder {
@@ -48,6 +49,7 @@ impl AgentBuilder {
             session_id_generator: None,
             convert_to_llm: None,
             guard: None,
+            context_compactor: None,
         }
     }
 
@@ -83,6 +85,15 @@ impl AgentBuilder {
     /// recorded calls in tests).
     pub fn guard_dyn(mut self, guard: Arc<dyn ReactLoopGuard>) -> Self {
         self.guard = Some(guard);
+        self
+    }
+
+    /// Set an inline context compactor for the react loop.
+    ///
+    /// When set, the react loop will check token count after each tool turn
+    /// and compact the session if it exceeds the configured threshold.
+    pub fn context_compactor(mut self, compactor: Arc<dyn ContextCompaction>) -> Self {
+        self.context_compactor = Some(compactor);
         self
     }
 
@@ -291,6 +302,7 @@ impl AgentBuilder {
             self.middlewares,
             self.convert_to_llm,
             self.guard,
+            self.context_compactor,
         ));
 
         Ok(AgentRuntime { runner })
@@ -303,9 +315,7 @@ mod tests {
     use crate::engine::DenyAllApprovalHandler;
     use crate::llm::ReasoningEffort;
     use crate::tool::{Content, ToolContext};
-    use crate::types::{
-        AgentError, AgentResult, ApprovalRequest, ChatMessage, Language, ResponseFormat,
-    };
+    use crate::types::{AgentError, AgentResult, ApprovalRequest, Language, ResponseFormat};
     use async_trait::async_trait;
     use llm_trait::{Capabilities, ChatRequest, ChatResponse, ChatStream, LlmError, ProviderInfo};
     use serde_json::Value;

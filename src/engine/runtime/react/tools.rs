@@ -36,7 +36,7 @@ impl RuntimeCore {
         on_event: Arc<Mutex<F>>,
     ) -> AgentResult<TurnFlow>
     where
-        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send + 'static,
     {
         // Truncation guard — when the LLM response hit the token limit,
         // tool call arguments may be incomplete. Fail all tool calls
@@ -409,7 +409,7 @@ impl RuntimeCore {
         full_text: &str,
     ) -> AgentResult<()>
     where
-        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send,
+        F: FnMut(RuntimeEvent) -> AgentResult<()> + Send + 'static,
     {
         let tool_names: Vec<&str> = tool_calls
             .iter()
@@ -443,8 +443,16 @@ impl RuntimeCore {
         // Push assistant tool calls to session after all approvals pass
         {
             let tc: Vec<(String, String, String)> = tool_calls.to_vec();
-            let ft = if full_text.is_empty() { None } else { Some(full_text.to_string()) };
-            let rt = if reasoning.is_empty() { None } else { Some(reasoning.to_string()) };
+            let ft = if full_text.is_empty() {
+                None
+            } else {
+                Some(full_text.to_string())
+            };
+            let rt = if reasoning.is_empty() {
+                None
+            } else {
+                Some(reasoning.to_string())
+            };
             self.with_session_mut(session_id, |session| {
                 session.push_assistant_tool_calls(&tc, rt, ft);
             })

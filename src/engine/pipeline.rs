@@ -4,7 +4,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use serde_json::Value;
 
-use crate::tool::{Content, Tool, ToolContext, ToolPolicy, content_text};
+use crate::tool::{Content, Tool, ToolContext, ToolDecision, ToolPolicy, content_text};
 use crate::types::{AgentError, AgentResult, DEFAULT_TOOL_TIMEOUT_MS};
 
 /// Pure execution pipeline — cares about *how* to safely execute a tool.
@@ -62,10 +62,19 @@ impl ToolExecutionPipeline for DefaultPipeline {
         args: &Value,
         ctx: &ToolContext,
     ) -> AgentResult<Vec<Content>> {
-        // 1. before_call hook
-        if let Some(policy) = &self.tool_policy {
-            policy.before_call(tool.name(), args, ctx)?;
-        }
+        // 1. before_call hook — may modify args or block the call entirely
+        let effective_args: std::borrow::Cow<'_, Value> = if let Some(policy) = &self.tool_policy {
+            match policy.before_call(tool.name(), args, ctx)? {
+                ToolDecision::Proceed => std::borrow::Cow::Borrowed(args),
+                ToolDecision::Block(msg) => {
+                    return Err(AgentError::ToolBlocked(msg));
+                }
+                ToolDecision::Modify(modified) => std::borrow::Cow::Owned(modified),
+            }
+        } else {
+            std::borrow::Cow::Borrowed(args)
+        };
+        let args = &*effective_args;
 
         // 2. Execute with timeout: tool → global config → framework default
         let timeout_ms = tool
@@ -217,13 +226,18 @@ mod tests {
         async fn evaluate_approval(&self, _: &str, _: &Value) -> Option<ApprovalRequest> {
             None
         }
-        fn before_call(&self, _name: &str, _args: &Value, _ctx: &ToolContext) -> AgentResult<()> {
+        fn before_call(
+            &self,
+            _name: &str,
+            _args: &Value,
+            _ctx: &ToolContext,
+        ) -> AgentResult<ToolDecision> {
             self.before_count
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             if self.fail_before {
-                return Err(AgentError::internal("before_call denied"));
+                return Err(AgentError::ToolBlocked("before_call denied".into()));
             }
-            Ok(())
+            Ok(ToolDecision::Proceed)
         }
         fn after_call(
             &self,
@@ -384,5 +398,65 @@ mod tests {
             .execute(&FailingTool, &json!({}), &test_ctx())
             .await;
         assert!(result.is_err());
+    }
+
+    // ── ToolDecision tests ──
+
+    struct ModifyPolicy;
+    #[async_trait]
+    impl ToolPolicy for ModifyPolicy {
+        async fn evaluate_approval(&self, _: &str, _: &Value) -> Option<ApprovalRequest> {
+            None
+        }
+        fn before_call(
+            &self,
+            _name: &str,
+            _args: &Value,
+            _ctx: &ToolContext,
+        ) -> AgentResult<ToolDecision> {
+            // Replace the msg argument with "modified"
+            Ok(ToolDecision::Modify(json!({"msg": "modified"})))
+        }
+    }
+
+    struct BlockPolicy;
+    #[async_trait]
+    impl ToolPolicy for BlockPolicy {
+        async fn evaluate_approval(&self, _: &str, _: &Value) -> Option<ApprovalRequest> {
+            None
+        }
+        fn before_call(
+            &self,
+            name: &str,
+            _args: &Value,
+            _ctx: &ToolContext,
+        ) -> AgentResult<ToolDecision> {
+            Ok(ToolDecision::Block(format!("{name} is blocked")))
+        }
+    }
+
+    #[tokio::test]
+    async fn modify_decision_replaces_args() {
+        let pipeline = DefaultPipeline::new(Some(Arc::new(ModifyPolicy)), None, None);
+        let output = pipeline
+            .execute(&EchoTool, &json!({"msg": "original"}), &test_ctx())
+            .await
+            .unwrap();
+        // The policy replaced args with {"msg": "modified"}
+        assert_eq!(content_text(&output), "modified");
+    }
+
+    #[tokio::test]
+    async fn block_decision_returns_error() {
+        let pipeline = DefaultPipeline::new(Some(Arc::new(BlockPolicy)), None, None);
+        let result = pipeline
+            .execute(&EchoTool, &json!({"msg": "hello"}), &test_ctx())
+            .await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("is blocked"),
+            "expected block message, got: {err}"
+        );
     }
 }

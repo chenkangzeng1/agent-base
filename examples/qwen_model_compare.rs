@@ -5,7 +5,6 @@
 ///
 /// 运行：cargo run --example qwen_model_compare
 use agent_base::{AgentResult, ChatMessage};
-use futures_util::StreamExt;
 use llm_trait::{ChatRequest, LlmProvider, ReasoningConfig, StreamChunk};
 use llm_unified::create_provider;
 
@@ -73,9 +72,14 @@ async fn probe_model(
         effort: None,
     };
 
-    let request = ChatRequest::new(messages).with_tools(tools).with_reasoning(reasoning);
+    let request = ChatRequest::new(messages)
+        .with_tools(tools)
+        .with_reasoning(reasoning);
     let start = std::time::Instant::now();
-    let mut stream = provider.stream(request).await.map_err(|e| agent_base::AgentError::internal(e.to_string()))?;
+    let mut stream = provider
+        .stream(request)
+        .await
+        .map_err(|e| agent_base::AgentError::internal(e.to_string()))?;
 
     let mut thought_chars: usize = 0;
     let mut text_chars: usize = 0;

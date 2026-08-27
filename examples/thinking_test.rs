@@ -1,5 +1,4 @@
 use agent_base::{AgentResult, ChatMessage};
-use futures_util::StreamExt;
 use llm_trait::{ChatRequest, LlmProvider, ReasoningConfig, StreamChunk};
 use llm_unified::create_provider;
 
@@ -36,7 +35,10 @@ async fn run_test(
     };
 
     let request = ChatRequest::new(messages).with_reasoning(reasoning);
-    let mut stream = provider.stream(request).await.map_err(|e| agent_base::AgentError::internal(e.to_string()))?;
+    let mut stream = provider
+        .stream(request)
+        .await
+        .map_err(|e| agent_base::AgentError::internal(e.to_string()))?;
 
     let mut in_thought = false;
     let mut in_text = false;

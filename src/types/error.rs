@@ -42,6 +42,9 @@ pub enum AgentError {
     #[error("Tool call rejected by approval: {tool_name}")]
     ApprovalDenied { tool_name: String },
 
+    #[error("Tool call blocked: {0}")]
+    ToolBlocked(String),
+
     #[error("Session {0} not found")]
     SessionNotFound(u64),
 
@@ -172,7 +175,9 @@ impl From<llm_trait::LlmError> for AgentError {
                 } else if status >= 500 {
                     AgentError::ServiceUnavailable(format!("HTTP {status}: {message}"))
                 } else {
-                    AgentError::LlmApi { message: format!("HTTP {status}: {message}") }
+                    AgentError::LlmApi {
+                        message: format!("HTTP {status}: {message}"),
+                    }
                 }
             }
             llm_trait::LlmError::Llm(msg) => AgentError::Llm(msg),

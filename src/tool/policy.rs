@@ -4,6 +4,23 @@ use serde_json::Value;
 use super::{Content, ToolContext};
 use crate::types::{AgentResult, ApprovalRequest, RiskLevel};
 
+/// Decision returned by [`ToolPolicy::before_call`] to control tool execution.
+///
+/// This extends the simple Ok/Err model with the ability to modify tool
+/// arguments before execution — enabling hooks that auto-inject flags,
+/// rewrite paths, or sanitize inputs without blocking the call.
+#[derive(Clone, Debug)]
+pub enum ToolDecision {
+    /// Proceed with the original arguments.
+    Proceed,
+    /// Block the tool call entirely. The string is surfaced to the LLM as an
+    /// error message so it can correct its approach.
+    Block(String),
+    /// Proceed, but replace the tool's arguments with the provided value.
+    /// The tool executes as if the LLM had sent `modified_args` originally.
+    Modify(Value),
+}
+
 /// Policy-based control over tool execution.
 ///
 /// Implement this trait to customise how tools are approved, monitored, and
@@ -49,20 +66,31 @@ pub trait ToolPolicy: Send + Sync {
     /// Called immediately **before** a tool executes, after approval has been
     /// granted (or auto-approved).
     ///
-    /// Use this for:
-    /// - Input validation (reject malformed arguments before the tool runs).
-    /// - Auditing / logging the raw call.
-    /// - Rate-limiting or quota enforcement.
+    /// Return a [`ToolDecision`] to control execution:
+    /// - `ToolDecision::Proceed` — execute with the original arguments (default).
+    /// - `ToolDecision::Block(msg)` — cancel the call; `msg` is sent to the LLM.
+    /// - `ToolDecision::Modify(new_args)` — execute with replacement arguments.
     ///
-    /// Return an `Err` to **cancel** the tool call before execution. The error
-    /// message is surfaced to the LLM so it can correct its approach.
-    fn before_call(&self, tool_name: &str, args: &Value, ctx: &ToolContext) -> AgentResult<()> {
+    /// Use `Modify` for:
+    /// - Auto-injecting flags (e.g. `--no-color` to shell commands).
+    /// - Path normalization or sandboxing.
+    /// - Sanitizing inputs before execution.
+    fn before_call(
+        &self,
+        tool_name: &str,
+        args: &Value,
+        ctx: &ToolContext,
+    ) -> AgentResult<ToolDecision> {
         let _ = (tool_name, args, ctx);
-        Ok(())
+        Ok(ToolDecision::Proceed)
     }
 
     /// Called immediately **after** a tool executes, before the result is
     /// returned to the LLM.
+    ///
+    /// **Note:** When [`ToolDecision::Modify`] is used in `before_call`, the
+    /// `args` parameter here reflects the **modified** arguments, not the
+    /// original ones from the LLM.
     ///
     /// Use this for:
     /// - Output scrubbing / redaction (strip secrets from tool results).
@@ -134,7 +162,9 @@ mod tests {
         let p = NoopPolicy;
         let ctx = ToolContext::for_test();
         let args = json!({ "x": 1 });
-        assert!(p.before_call("echo", &args, &ctx).is_ok());
+        // before_call now returns ToolDecision::Proceed by default
+        let decision = p.before_call("echo", &args, &ctx).unwrap();
+        assert!(matches!(decision, ToolDecision::Proceed));
         assert!(p.after_call("echo", &args, &[], &ctx).is_ok());
     }
 

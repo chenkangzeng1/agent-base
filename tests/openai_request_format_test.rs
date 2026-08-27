@@ -1,5 +1,5 @@
 use agent_base::ChatMessage;
-use llm_trait::{ChatRequest, LlmProvider, ReasoningConfig};
+use llm_trait::{ChatRequest, ReasoningConfig};
 use llm_unified::create_provider;
 use serde_json::{Value, json};
 

@@ -4,7 +4,7 @@ use crate::llm::StreamChunk;
 use crate::tool::{Content, Tool, ToolContext, ToolPolicy};
 use crate::types::{
     AgentError, AgentResult, ApprovalRequest, ChatMessage, CheckpointData, CheckpointStep,
-    ResponseFormat, RiskLevel, RunOutcome, RuntimeEvent, SessionId, TurnContext,
+    RiskLevel, RunOutcome, RuntimeEvent, SessionId, TurnContext,
 };
 use async_trait::async_trait;
 use futures_core::Stream;
@@ -1763,16 +1763,14 @@ async fn tool_call_chunk_with_no_parsed_calls_and_stop_finish_fails() {
     }));
     let guard_clone = guard.clone();
 
-    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![
-        vec![
-            // A ToolCall chunk that sets is_tool_call=true but contains no
-            // actual tool_calls in the delta (simulates incomplete stream).
-            StreamChunk::ToolCall(serde_json::json!({ "no_delta": true })),
-            StreamChunk::Stop {
-                finish_reason: Some("stop".to_string()),
-            },
-        ],
-    ])))
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![vec![
+        // A ToolCall chunk that sets is_tool_call=true but contains no
+        // actual tool_calls in the delta (simulates incomplete stream).
+        StreamChunk::ToolCall(serde_json::json!({ "no_delta": true })),
+        StreamChunk::Stop {
+            finish_reason: Some("stop".to_string()),
+        },
+    ]])))
     .system_prompt("test")
     .register_tool(EchoTool)
     .guard_dyn(guard_clone)

@@ -1,4 +1,4 @@
-use crate::types::ChatMessage;
+use crate::types::{ChatMessage, SessionId};
 
 #[derive(Clone, Debug)]
 pub struct ContextWindowManager {
@@ -162,6 +162,39 @@ fn is_cjk(c: char) -> bool {
         | '\u{30A0}'..='\u{30FF}' // Katakana
         | '\u{AC00}'..='\u{D7AF}' // Hangul Syllables
     )
+}
+
+// ── Inline Context Compaction ──────────────────────────────────────────────
+
+/// Trait for inline context compaction within the react loop.
+///
+/// Implemented by agent-works's `ContextCompactor`. agent-base defines
+/// the trait to avoid circular dependencies (agent-works depends on agent-base).
+///
+/// The react loop calls [`compact`](Self::compact) after tool execution when
+/// the estimated token count exceeds a configurable threshold. This prevents
+/// context window overflow without requiring the LLM call to fail first.
+#[async_trait::async_trait]
+pub trait ContextCompaction: Send + Sync {
+    /// Compact a message history.
+    ///
+    /// Takes the current messages and returns `Some(compacted_messages)` if
+    /// compaction was performed. Returns `None` if compaction was skipped
+    /// (below threshold, too few messages, or disabled).
+    ///
+    /// The react loop handles reading/writing the session — the compactor
+    /// only transforms the message list.
+    async fn compact(
+        &self,
+        session_id: &SessionId,
+        messages: &[ChatMessage],
+    ) -> Option<Vec<ChatMessage>>;
+
+    /// Estimate current token count for the session.
+    ///
+    /// Returns `None` if the implementation cannot estimate (falls back to
+    /// `ContextWindowManager::estimate_tokens` on the react loop side).
+    fn token_count_hint(&self, session_id: &SessionId) -> Option<usize>;
 }
 
 #[cfg(test)]

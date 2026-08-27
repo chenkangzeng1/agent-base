@@ -1,9 +1,8 @@
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use agent_base::{
-    AgentBuilder, AgentError, AgentResult, ChatMessage, Content, Middleware,
-    PostLlmCtx, RuntimeEvent, SessionId, Tool, ToolContext,
+    AgentBuilder, AgentError, AgentResult, ChatMessage, Content, Middleware, PostLlmCtx,
+    RuntimeEvent, SessionId, Tool, ToolContext,
 };
 use async_trait::async_trait;
 use dotenvy::dotenv;

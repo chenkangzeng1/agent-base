@@ -47,6 +47,15 @@ pub struct RunState {
     /// reasoning-only responses.
     #[serde(default)]
     pub thinking_disabled_for_rest_of_run: bool,
+
+    // ─── New fields for thinking guard ─────────────────────────────
+
+    /// Original thinking configuration (for restoration)
+    ///
+    /// Records whether thinking was originally enabled when the session started.
+    /// Used to restore thinking to its original state after DisableThinking → RestoreThinking cycle.
+    #[serde(default)]
+    pub original_thinking_enabled: bool,
 }
 
 impl RunState {
@@ -58,6 +67,8 @@ impl RunState {
         self.empty_response_strikes = 0;
         self.nudge_count = 0;
         self.thinking_disabled_for_rest_of_run = false;
+        // Note: original_thinking_enabled is NOT reset here
+        // It should be set once when the session starts
     }
 
     /// Record tool calls (branch 3: tool calls).
@@ -891,6 +902,7 @@ mod validate_tests {
             empty_response_strikes: 1,
             nudge_count: 3,
             thinking_disabled_for_rest_of_run: true,
+            original_thinking_enabled: true,
         };
 
         rs.reset_for_new_run();
@@ -901,6 +913,8 @@ mod validate_tests {
         assert_eq!(rs.empty_response_strikes, 0);
         assert_eq!(rs.nudge_count, 0);
         assert!(!rs.thinking_disabled_for_rest_of_run);
+        // original_thinking_enabled is NOT reset
+        assert!(rs.original_thinking_enabled);
     }
 
     #[test]
@@ -1182,7 +1196,11 @@ mod validate_tests {
             None,
             None,
         );
-        if let ChatMessage::Assistant { tool_calls: Some(ref tc), .. } = s.chat_messages[0] {
+        if let ChatMessage::Assistant {
+            tool_calls: Some(ref tc),
+            ..
+        } = s.chat_messages[0]
+        {
             assert_eq!(tc[0].arguments, valid_args);
         } else {
             panic!("expected Assistant message with tool_calls");
@@ -1195,7 +1213,11 @@ mod validate_tests {
             None,
             None,
         );
-        if let ChatMessage::Assistant { tool_calls: Some(ref tc), .. } = s.chat_messages[1] {
+        if let ChatMessage::Assistant {
+            tool_calls: Some(ref tc),
+            ..
+        } = s.chat_messages[1]
+        {
             // The arguments should now be valid JSON (the error wrapper)
             let parsed: serde_json::Value = serde_json::from_str(&tc[0].arguments)
                 .expect("wrapped arguments should be valid JSON");
@@ -1215,16 +1237,16 @@ mod validate_tests {
         // Build invalid JSON with CJK chars that straddle the 200-byte boundary.
         // "あ" = 3 bytes in UTF-8. Repeating ~70 times = ~210 bytes, then add invalid suffix.
         let mut bad_args = "あ".repeat(70); // 70 * 3 = 210 bytes
-        bad_args.push_str("truncated");    // makes it invalid JSON
+        bad_args.push_str("truncated"); // makes it invalid JSON
 
         // This must NOT panic — the preview slice should respect char boundaries.
-        s.push_assistant_tool_calls(
-            &[("id1".into(), "tool".into(), bad_args.into())],
-            None,
-            None,
-        );
+        s.push_assistant_tool_calls(&[("id1".into(), "tool".into(), bad_args)], None, None);
 
-        if let ChatMessage::Assistant { tool_calls: Some(ref tc), .. } = s.chat_messages[0] {
+        if let ChatMessage::Assistant {
+            tool_calls: Some(ref tc),
+            ..
+        } = s.chat_messages[0]
+        {
             // Should be wrapped in error object (valid JSON)
             let parsed: serde_json::Value = serde_json::from_str(&tc[0].arguments)
                 .expect("wrapped arguments should be valid JSON even with multibyte chars");
@@ -1244,8 +1266,16 @@ mod validate_tests {
 
         // Simulate truncated tool call response
         let tool_calls = vec![
-            ("call_00_VJtlnKha0ZZ2Yo8t5ysQ8883".to_string(), "write_file".to_string(), "{}".to_string()),
-            ("call_01_abc123".to_string(), "bash".to_string(), r#"{"command": "ls"}"#.to_string()),
+            (
+                "call_00_VJtlnKha0ZZ2Yo8t5ysQ8883".to_string(),
+                "write_file".to_string(),
+                "{}".to_string(),
+            ),
+            (
+                "call_01_abc123".to_string(),
+                "bash".to_string(),
+                r#"{"command": "ls"}"#.to_string(),
+            ),
         ];
 
         // Push assistant message with tool_calls (as the fix does)
@@ -1265,7 +1295,11 @@ mod validate_tests {
 
         // Verify the message sequence is valid
         // 1. Assistant message should have tool_calls
-        if let ChatMessage::Assistant { tool_calls: Some(ref tc), .. } = s.chat_messages[0] {
+        if let ChatMessage::Assistant {
+            tool_calls: Some(ref tc),
+            ..
+        } = s.chat_messages[0]
+        {
             assert_eq!(tc.len(), 2);
             assert_eq!(tc[0].id, "call_00_VJtlnKha0ZZ2Yo8t5ysQ8883");
             assert_eq!(tc[0].name, "write_file");
@@ -1289,8 +1323,10 @@ mod validate_tests {
         }
 
         // 3. Validate message sequence (this would catch the bug)
-        assert!(validate_message_sequence(&s.chat_messages).is_ok(),
-            "message sequence should be valid with matching tool_use and tool_result");
+        assert!(
+            validate_message_sequence(&s.chat_messages).is_ok(),
+            "message sequence should be valid with matching tool_use and tool_result"
+        );
     }
 }
 
@@ -1317,6 +1353,7 @@ mod proptest_tests {
                 empty_response_strikes,
                 nudge_count,
                 thinking_disabled_for_rest_of_run: true,
+                original_thinking_enabled: true,
             };
             rs.reset_for_new_run();
             assert_eq!(rs.turn_tool_calls, 0);
@@ -1325,6 +1362,8 @@ mod proptest_tests {
             assert_eq!(rs.empty_response_strikes, 0);
             assert_eq!(rs.nudge_count, 0);
             assert!(!rs.thinking_disabled_for_rest_of_run);
+            // original_thinking_enabled is NOT reset
+            assert!(rs.original_thinking_enabled);
         }
 
         #[test]

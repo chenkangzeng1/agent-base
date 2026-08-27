@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use agent_base::{
     AgentBuilder, AgentError, AgentResult, ApprovalDecision, ApprovalHandler, ApprovalRequest,
-    Content, RiskLevel, RuntimeEvent, Tool, ToolContext, ToolPolicy,
+    Content, RiskLevel, RuntimeEvent, Tool, ToolContext, ToolDecision, ToolPolicy,
 };
 use async_trait::async_trait;
 use dotenvy::dotenv;
@@ -250,8 +250,13 @@ impl ToolPolicy for ArithmeticToolPolicy {
         None
     }
 
-    fn before_call(&self, _tool_name: &str, _args: &Value, _ctx: &ToolContext) -> AgentResult<()> {
-        Ok(())
+    fn before_call(
+        &self,
+        _tool_name: &str,
+        _args: &Value,
+        _ctx: &ToolContext,
+    ) -> AgentResult<ToolDecision> {
+        Ok(ToolDecision::Proceed)
     }
 
     fn after_call(

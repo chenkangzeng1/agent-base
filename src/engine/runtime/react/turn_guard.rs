@@ -53,9 +53,10 @@ impl RuntimeCore {
                     s.run_state.reasoning_only_strikes,
                     s.run_state.empty_response_strikes,
                     s.run_state.run_has_tool_calls,
+                    s.run_state.original_thinking_enabled,
                 )
             })
-            .unwrap_or((0, 0, false));
+            .unwrap_or((0, 0, false, false));
 
         GuardCtx {
             session_id: turn_ctx.session_id.clone(),
@@ -72,6 +73,7 @@ impl RuntimeCore {
             is_empty_response,
             is_text_only,
             thinking_disabled,
+            original_thinking_enabled: session_data.3,
         }
     }
 
@@ -172,6 +174,7 @@ mod tests {
             is_empty_response: false,
             is_text_only: false,
             thinking_disabled: false,
+            original_thinking_enabled: true,
         };
         let debug_str = format!("{:?}", ctx);
         assert!(debug_str.contains("session_id"));
@@ -196,6 +199,7 @@ mod tests {
             is_empty_response: false,
             is_text_only: false,
             thinking_disabled: true,
+            original_thinking_enabled: true,
         };
         assert!(ctx.is_reasoning_only);
         assert!(!ctx.is_empty_response);
@@ -224,9 +228,13 @@ mod tests {
             is_empty_response: false,
             is_text_only: false,
             thinking_disabled: false,
+            original_thinking_enabled: true,
         };
 
         let decision = guard.on_turn(&ctx).await;
-        assert!(matches!(decision, GuardDecision::Continue { nudge: Some(_) }));
+        assert!(matches!(
+            decision,
+            GuardDecision::Continue { nudge: Some(_) }
+        ));
     }
 }

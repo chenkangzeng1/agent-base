@@ -67,12 +67,7 @@ impl RuntimeCore {
             return Err(e);
         }
 
-        let tool_definitions = self.tool_engine.definitions().await;
-        tracing::debug!(
-            session_id = session_id.id,
-            tool_count = tool_definitions.len(),
-            "agent run start"
-        );
+        tracing::debug!(session_id = session_id.id, "agent run start");
         let user_input_owned = self
             .with_session_mut(&session_id, |session| {
                 session
@@ -103,7 +98,6 @@ impl RuntimeCore {
             .run_react_loop(
                 &session_id,
                 &user_input_owned,
-                &tool_definitions,
                 0,
                 &mut event_rx,
                 on_event.clone(),
@@ -175,8 +169,6 @@ impl RuntimeCore {
         let mut event_rx = self.event_bus.subscribe();
         let on_event = Arc::new(Mutex::new(on_event));
 
-        let tool_definitions = self.tool_engine.definitions().await;
-
         let user_input_owned = match self
             .apply_user_message_mw(&session_id, user_input.to_string())
             .await
@@ -242,7 +234,6 @@ impl RuntimeCore {
             .run_react_loop(
                 &session_id,
                 &user_input_owned,
-                &tool_definitions,
                 0,
                 &mut event_rx,
                 on_event.clone(),
@@ -356,7 +347,6 @@ impl RuntimeCore {
 
         let mut event_rx = self.event_bus.subscribe();
         let on_event = Arc::new(Mutex::new(on_event));
-        let tool_definitions = self.tool_engine.definitions().await;
 
         if let CheckpointStep::BeforeToolCalls { tool_calls } = checkpoint.step {
             match self
@@ -394,7 +384,6 @@ impl RuntimeCore {
             .run_react_loop(
                 &session_id,
                 &user_input,
-                &tool_definitions,
                 turn_count,
                 &mut event_rx,
                 on_event.clone(),
@@ -488,12 +477,7 @@ impl RuntimeCore {
             return Err(e);
         }
 
-        let tool_definitions = self.tool_engine.definitions().await;
-        tracing::debug!(
-            session_id = session_id.id,
-            tool_count = tool_definitions.len(),
-            "managed run start"
-        );
+        tracing::debug!(session_id = session_id.id, "managed run start");
 
         // Push initial user message
         self.with_session_mut(&session_id, |session| {
@@ -544,7 +528,6 @@ impl RuntimeCore {
                 .run_react_loop(
                     &session_id,
                     &current_input,
-                    &tool_definitions,
                     total_turns,
                     &mut event_rx,
                     on_event.clone(),

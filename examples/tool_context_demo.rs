@@ -77,11 +77,9 @@
 //!   Expected: direct reply from LLM, no tool call.
 
 use std::io::Write;
-use std::sync::Arc;
 
 use agent_base::{
-    AgentBuilder, AgentResult, ChatMessage, Content, RuntimeEvent, Tool, ToolContext,
-    UserEvent,
+    AgentBuilder, AgentResult, ChatMessage, Content, RuntimeEvent, Tool, ToolContext, UserEvent,
 };
 use async_trait::async_trait;
 use dotenvy::dotenv;
@@ -256,7 +254,11 @@ impl Tool for SummarizeTool {
         let raw = llm.chat(llm_trait::ChatRequest::new(messages)).await?;
 
         // LlmProvider::chat() returns a ChatResponse; check content.
-        let summary = if raw.content.is_empty() { "(no summary)" } else { &raw.content };
+        let summary = if raw.content.is_empty() {
+            "(no summary)"
+        } else {
+            &raw.content
+        };
 
         ctx.emit_progress("Summarize: done!");
 
