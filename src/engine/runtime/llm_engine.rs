@@ -395,6 +395,7 @@ pub struct LlmTurnResult {
     /// eventually fails rather than promoting the reasoning into `full_text`.
     pub reasoning_only: bool,
     /// Thinking signature from the provider (e.g. Anthropic extended thinking).
+    #[allow(dead_code)]
     pub thinking_signature: Option<String>,
 }
 

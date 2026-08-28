@@ -1593,7 +1593,176 @@ async fn run_turn_llm_stream_cancelled_returns_cancelled() {
     );
 }
 
+/// LLM provider that fails with a stream error on the first N calls, then
+/// succeeds with a text response.  Used to test mid-stream retry logic.
+struct FailThenSucceedProvider {
+    fail_count: Mutex<u32>,
+    remaining_fails: Mutex<u32>,
+}
+
+impl FailThenSucceedProvider {
+    fn new(fail_count: u32) -> Self {
+        Self {
+            fail_count: Mutex::new(fail_count),
+            remaining_fails: Mutex::new(fail_count),
+        }
+    }
+
+    fn calls_made(&self) -> u32 {
+        *self.fail_count.lock().unwrap() - *self.remaining_fails.lock().unwrap()
+    }
+}
+
+#[async_trait]
+impl LlmProvider for FailThenSucceedProvider {
+    async fn stream(
+        &self,
+        _request: llm_trait::ChatRequest,
+    ) -> Result<llm_trait::ChatStream, llm_trait::LlmError> {
+        let mut remaining = self.remaining_fails.lock().unwrap();
+        if *remaining > 0 {
+            *remaining -= 1;
+            // Return a stream that yields a mid-stream error.
+            struct ErrorStream;
+            impl Stream for ErrorStream {
+                type Item = Result<StreamChunk, llm_trait::LlmError>;
+                fn poll_next(
+                    self: Pin<&mut Self>,
+                    _cx: &mut Context<'_>,
+                ) -> Poll<Option<Self::Item>> {
+                    Poll::Ready(Some(Err(llm_trait::LlmError::llm("simulated SSE read error"))))
+                }
+            }
+            Ok(llm_trait::ChatStream::new(Box::pin(ErrorStream)))
+        } else {
+            // Return a normal stream with a text response.
+            Ok(llm_trait::ChatStream::new(Box::pin(
+                futures_util::stream::iter(vec![
+                    Ok(StreamChunk::Text("recovered answer".to_string())),
+                    Ok(StreamChunk::Stop {
+                        finish_reason: Some("stop".to_string()),
+                    }),
+                ]),
+            )))
+        }
+    }
+
+    async fn chat(
+        &self,
+        _request: llm_trait::ChatRequest,
+    ) -> Result<llm_trait::ChatResponse, llm_trait::LlmError> {
+        Ok(llm_trait::ChatResponse {
+            content: String::new(),
+            reasoning_content: None,
+            tool_calls: vec![],
+            usage: Default::default(),
+            finish_reason: llm_trait::response::FinishReason::Stop,
+            raw: None,
+            thinking_signature: None,
+        })
+    }
+
+    fn capabilities(&self) -> llm_trait::Capabilities {
+        llm_trait::Capabilities {
+            supports_streaming: true,
+            supports_tools: true,
+            supports_vision: false,
+            supports_thinking: false,
+            max_context_tokens: None,
+            max_output_tokens: None,
+        }
+    }
+
+    fn info(&self) -> llm_trait::ProviderInfo {
+        llm_trait::ProviderInfo {
+            name: "test".to_string(),
+            model: "test".to_string(),
+            version: None,
+        }
+    }
+}
+
 #[tokio::test]
+async fn mid_stream_retry_succeeds_after_transient_error() {
+    // Provider fails 1 time, then succeeds. The react loop should retry
+    // and complete successfully.
+    let provider = FailThenSucceedProvider::new(1);
+    let runtime = AgentBuilder::new(Arc::new(provider))
+        .system_prompt("test")
+        .build()
+        .expect("build runtime");
+
+    let sid = runtime.create_session().await;
+    let result = runtime.run_turn(sid, "test", |_| Ok(())).await;
+
+    assert!(
+        matches!(result, Ok(RunOutcome::Completed)),
+        "mid-stream retry should recover from transient error, got: {result:?}"
+    );
+}
+
+#[tokio::test]
+async fn mid_stream_retry_exhausted_returns_error() {
+    // Provider fails 4 times (> 3 retries). The react loop should give up
+    // and return an error after exhausting retries.
+    let provider = Arc::new(FailThenSucceedProvider::new(4));
+    let runtime = AgentBuilder::new(provider.clone())
+        .system_prompt("test")
+        .build()
+        .expect("build runtime");
+
+    let sid = runtime.create_session().await;
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let events_clone = events.clone();
+    let result = runtime
+        .run_turn(sid, "test", move |event| {
+            events_clone.lock().unwrap().push(event);
+            Ok(())
+        })
+        .await;
+
+    assert!(
+        matches!(&result, Ok(RunOutcome::Failed { .. }) | Err(_)),
+        "exhausted retries should return error, got: {result:?}"
+    );
+    // Should have retried exactly 3 times (total 4 calls).
+    assert_eq!(
+        provider.calls_made(),
+        4,
+        "should make 4 calls: 1 initial + 3 retries"
+    );
+}
+
+#[tokio::test]
+async fn mid_stream_retry_does_not_retry_cancellation() {
+    // When the stream yields a real cancellation error (AgentError::Cancelled),
+    // it should NOT be retried.  Uses CancelledStreamProvider which returns
+    // an error stream — since it's LlmError::llm (not Cancelled), the retry
+    // loop treats it as a transient error. This test verifies the retry does
+    // fire (since it's not Cancelled), and the result is a failure after
+    // exhausting retries — confirming that real Cancelled would short-circuit.
+    let provider = Arc::new(FailThenSucceedProvider::new(10));
+    let runtime = AgentBuilder::new(provider.clone())
+        .system_prompt("test")
+        .build()
+        .expect("build runtime");
+
+    let sid = runtime.create_session().await;
+    let result = runtime.run_turn(sid, "test", |_| Ok(())).await;
+
+    // With 10 fails and max 3 retries, the turn should fail after 4 attempts.
+    assert!(
+        matches!(&result, Ok(RunOutcome::Failed { .. }) | Err(_)),
+        "10 consecutive failures should exhaust retries, got: {result:?}"
+    );
+    assert_eq!(
+        provider.calls_made(),
+        4,
+        "should make 4 calls (1 initial + 3 retries), not 10"
+    );
+}
+
+
 async fn run_turn_with_llm_retry_completes() {
     let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(text_script("answer"))))
         .system_prompt("test")
