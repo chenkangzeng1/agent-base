@@ -272,7 +272,23 @@ impl LlmEngine {
                             }
                         }
                         Ok(StreamChunk::Usage(usage)) => {
-                            aggregator.usage = Some(usage);
+                            // Usage arrives as partial events on some
+                            // protocols (Anthropic splits prompt/output
+                            // across message_start / message_delta), so fold
+                            // field-by-field instead of replacing the whole
+                            // struct — the same overwrite hazard already
+                            // handled for finish_reason below.
+                            tracing::debug!(
+                                session_id = session_id.id,
+                                input = ?usage.prompt_tokens,
+                                output = ?usage.completion_tokens,
+                                reasoning = ?usage.reasoning_tokens,
+                                "LLM usage chunk received"
+                            );
+                            match &mut aggregator.usage {
+                                Some(existing) => existing.merge(&usage),
+                                None => aggregator.usage = Some(usage),
+                            }
                         }
                         Ok(StreamChunk::Stop { finish_reason }) => {
                             // Only capture the first non-None finish_reason.
@@ -537,6 +553,100 @@ mod tests {
             })
             .collect();
         assert_eq!(texts, vec!["Hello".to_string(), " world".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn process_stream_merges_partial_usage_events() {
+        // Anthropic streams split usage across two events: message_start
+        // carries prompt_tokens only, message_delta carries prompt (optional)
+        // plus the final completion count. Replacing the struct wholesale
+        // made every Anthropic session record input_tokens = 0.
+        let bus = EventBus::new(16);
+        let engine = LlmEngine::new(Arc::new(StubProvider("x")), bus.clone());
+        let chunks = vec![
+            Ok(StreamChunk::Usage(UsageInfo {
+                prompt_tokens: Some(2),
+                completion_tokens: Some(0),
+                total_tokens: None,
+                reasoning_tokens: None,
+            })),
+            Ok(StreamChunk::Usage(UsageInfo {
+                prompt_tokens: Some(63),
+                completion_tokens: Some(26),
+                total_tokens: None,
+                reasoning_tokens: None,
+            })),
+            Ok(StreamChunk::Stop {
+                finish_reason: Some("end_turn".into()),
+            }),
+        ];
+        let stream = Box::pin(futures_util::stream::iter(chunks));
+        let mut rx = bus.subscribe();
+        let noop = std::sync::Arc::new(std::sync::Mutex::new(
+            |_e: RuntimeEvent| Ok(()),
+        ));
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = engine
+            .process_stream(
+                &SessionId::new(1),
+                stream,
+                tracing::Span::none(),
+                &mut rx,
+                noop,
+                &cancel,
+            )
+            .await
+            .unwrap();
+
+        let usage = result.usage.unwrap();
+        assert_eq!(usage.prompt_tokens, Some(63), "later Some wins");
+        assert_eq!(usage.completion_tokens, Some(26));
+    }
+
+    #[tokio::test]
+    async fn process_stream_keeps_usage_when_delta_omits_prompt() {
+        // Real Anthropic: message_delta has no input_tokens at all; the
+        // message_start value must survive the merge rather than be zeroed.
+        let bus = EventBus::new(16);
+        let engine = LlmEngine::new(Arc::new(StubProvider("x")), bus.clone());
+        let chunks = vec![
+            Ok(StreamChunk::Usage(UsageInfo {
+                prompt_tokens: Some(5),
+                completion_tokens: Some(1),
+                total_tokens: None,
+                reasoning_tokens: None,
+            })),
+            Ok(StreamChunk::Usage(UsageInfo {
+                prompt_tokens: None,
+                completion_tokens: Some(26),
+                total_tokens: None,
+                reasoning_tokens: None,
+            })),
+            Ok(StreamChunk::Stop {
+                finish_reason: Some("end_turn".into()),
+            }),
+        ];
+        let stream = Box::pin(futures_util::stream::iter(chunks));
+        let mut rx = bus.subscribe();
+        let noop = std::sync::Arc::new(std::sync::Mutex::new(
+            |_e: RuntimeEvent| Ok(()),
+        ));
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = engine
+            .process_stream(
+                &SessionId::new(1),
+                stream,
+                tracing::Span::none(),
+                &mut rx,
+                noop,
+                &cancel,
+            )
+            .await
+            .unwrap();
+
+        let usage = result.usage.unwrap();
+        assert_eq!(usage.prompt_tokens, Some(5), "prompt survives a partial delta");
+        assert_eq!(usage.completion_tokens, Some(26));
     }
 
     #[tokio::test]
