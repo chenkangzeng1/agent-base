@@ -492,6 +492,7 @@ mod tests {
                 prompt_tokens: Some(5),
                 completion_tokens: Some(2),
                 total_tokens: Some(7),
+                reasoning_tokens: None,
             })),
             Ok(StreamChunk::Stop {
                 finish_reason: Some("stop".into()),
