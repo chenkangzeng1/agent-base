@@ -262,7 +262,14 @@ impl RuntimeCore {
             }
 
             let (messages, tools_for_turn) = self
-                .apply_pre_llm_mw(session_id, messages, tools_for_turn, on_event.clone(), turn_count, max_turns)
+                .apply_pre_llm_mw(
+                    session_id,
+                    messages,
+                    tools_for_turn,
+                    on_event.clone(),
+                    turn_count,
+                    max_turns,
+                )
                 .await?;
 
             // Drain UserEvent copies from event_rx that were written by
@@ -884,7 +891,6 @@ impl RuntimeCore {
             }
 
             // ─── New: thinking control ─────────────────────────────
-
             GuardDecision::DisableThinking { nudge } => {
                 // 1. Update RunState
                 self.with_session_mut(turn_ctx.session_id, |session| {

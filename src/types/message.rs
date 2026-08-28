@@ -1,35 +1,13 @@
 //! Message types for LLM conversations.
 //!
 //! `ChatMessage`, `ImageAttachment`, `ImageDetail`, and `ToolCallMessage` are
-//! re-exported from `llm-trait`. `Message` and `MessageRole` remain here as
-//! they are agent-runtime specific.
+//! re-exported from `llm-trait`. `MessageRole` is re-exported from
+//! `agent-types`. `Message` remains here as it is agent-runtime specific.
 
+pub use agent_types::MessageRole;
 pub use llm_trait::message::{ChatMessage, ImageAttachment, ImageDetail, ToolCallMessage};
 
 use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum MessageRole {
-    System,
-    User,
-    Assistant,
-    Tool,
-}
-
-impl MessageRole {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            MessageRole::System => "system",
-            MessageRole::User => "user",
-            MessageRole::Assistant => "assistant",
-            MessageRole::Tool => "tool",
-        }
-    }
-
-    pub fn as_api_role(&self) -> &'static str {
-        self.as_str()
-    }
-}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Message {

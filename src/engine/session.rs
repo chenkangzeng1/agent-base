@@ -49,7 +49,6 @@ pub struct RunState {
     pub thinking_disabled_for_rest_of_run: bool,
 
     // ─── New fields for thinking guard ─────────────────────────────
-
     /// Original thinking configuration (for restoration)
     ///
     /// Records whether thinking was originally enabled when the session started.

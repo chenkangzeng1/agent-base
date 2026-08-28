@@ -8,8 +8,20 @@
 //! agent-base re-exports everything from this crate, so existing
 //! `use agent_base::Content` continues to work.
 
+mod approval;
+mod checkpoint;
+mod execution;
+mod guard;
+mod message;
+mod plan;
 mod session;
 mod tool;
 
+pub use approval::{ApprovalDecision, ApprovalRequest, RiskLevel};
+pub use checkpoint::{CheckpointData, CheckpointStep, ToolResultData};
+pub use execution::{FinishReason, RunOutcome};
+pub use guard::{GuardCtx, GuardDecision};
+pub use message::MessageRole;
+pub use plan::{PlanItem, PlanStepStatus, UpdatePlanArgs};
 pub use session::SessionId;
 pub use tool::{ActivationContext, Content, ToolExposure, ToolMetadata, content_text};

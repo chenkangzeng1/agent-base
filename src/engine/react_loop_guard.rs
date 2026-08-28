@@ -1,71 +1,7 @@
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 
-use crate::types::{FinishReason, SessionId};
-
-/// Guard decision — returned by guard, executed by base loop.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum GuardDecision {
-    /// Continue loop, optionally inject nudge message
-    Continue { nudge: Option<String> },
-    /// Normal completion (fire_turn_end + RunOutcome::Completed)
-    Complete,
-    /// Abnormal termination (fire_guard_fail + RunOutcome::Failed)
-    Fail { error: String },
-
-    // ─── Thinking control ─────────────────────────────────────
-
-    /// Temporarily disable thinking functionality
-    ///
-    /// Used for reasoning-only loop scenarios: model keeps thinking but produces no output.
-    /// After calling, runtime will:
-    /// 1. Set thinking_disabled_for_rest_of_run = true
-    /// 2. Inject nudge message
-    /// 3. Continue loop
-    DisableThinking { nudge: String },
-
-    /// Restore thinking functionality to previous state
-    ///
-    /// Used for thinking recovery scenarios: model starts working normally (has text or tool call).
-    /// After calling, runtime will:
-    /// 1. Restore thinking_disabled_for_rest_of_run to original state
-    /// 2. Reset related counters
-    RestoreThinking,
-}
-
-/// Guard context information — built by runtime, passed to guard.
-#[derive(Debug, Clone)]
-pub struct GuardCtx {
-    pub session_id: SessionId,
-    pub turn_count: u32,
-    pub user_input: String,
-    pub model_response: String,
-    pub finish_reason: FinishReason,
-    pub available_tools: Vec<String>,
-    // RunState information
-    pub reasoning_only_strikes: usize,
-    pub empty_response_strikes: usize,
-    pub run_has_tool_calls: bool,
-    /// All user messages in the current session, ordered oldest-first.
-    /// Guards can use this to reconstruct full conversation context
-    /// (e.g. "继续" after a multi-turn discussion).
-    pub all_user_inputs: Vec<String>,
-    // Scene hints (runtime detected, guard can trust or ignore)
-    pub is_reasoning_only: bool,
-    pub is_empty_response: bool,
-    pub is_text_only: bool,
-    // Environment state
-    pub thinking_disabled: bool,
-    /// Original thinking configuration (for restoration)
-    ///
-    /// From RunState.original_thinking_enabled
-    pub original_thinking_enabled: bool,
-    /// Remaining turns before hitting max_turns limit
-    ///
-    /// Guards can use this to nudge the model to wrap up when running low on turns.
-    /// When remaining_turns == 0, the run will be terminated with MaxTurnsExceeded.
-    pub remaining_turns: u32,
-}
+// Re-export from agent-types (single source of truth).
+pub use agent_types::{GuardCtx, GuardDecision};
 
 /// React Loop Guard trait — single unified entry point.
 ///
@@ -117,6 +53,7 @@ impl ReactLoopGuard for NoopGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agent_types::{FinishReason, SessionId};
 
     #[tokio::test]
     async fn test_noop_guard_returns_complete() {
