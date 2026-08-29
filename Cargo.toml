@@ -1,6 +1,9 @@
+[workspace]
+members = ["crates/agent-types"]
+
 [package]
 name = "agent-base"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2024"
 description = "A lightweight Agent Runtime Kernel for building AI agents in Rust"
 license = "MIT"
@@ -10,8 +13,10 @@ keywords = ["agent", "ai", "llm", "runtime", "tool-calling"]
 categories = ["development-tools", "asynchronous"]
 
 [dependencies]
+agent-types = { path = "crates/agent-types" }
 anyhow = "1"
-anthropic-rs-api = { path = "../anthropic-rs-api/anthropic" }
+llm-trait = "0.1.0"
+llm-unified = "0.1.0"
 async-openai = { version = "0.41", default-features = true }
 async-trait = "0.1"
 eventsource-stream = "0.2"
@@ -35,11 +40,13 @@ rusqlite = { version = "0.32", optional = true, features = ["bundled"] }
 default = []
 telemetry = ["opentelemetry", "tracing-opentelemetry"]
 sqlite-session = ["dep:rusqlite"]
+fuzzing = []
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 dotenvy = "0.15"
 insta = { version = "1", features = ["json"] }
+proptest = "1"
 serial_test = "3"
 tempfile = "3"
 wiremock = "0.6"
