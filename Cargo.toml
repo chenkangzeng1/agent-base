@@ -13,7 +13,7 @@ keywords = ["agent", "ai", "llm", "runtime", "tool-calling"]
 categories = ["development-tools", "asynchronous"]
 
 [dependencies]
-agent-types = { path = "crates/agent-types" }
+agent-types = { version = "0.1.0", path = "crates/agent-types" }
 anyhow = "1"
 llm-trait = "0.1.0"
 llm-unified = "0.1.0"
