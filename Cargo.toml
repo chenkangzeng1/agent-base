@@ -15,8 +15,8 @@ categories = ["development-tools", "asynchronous"]
 [dependencies]
 agent-types = { path = "crates/agent-types" }
 anyhow = "1"
-llm-trait = "0.1.0"
-llm-unified = "0.1.0"
+llm-trait = "0.1.1"
+llm-unified = "0.1.1"
 async-openai = { version = "0.41", default-features = true }
 async-trait = "0.1"
 eventsource-stream = "0.2"

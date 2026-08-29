@@ -1257,9 +1257,9 @@ checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
 name = "llm-trait"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "05949c97c2ac2d2b0cda5b588c01941eeb6058d4acbbbcaacd994e0b546ac537"
+checksum = "642ba36b46eae992f9b5deb67b9337123584905ff8e182077265375ee4c8b260"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1274,9 +1274,9 @@ dependencies = [
 
 [[package]]
 name = "llm-unified"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa31ce109e9c98ea6f70e93ca2292eff465aeb21b26279fbf925ee588bc16be4"
+checksum = "82e9f080946fff31851b52d570e666202bddde8da4c31338a0f307e2f172b092"
 dependencies = [
  "async-trait",
  "clap",
