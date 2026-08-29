@@ -4,14 +4,12 @@ use tokio::sync::broadcast;
 
 use crate::engine::runtime::llm_engine::LlmTurnResult;
 use crate::engine::runtime::plan_runner::RuntimeCore;
-use crate::types::{
-    AgentResult, FinishReason, MessageRole, RunOutcome, RuntimeEvent, SessionId,
-};
+use crate::types::{AgentResult, FinishReason, MessageRole, RunOutcome, RuntimeEvent, SessionId};
 
-use super::turn_loop::TurnFlow;
 use super::turn_end::TurnEndCtx;
 use super::turn_guard::{TurnCtx, TurnMetrics};
 use super::turn_loop::PostLlmMwResult;
+use super::turn_loop::TurnFlow;
 
 impl RuntimeCore {
     // ── Dispatch ────────────────────────────────────────────────────────
@@ -49,7 +47,18 @@ impl RuntimeCore {
             thinking_signature: _,
         } = match result {
             Ok(r) => r,
-            Err(e) => return self.handle_llm_error(session_id, turn_count, turn_start, model, user_input_owned, e).await,
+            Err(e) => {
+                return self
+                    .handle_llm_error(
+                        session_id,
+                        turn_count,
+                        turn_start,
+                        model,
+                        user_input_owned,
+                        e,
+                    )
+                    .await;
+            }
         };
 
         let finish_reason = FinishReason::from_raw(finish_reason.as_deref());
@@ -67,15 +76,34 @@ impl RuntimeCore {
         let tool_calls_parsed: Vec<(String, String, String)> = tool_calls
             .iter()
             .map(|tc| {
-                let id = tc.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let name = tc.get("function").and_then(|f| f.get("name")).and_then(|n| n.as_str()).unwrap_or("").to_string();
-                let args = tc.get("function").and_then(|f| f.get("arguments")).and_then(|a| a.as_str()).unwrap_or("").to_string();
+                let id = tc
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let name = tc
+                    .get("function")
+                    .and_then(|f| f.get("name"))
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let args = tc
+                    .get("function")
+                    .and_then(|f| f.get("arguments"))
+                    .and_then(|a| a.as_str())
+                    .unwrap_or("")
+                    .to_string();
                 (id, name, args)
             })
             .collect();
         let available_tools: Vec<String> = tool_definitions
             .iter()
-            .filter_map(|d| d.get("function")?.get("name")?.as_str().map(|s| s.to_string()))
+            .filter_map(|d| {
+                d.get("function")?
+                    .get("name")?
+                    .as_str()
+                    .map(|s| s.to_string())
+            })
             .collect();
 
         let turn_ctx = TurnCtx {
@@ -89,7 +117,13 @@ impl RuntimeCore {
             all_user_inputs,
             max_turns,
         };
-        let metrics = TurnMetrics { ttft_ms, llm_duration_ms, usage: &usage, text_len, has_thinking };
+        let metrics = TurnMetrics {
+            ttft_ms,
+            llm_duration_ms,
+            usage: &usage,
+            text_len,
+            has_thinking,
+        };
 
         if reasoning_only {
             return self.handle_reasoning_only(&turn_ctx, &metrics).await;
@@ -142,7 +176,8 @@ impl RuntimeCore {
             .build_guard_ctx(turn_ctx, "", true, false, false, thinking_disabled)
             .await;
         let decision = self.guard.on_turn(&guard_ctx).await;
-        self.execute_guard_decision(decision, turn_ctx, metrics).await
+        self.execute_guard_decision(decision, turn_ctx, metrics)
+            .await
     }
 
     /// Normal LLM response: apply post-LLM middleware, push messages, then
@@ -219,7 +254,8 @@ impl RuntimeCore {
             return self.handle_incomplete_tool_call(turn_ctx, metrics).await;
         }
 
-        self.handle_finish_anomaly(turn_ctx, metrics, &finish_reason, &result.full_text).await
+        self.handle_finish_anomaly(turn_ctx, metrics, &finish_reason, &result.full_text)
+            .await
     }
 
     /// Empty response: no text, no reasoning, no tool call. Nudge the model;
@@ -245,7 +281,8 @@ impl RuntimeCore {
             .build_guard_ctx(turn_ctx, "", false, true, false, false)
             .await;
         let decision = self.guard.on_turn(&guard_ctx).await;
-        self.execute_guard_decision(decision, turn_ctx, metrics).await
+        self.execute_guard_decision(decision, turn_ctx, metrics)
+            .await
     }
 
     /// Tool call branch: notify guard, handle RestoreThinking, then execute.
@@ -322,7 +359,8 @@ impl RuntimeCore {
             .build_guard_ctx(turn_ctx, "", false, true, false, false)
             .await;
         let decision = self.guard.on_turn(&guard_ctx).await;
-        self.execute_guard_decision(decision, turn_ctx, metrics).await
+        self.execute_guard_decision(decision, turn_ctx, metrics)
+            .await
     }
 
     /// Finish-reason anomaly: tool_use with no parsed tool calls, or truncated.
@@ -356,11 +394,15 @@ impl RuntimeCore {
                         turn_ctx.turn_start,
                         turn_ctx.model,
                         turn_ctx.user_input,
-                        RunOutcome::Failed { error: error.to_string() },
+                        RunOutcome::Failed {
+                            error: error.to_string(),
+                        },
                     )
                 })
                 .await;
-                Ok(TurnFlow::Done(RunOutcome::Failed { error: error.to_string() }))
+                Ok(TurnFlow::Done(RunOutcome::Failed {
+                    error: error.to_string(),
+                }))
             }
             FinishReason::Truncated { reason } => {
                 let error = format!("response truncated ({:?})", reason);
@@ -384,7 +426,9 @@ impl RuntimeCore {
                         turn_ctx.turn_start,
                         turn_ctx.model,
                         turn_ctx.user_input,
-                        RunOutcome::Failed { error: error.clone() },
+                        RunOutcome::Failed {
+                            error: error.clone(),
+                        },
                     )
                 })
                 .await;
@@ -396,7 +440,8 @@ impl RuntimeCore {
                     .build_guard_ctx(turn_ctx, full_text, false, false, true, false)
                     .await;
                 let decision = self.guard.on_turn(&guard_ctx).await;
-                self.execute_guard_decision(decision, turn_ctx, metrics).await
+                self.execute_guard_decision(decision, turn_ctx, metrics)
+                    .await
             }
         }
     }
@@ -414,11 +459,20 @@ impl RuntimeCore {
         let stream_outcome = if e.is_cancelled() {
             RunOutcome::Cancelled
         } else {
-            RunOutcome::Failed { error: e.to_string() }
+            RunOutcome::Failed {
+                error: e.to_string(),
+            }
         };
         self.fire_turn_end(TurnEndCtx {
             error_message: Some(&e.to_string()),
-            ..TurnEndCtx::new(session_id, turn_count, turn_start, model, user_input_owned, stream_outcome)
+            ..TurnEndCtx::new(
+                session_id,
+                turn_count,
+                turn_start,
+                model,
+                user_input_owned,
+                stream_outcome,
+            )
         })
         .await;
         // Persist session on cancellation (LLM-stream path bypasses handle_tool_error)

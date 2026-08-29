@@ -12,9 +12,9 @@ use crate::types::{
 };
 
 use super::entry::drain_locked;
-use super::turn_loop::TurnFlow;
 use super::turn_end::TurnEndCtx;
 use super::turn_guard::TurnMetrics;
+use super::turn_loop::TurnFlow;
 
 impl RuntimeCore {
     /// Execute tool calls for one LLM turn: truncation guard, execution,

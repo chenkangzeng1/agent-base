@@ -1630,7 +1630,9 @@ impl LlmProvider for FailThenSucceedProvider {
                     self: Pin<&mut Self>,
                     _cx: &mut Context<'_>,
                 ) -> Poll<Option<Self::Item>> {
-                    Poll::Ready(Some(Err(llm_trait::LlmError::llm("simulated SSE read error"))))
+                    Poll::Ready(Some(Err(llm_trait::LlmError::llm(
+                        "simulated SSE read error",
+                    ))))
                 }
             }
             Ok(llm_trait::ChatStream::new(Box::pin(ErrorStream)))
@@ -1761,7 +1763,6 @@ async fn mid_stream_retry_does_not_retry_cancellation() {
         "should make 4 calls (1 initial + 3 retries), not 10"
     );
 }
-
 
 async fn run_turn_with_llm_retry_completes() {
     let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(text_script("answer"))))

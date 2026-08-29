@@ -582,9 +582,7 @@ mod tests {
         ];
         let stream = Box::pin(futures_util::stream::iter(chunks));
         let mut rx = bus.subscribe();
-        let noop = std::sync::Arc::new(std::sync::Mutex::new(
-            |_e: RuntimeEvent| Ok(()),
-        ));
+        let noop = std::sync::Arc::new(std::sync::Mutex::new(|_e: RuntimeEvent| Ok(())));
         let cancel = tokio_util::sync::CancellationToken::new();
         let result = engine
             .process_stream(
@@ -628,9 +626,7 @@ mod tests {
         ];
         let stream = Box::pin(futures_util::stream::iter(chunks));
         let mut rx = bus.subscribe();
-        let noop = std::sync::Arc::new(std::sync::Mutex::new(
-            |_e: RuntimeEvent| Ok(()),
-        ));
+        let noop = std::sync::Arc::new(std::sync::Mutex::new(|_e: RuntimeEvent| Ok(())));
         let cancel = tokio_util::sync::CancellationToken::new();
         let result = engine
             .process_stream(
@@ -645,7 +641,11 @@ mod tests {
             .unwrap();
 
         let usage = result.usage.unwrap();
-        assert_eq!(usage.prompt_tokens, Some(5), "prompt survives a partial delta");
+        assert_eq!(
+            usage.prompt_tokens,
+            Some(5),
+            "prompt survives a partial delta"
+        );
         assert_eq!(usage.completion_tokens, Some(26));
     }
 

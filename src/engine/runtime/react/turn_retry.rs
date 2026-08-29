@@ -82,11 +82,8 @@ impl RuntimeCore {
                 "LLM stream obtained, processing"
             );
 
-            let span = tracing::info_span!(
-                "llm_turn",
-                session_id = session_id.id,
-                turn = turn_count
-            );
+            let span =
+                tracing::info_span!("llm_turn", session_id = session_id.id, turn = turn_count);
             let cancel_token = self.cancel_token();
             let result = self
                 .llm_engine
@@ -120,12 +117,8 @@ impl RuntimeCore {
                         delay_ms = retry_delay_ms,
                         "SSE stream interrupted, retrying..."
                     );
-                    tokio::time::sleep(std::time::Duration::from_millis(
-                        retry_delay_ms,
-                    ))
-                    .await;
-                    retry_delay_ms =
-                        (retry_delay_ms as f64 * STREAM_RETRY_BACKOFF) as u64;
+                    tokio::time::sleep(std::time::Duration::from_millis(retry_delay_ms)).await;
+                    retry_delay_ms = (retry_delay_ms as f64 * STREAM_RETRY_BACKOFF) as u64;
                     if retry_delay_ms > STREAM_RETRY_MAX_MS {
                         retry_delay_ms = STREAM_RETRY_MAX_MS;
                     }
