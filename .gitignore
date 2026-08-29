@@ -13,5 +13,4 @@ proptest-regressions/
 # Release tooling state: run logs and step progress markers. Without these,
 # `cargo package` (no include/exclude in Cargo.toml) pulls deploy/logs/*.log
 # into the published crate tarball.
-deploy/logs/
-deploy/.state/
+deploy/
