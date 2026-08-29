@@ -1764,6 +1764,7 @@ async fn mid_stream_retry_does_not_retry_cancellation() {
     );
 }
 
+#[tokio::test]
 async fn run_turn_with_llm_retry_completes() {
     let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(text_script("answer"))))
         .system_prompt("test")

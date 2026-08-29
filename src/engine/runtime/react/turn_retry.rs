@@ -106,24 +106,23 @@ impl RuntimeCore {
             // Retry on mid-stream errors (not cancellations).
             // process_stream fails before tool execution, so the
             // message history is unchanged and we can safely re-send.
-            if let Err(ref e) = result {
-                if !e.is_cancelled() && retry_left > 0 {
-                    retry_left -= 1;
-                    tracing::warn!(
-                        session_id = session_id.id,
-                        turn = turn_count,
-                        error = %e,
-                        retries_left = retry_left,
-                        delay_ms = retry_delay_ms,
-                        "SSE stream interrupted, retrying..."
-                    );
-                    tokio::time::sleep(std::time::Duration::from_millis(retry_delay_ms)).await;
-                    retry_delay_ms = (retry_delay_ms as f64 * STREAM_RETRY_BACKOFF) as u64;
-                    if retry_delay_ms > STREAM_RETRY_MAX_MS {
-                        retry_delay_ms = STREAM_RETRY_MAX_MS;
-                    }
-                    continue;
-                }
+            if let Err(ref e) = result
+                && !e.is_cancelled()
+                && retry_left > 0
+            {
+                retry_left -= 1;
+                tracing::warn!(
+                    session_id = session_id.id,
+                    turn = turn_count,
+                    error = %e,
+                    retries_left = retry_left,
+                    delay_ms = retry_delay_ms,
+                    "SSE stream interrupted, retrying..."
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(retry_delay_ms)).await;
+                retry_delay_ms = (retry_delay_ms as f64 * STREAM_RETRY_BACKOFF) as u64;
+                retry_delay_ms = retry_delay_ms.min(STREAM_RETRY_MAX_MS);
+                continue;
             }
             return result;
         }
