@@ -73,6 +73,7 @@ impl RuntimeCore {
 
         let text_len = full_text.len() as u64;
         let has_thinking = !reasoning_text.is_empty();
+        let thinking_bytes = reasoning_text.len() as u64;
         let tool_calls_parsed: Vec<(String, String, String)> = tool_calls
             .iter()
             .map(|tc| {
@@ -123,6 +124,7 @@ impl RuntimeCore {
             usage: &usage,
             text_len,
             has_thinking,
+            thinking_bytes,
         };
 
         if reasoning_only {
@@ -386,6 +388,7 @@ impl RuntimeCore {
                     usage: metrics.usage,
                     text_length: metrics.text_len,
                     has_thinking: metrics.has_thinking,
+                    thinking_bytes: metrics.thinking_bytes,
                     llm_calls: 1,
                     error_message: Some(error),
                     ..TurnEndCtx::new(
@@ -418,6 +421,7 @@ impl RuntimeCore {
                     usage: metrics.usage,
                     text_length: metrics.text_len,
                     has_thinking: metrics.has_thinking,
+                    thinking_bytes: metrics.thinking_bytes,
                     llm_calls: 1,
                     error_message: Some(&error),
                     ..TurnEndCtx::new(
@@ -507,6 +511,7 @@ impl RuntimeCore {
                     usage: metrics.usage,
                     text_length: metrics.text_len,
                     has_thinking: metrics.has_thinking,
+                    thinking_bytes: metrics.thinking_bytes,
                     llm_calls: 1,
                     ..TurnEndCtx::new(
                         turn_ctx.session_id,
@@ -538,6 +543,7 @@ impl RuntimeCore {
                     usage: metrics.usage,
                     text_length: metrics.text_len,
                     has_thinking: metrics.has_thinking,
+                    thinking_bytes: metrics.thinking_bytes,
                     llm_calls: 1,
                     ..TurnEndCtx::new(
                         turn_ctx.session_id,
@@ -574,6 +580,7 @@ impl RuntimeCore {
                     usage: metrics.usage,
                     text_length: metrics.text_len,
                     has_thinking: metrics.has_thinking,
+                    thinking_bytes: metrics.thinking_bytes,
                     llm_calls: 1,
                     ..TurnEndCtx::new(
                         turn_ctx.session_id,

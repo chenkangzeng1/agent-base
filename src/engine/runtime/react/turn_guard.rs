@@ -13,6 +13,9 @@ pub(super) struct TurnMetrics<'a> {
     pub usage: &'a Option<crate::llm::UsageInfo>,
     pub text_len: u64,
     pub has_thinking: bool,
+    /// Byte length of reasoning/thinking content (always available, even when
+    /// the provider does not report reasoning token counts).
+    pub thinking_bytes: u64,
 }
 
 /// Bundle of per-turn context shared across all guard dispatch paths.
@@ -94,6 +97,7 @@ impl RuntimeCore {
             usage: metrics.usage,
             text_length: metrics.text_len,
             has_thinking: metrics.has_thinking,
+            thinking_bytes: metrics.thinking_bytes,
             llm_calls: 1,
             error_message: Some(error),
             ..TurnEndCtx::new(

@@ -32,6 +32,9 @@ pub struct TurnContext {
     pub full_text_len: u64,
     /// Whether the response included thinking/reasoning content.
     pub has_thinking: bool,
+    /// Byte length of reasoning/thinking content. Always available even when
+    /// the provider does not report reasoning token counts (e.g. mimo-v2.5-pro).
+    pub thinking_bytes: u64,
     /// Tool names called in this turn iteration.
     pub tools_used: Vec<String>,
     /// Total number of tool calls made.
