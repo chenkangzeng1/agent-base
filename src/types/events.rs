@@ -80,6 +80,10 @@ pub enum RuntimeEvent {
         /// normal tool result or execution error).
         #[serde(default)]
         denied: bool,
+        /// Structured metadata from the tool result (e.g. edit line numbers).
+        /// Carried through to UI consumers; never sent to the LLM.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        details: Option<Value>,
     },
     AwaitingApproval {
         session_id: SessionId,
@@ -259,6 +263,7 @@ mod tests {
                 agent_id: Some("a".into()),
                 trace_id: Some("t".into()),
                 denied: false,
+                details: None,
             },
             RuntimeEvent::AwaitingApproval {
                 session_id: sid(5),
@@ -338,6 +343,7 @@ mod tests {
                 agent_id: None,
                 trace_id: None,
                 denied: false,
+                details: None,
             },
             RuntimeEvent::AwaitingApproval {
                 session_id: sid(5),

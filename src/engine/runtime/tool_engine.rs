@@ -9,7 +9,7 @@ use crate::engine::recovery::ToolErrorRecovery;
 use crate::engine::runtime::event_bus::EventBus;
 use crate::engine::runtime::session_manager::SessionManager;
 use crate::tool::{
-    ActivationContext, Content, ToolContext, ToolPolicy, ToolRegistry, content_text,
+    ActivationContext, Content, ToolContext, ToolPolicy, ToolRegistry, content_details, content_text,
 };
 use crate::types::{AgentError, AgentResult, Language, RuntimeEvent, SessionId, UserEvent};
 
@@ -178,6 +178,7 @@ impl ToolEngine {
                             agent_id: None,
                             trace_id: None,
                             denied: false,
+                            details: None,
                         });
                         // Use `let _ =` to avoid masking the original tool error
                         // if the event callback fails
@@ -214,6 +215,7 @@ impl ToolEngine {
             agent_id: None,
             trace_id: None,
             denied: false,
+            details: content_details(&tool_result),
         });
         {
             let mut cb = on_event.lock().unwrap();
@@ -350,6 +352,7 @@ impl ToolEngine {
                     agent_id: None,
                     trace_id: None,
                     denied: true,
+                            details: None,
                 });
                 let _ = {
                     let mut cb = on_event.lock().unwrap();
@@ -444,6 +447,9 @@ impl ToolEngine {
         }
 
         // ── Phase 2: Execute all approved tools in parallel ──
+        // Use resubscribe so each task has its own receiver (parallel execution).
+        // The shared mutex is only held briefly for try_recv, not for the whole
+        // tool call — tools run truly in parallel.
         let shared_rx = Arc::new(tokio::sync::Mutex::new(event_rx.resubscribe()));
 
         let futures: Vec<_> = approved
@@ -491,7 +497,12 @@ impl ToolEngine {
 
         let outcomes = futures_util::future::join_all(futures).await;
 
-        // Drain any remaining events from the original receiver
+        // Drain the ORIGINAL event_rx after all tools complete.
+        // This delivers ToolCallStarted/Finished events via on_event and
+        // consumes them from the channel so drain_locked at the next turn
+        // start won't re-deliver them. Checkpoint events that arrived
+        // during orchestrate are also drained here (they only go through
+        // event_bus.emit, not on_event in the tasks).
         {
             let mut cb = on_event.lock().unwrap();
             EventBus::drain_async_events(event_rx, &mut *cb)?;
@@ -547,10 +558,7 @@ impl ToolEngine {
             agent_id: None,
             trace_id: None,
         });
-        {
-            let mut cb = on_event.lock().unwrap();
-            EventBus::drain_async_events(event_rx, &mut *cb)?;
-        }
+        // NOTE: No drain here — orchestrate drains after join_all.
 
         // Build ToolContext with UserEvent channel for tool-produced events
         let (user_event_tx, mut user_event_rx) = mpsc::unbounded_channel::<UserEvent>();
@@ -636,11 +644,9 @@ impl ToolEngine {
                             agent_id: None,
                             trace_id: None,
                             denied: false,
+                            details: None,
                         });
-                        let _ = {
-                            let mut cb = on_event.lock().unwrap();
-                            EventBus::drain_async_events(event_rx, &mut *cb)
-                        };
+                        // NOTE: No drain here — orchestrate drains after join_all.
                         return Err(AgentError::ToolExecution {
                             name: name.to_string(),
                             source: Box::new(e),
@@ -670,11 +676,11 @@ impl ToolEngine {
             agent_id: None,
             trace_id: None,
             denied: false,
+            details: content_details(&tool_result),
         });
-        {
-            let mut cb = on_event.lock().unwrap();
-            EventBus::drain_async_events(event_rx, &mut *cb)?;
-        }
+        // NOTE: No drain here — orchestrate drains after join_all.
+        // Draining here would require holding the shared event_rx lock,
+        // serializing parallel tool execution.
 
         error_recovery.on_success(session_id, name);
 
@@ -1225,6 +1231,68 @@ mod tests {
             &outcome.failures[0].error,
             AgentError::ToolExecution { .. }
         ));
+    }
+
+    #[tokio::test]
+    async fn orchestrate_delivers_events_exactly_once() {
+        // Regression: parallel orchestrate must not double-deliver events.
+        // Previously, events were delivered via local_rx (resubscribe) AND
+        // again via the original event_rx drain, causing duplicates.
+        let mut registry = ToolRegistry::default();
+        registry.register(EchoTool);
+
+        let event_bus = EventBus::new(64);
+        let mut event_rx = event_bus.subscribe();
+        let engine = ToolEngine::new(registry, None, None, Arc::new(StopOnError), event_bus);
+
+        let sm = session_manager();
+        let c = ctx(&sm);
+
+        let events: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let events_clone = events.clone();
+
+        let outcome = engine
+            .orchestrate(
+                &SessionId::new(1),
+                &[
+                    (
+                        "call_a".to_string(),
+                        "echo".to_string(),
+                        r#"{"text":"a"}"#.to_string(),
+                    ),
+                    (
+                        "call_b".to_string(),
+                        "echo".to_string(),
+                        r#"{"text":"b"}"#.to_string(),
+                    ),
+                ],
+                &c,
+                &mut event_rx,
+                Arc::new(Mutex::new(move |ev| -> AgentResult<()> {
+                    let tag = match &ev {
+                        RuntimeEvent::ToolCallStarted { tool_name, .. } => {
+                            format!("started:{tool_name}")
+                        }
+                        RuntimeEvent::ToolCallFinished { tool_name, .. } => {
+                            format!("finished:{tool_name}")
+                        }
+                        _ => return Ok(()),
+                    };
+                    events_clone.lock().unwrap().push(tag);
+                    Ok(())
+                })),
+            )
+            .await
+            .expect("orchestrate should succeed");
+
+        assert_eq!(outcome.results.len(), 2);
+
+        let ev = events.lock().unwrap();
+        // Each tool should produce exactly one started + one finished = 4 total.
+        let started: Vec<_> = ev.iter().filter(|e| e.starts_with("started:")).collect();
+        let finished: Vec<_> = ev.iter().filter(|e| e.starts_with("finished:")).collect();
+        assert_eq!(started.len(), 2, "expected 2 ToolCallStarted, got {started:?}");
+        assert_eq!(finished.len(), 2, "expected 2 ToolCallFinished, got {finished:?}");
     }
 
     #[tokio::test]

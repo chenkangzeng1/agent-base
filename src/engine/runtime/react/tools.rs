@@ -299,6 +299,7 @@ impl RuntimeCore {
                     agent_id: None,
                     trace_id: None,
                     denied: false,
+                            details: None,
                 });
                 self.with_session_mut(session_id, |session| {
                     session.close_dangling_tool_calls(&error_summary);
@@ -363,6 +364,7 @@ impl RuntimeCore {
                     agent_id: None,
                     trace_id: None,
                     denied: false,
+                            details: None,
                 });
 
                 self.with_session_mut(session_id, |session| {

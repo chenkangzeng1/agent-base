@@ -10,6 +10,8 @@ use crate::session::SessionId;
 ///
 /// Only `Text` is consumed by the first LLM adapter; `Image` is shape-reserved
 /// and the adapter reports "not supported" rather than silently dropping it.
+/// `Detail` carries machine-readable metadata (e.g. edit line numbers) that
+/// the UI can consume but the LLM never sees.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Content {
@@ -20,6 +22,10 @@ pub enum Content {
     Image {
         data: String,
         mime_type: String,
+    },
+    /// Machine-readable metadata for UI consumption (not sent to the LLM).
+    Detail {
+        data: serde_json::Value,
     },
 }
 
@@ -34,6 +40,10 @@ impl Content {
             mime_type: mime_type.into(),
         }
     }
+
+    pub fn detail(data: serde_json::Value) -> Self {
+        Content::Detail { data }
+    }
 }
 
 impl From<Content> for Vec<Content> {
@@ -43,16 +53,45 @@ impl From<Content> for Vec<Content> {
 }
 
 /// Join the textual portion of tool output into a single string for display
-/// and session history. Non-text variants (e.g. `Image`) are skipped.
+/// and session history. Non-text variants (e.g. `Image`, `Detail`) are skipped.
 pub fn content_text(contents: &[Content]) -> String {
     contents
         .iter()
         .filter_map(|c| match c {
             Content::Text { text } => Some(text.as_str()),
-            Content::Image { .. } => None,
+            Content::Image { .. } | Content::Detail { .. } => None,
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// Extract structured detail metadata from tool output. When multiple `Detail`
+/// entries exist, they are merged into a single object. Returns `None` if no
+/// `Detail` entries are present.
+pub fn content_details(contents: &[Content]) -> Option<serde_json::Value> {
+    let details: Vec<&serde_json::Value> = contents
+        .iter()
+        .filter_map(|c| match c {
+            Content::Detail { data } => Some(data),
+            _ => None,
+        })
+        .collect();
+    match details.len() {
+        0 => None,
+        1 => Some(details[0].clone()),
+        _ => {
+            // Merge multiple detail objects into one
+            let mut merged = serde_json::Map::new();
+            for d in details {
+                if let Some(obj) = d.as_object() {
+                    for (k, v) in obj {
+                        merged.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+            Some(serde_json::Value::Object(merged))
+        }
+    }
 }
 
 /// Machine-readable metadata for a registered tool — origin, version, and
