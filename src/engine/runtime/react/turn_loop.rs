@@ -279,7 +279,8 @@ impl RuntimeCore {
                 match event_rx.try_recv() {
                     Ok(RuntimeEvent::UserEvent { .. }) => continue,
                     Ok(event) => {
-                        // Non-UserEvent — process it and keep draining.
+                        // Non-UserEvent — deliver it (e.g. Checkpoint from
+                        // middleware that only went through event_bus.emit).
                         if let Ok(mut cb) = on_event.lock() {
                             cb(event)?;
                         }
