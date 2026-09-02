@@ -120,9 +120,8 @@ impl RuntimeCore {
             );
 
             // ── Circuit breaker (only when ALL calls are invalid) ──
-            // Read current strikes, compute what the new count would be,
-            // and check the limit BEFORE pushing anything to the session.
             const TRUNCATION_STRIKE_LIMIT: usize = 3;
+            const TRUNCATION_HARD_LIMIT: usize = 5;
             let strikes_after = if has_valid {
                 0 // valid calls will reset the counter
             } else {
@@ -132,7 +131,8 @@ impl RuntimeCore {
                 current + 1
             };
 
-            if strikes_after >= TRUNCATION_STRIKE_LIMIT && !has_valid {
+            if !has_valid && strikes_after >= TRUNCATION_HARD_LIMIT {
+                // Model kept calling the same tool even after redirect — hard stop.
                 let failed_tools: Vec<String> = tool_calls
                     .iter()
                     .map(|(_, name, _)| name.clone())
@@ -140,10 +140,8 @@ impl RuntimeCore {
                     .into_iter()
                     .collect();
                 let error_msg = format!(
-                    "The provider repeatedly truncated tool call arguments for [{}] \
-                     ({} consecutive failures). This typically means the tool's parameter \
-                     schema is too complex for this model to generate in a single response. \
-                     Try using a different tool or approach.",
+                    "Tool [{}] repeatedly truncated ({} attempts). Model did not \
+                     follow redirect instruction. Stopping run.",
                     failed_tools.join(", "),
                     strikes_after,
                 );
@@ -152,11 +150,65 @@ impl RuntimeCore {
                     turn = turn_count,
                     strikes = strikes_after,
                     tools = ?failed_tools,
-                    "truncation circuit breaker tripped, stopping run"
+                    "truncation hard limit reached, stopping run"
                 );
+                // Record the final strike and close dangling tool calls.
+                self.with_session_mut(session_id, |session| {
+                    session.push_assistant_tool_calls(
+                        &tool_calls,
+                        Some(reasoning_text),
+                        Some(full_text),
+                    );
+                    for &i in &invalid_indices {
+                        session.push_tool_result(&tool_calls[i].0, &error_msg);
+                    }
+                    session.run_state.record_truncation();
+                })
+                .await?;
                 return Ok(TurnFlow::Done(RunOutcome::Failed {
                     error: error_msg,
                 }));
+            }
+
+            if !has_valid && strikes_after >= TRUNCATION_STRIKE_LIMIT {
+                let failed_tools: Vec<String> = tool_calls
+                    .iter()
+                    .map(|(_, name, _)| name.clone())
+                    .collect::<std::collections::HashSet<_>>()
+                    .into_iter()
+                    .collect();
+                tracing::warn!(
+                    session_id = session_id.id,
+                    turn = turn_count,
+                    strikes = strikes_after,
+                    tools = ?failed_tools,
+                    "truncation circuit breaker tripped — redirecting model away from truncated tool"
+                );
+                let redirect_msg = format!(
+                    "CRITICAL: The tool [{}] has had its arguments truncated {} \
+                     consecutive times. Its parameter schema is too complex for \
+                     this model to generate. You MUST NOT call [{}] again in this \
+                     session. Instead, perform the task directly using other \
+                     available tools (bash, read_file, write_file, etc.). \
+                     Do not attempt [{}] again.",
+                    failed_tools.join(", "),
+                    strikes_after,
+                    failed_tools.join(", "),
+                    failed_tools.join(", "),
+                );
+                self.with_session_mut(session_id, |session| {
+                    session.push_assistant_tool_calls(
+                        &tool_calls,
+                        Some(reasoning_text),
+                        Some(full_text),
+                    );
+                    for &i in &invalid_indices {
+                        session.push_tool_result(&tool_calls[i].0, &redirect_msg);
+                    }
+                    session.run_state.record_truncation();
+                })
+                .await?;
+                return Ok(TurnFlow::Continue);
             }
 
             // ── Choose guidance text ──

@@ -996,9 +996,9 @@ async fn partial_execution_mixed_truncation_and_empty_required() {
 }
 
 #[tokio::test]
-async fn truncation_circuit_breaker_stops_after_three_consecutive_failures() {
-    // Three consecutive turns all produce truncated spawn_agent arguments.
-    // The circuit breaker should trip on the 3rd and return RunOutcome::Failed.
+async fn truncation_circuit_breaker_redirects_then_hard_stops() {
+    // Turns 1-3: truncated → strike 3 fires redirect (Continue)
+    // Turns 4-5: truncated → strike 5 fires hard stop (Done(Failed))
     let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![
         // Turn 1: truncated → strikes = 1
         vec![
@@ -1012,7 +1012,7 @@ async fn truncation_circuit_breaker_stops_after_three_consecutive_failures() {
             })),
             StreamChunk::Stop { finish_reason: Some("tool_calls".to_string()) },
         ],
-        // Turn 2: truncated → strikes = 2 (stronger guidance)
+        // Turn 2: truncated → strikes = 2
         vec![
             StreamChunk::ToolCall(serde_json::json!({
                 "delta": {
@@ -1024,12 +1024,36 @@ async fn truncation_circuit_breaker_stops_after_three_consecutive_failures() {
             })),
             StreamChunk::Stop { finish_reason: Some("tool_calls".to_string()) },
         ],
-        // Turn 3: truncated → strikes = 3, circuit breaker trips
+        // Turn 3: truncated → strikes = 3, circuit breaker fires (redirect)
         vec![
             StreamChunk::ToolCall(serde_json::json!({
                 "delta": {
                     "tool_calls": [{
                         "id": "t3",
+                        "function": { "name": "spawn_agent", "arguments": "{\"task_name\":\"x\",\"message\":\"tru" }
+                    }]
+                }
+            })),
+            StreamChunk::Stop { finish_reason: Some("tool_calls".to_string()) },
+        ],
+        // Turn 4: still truncated → strikes = 4, redirect again
+        vec![
+            StreamChunk::ToolCall(serde_json::json!({
+                "delta": {
+                    "tool_calls": [{
+                        "id": "t4",
+                        "function": { "name": "spawn_agent", "arguments": "{\"task_name\":\"x\",\"message\":\"tru" }
+                    }]
+                }
+            })),
+            StreamChunk::Stop { finish_reason: Some("tool_calls".to_string()) },
+        ],
+        // Turn 5: still truncated → strikes = 5, hard stop
+        vec![
+            StreamChunk::ToolCall(serde_json::json!({
+                "delta": {
+                    "tool_calls": [{
+                        "id": "t5",
                         "function": { "name": "spawn_agent", "arguments": "{\"task_name\":\"x\",\"message\":\"tru" }
                     }]
                 }
@@ -1061,14 +1085,13 @@ async fn truncation_circuit_breaker_stops_after_three_consecutive_failures() {
                 "error should mention repeated truncation: {}",
                 error,
             );
-            assert!(
-                error.contains("spawn_agent"),
-                "error should name the failing tool: {}",
-                error,
-            );
         }
-        other => panic!("expected RunOutcome::Failed, got {:?}", other),
+        other => panic!("expected RunOutcome::Failed at hard limit, got {:?}", other),
     }
+
+    // Verify truncation_strikes reached the hard limit
+    let session = runtime.session(&sid).await.expect("session");
+    assert_eq!(session.run_state.truncation_strikes, 5);
 }
 
 #[tokio::test]
