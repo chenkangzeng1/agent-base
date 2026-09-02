@@ -100,9 +100,6 @@ impl RuntimeCore {
 
         if !invalid_indices.is_empty() {
             let has_valid = invalid_indices.len() < tool_calls.len();
-            // Determine the guidance variant: if any invalid call was truncated
-            // (parse failure or truncation wrapper), use truncation guidance;
-            // otherwise all invalid calls are empty `{}` for required-field tools.
             let is_truncated_call = |args: &str| -> bool {
                 serde_json::from_str::<Value>(args)
                     .map(|v| is_truncation_wrapper(&v))
@@ -111,22 +108,6 @@ impl RuntimeCore {
             let has_truncated = invalid_indices
                 .iter()
                 .any(|&i| is_truncated_call(&tool_calls[i].2));
-            let has_empty_required = !has_truncated; // all non-truncated invalids are empty-required
-
-            let guidance = if truncated_by_limit {
-                "Tool call was not executed: the response hit the output token limit, \
-                 so its arguments may be truncated. Re-issue the tool call with complete arguments."
-            } else if has_truncated {
-                "Tool call was not executed: the provider truncated the argument stream \
-                 mid-generation, so its arguments are incomplete. Re-issue the tool call — \
-                 emit ONE tool call per turn, or shorten long string fields (e.g. message, \
-                 system_prompt) so the full arguments fit in a single response."
-            } else {
-                "Tool call was not executed: it carried an empty argument object `{}`, but \
-                 this tool requires fields. Re-issue it with every required field filled in \
-                 — never send a bare `{}` placeholder. If you need several calls, emit each \
-                 one with complete arguments."
-            };
 
             tracing::warn!(
                 session_id = session_id.id,
@@ -138,7 +119,85 @@ impl RuntimeCore {
                 "some tool-call arguments incomplete — re-issuing invalid, executing valid"
             );
 
-            // Push the assistant message WITH all tool_calls (protocol requirement).
+            // ── Circuit breaker (only when ALL calls are invalid) ──
+            // Read current strikes, compute what the new count would be,
+            // and check the limit BEFORE pushing anything to the session.
+            const TRUNCATION_STRIKE_LIMIT: usize = 3;
+            let strikes_after = if has_valid {
+                0 // valid calls will reset the counter
+            } else {
+                let current = self
+                    .with_session_mut(session_id, |s| s.run_state.truncation_strikes)
+                    .await?;
+                current + 1
+            };
+
+            if strikes_after >= TRUNCATION_STRIKE_LIMIT && !has_valid {
+                let failed_tools: Vec<String> = tool_calls
+                    .iter()
+                    .map(|(_, name, _)| name.clone())
+                    .collect::<std::collections::HashSet<_>>()
+                    .into_iter()
+                    .collect();
+                let error_msg = format!(
+                    "The provider repeatedly truncated tool call arguments for [{}] \
+                     ({} consecutive failures). This typically means the tool's parameter \
+                     schema is too complex for this model to generate in a single response. \
+                     Try using a different tool or approach.",
+                    failed_tools.join(", "),
+                    strikes_after,
+                );
+                tracing::error!(
+                    session_id = session_id.id,
+                    turn = turn_count,
+                    strikes = strikes_after,
+                    tools = ?failed_tools,
+                    "truncation circuit breaker tripped, stopping run"
+                );
+                return Ok(TurnFlow::Done(RunOutcome::Failed {
+                    error: error_msg,
+                }));
+            }
+
+            // ── Choose guidance text ──
+            let guidance: String = if strikes_after >= 2 {
+                // Stronger guidance on second+ attempt
+                if has_truncated || truncated_by_limit {
+                    format!(
+                        "Tool call was not executed (attempt {}): arguments are still \
+                         truncated. STOP trying this tool — its argument schema is too \
+                         complex for your output budget. Use a simpler alternative tool \
+                         or explain to the user what you were trying to do.",
+                        strikes_after,
+                    )
+                } else {
+                    format!(
+                        "Tool call was not executed (attempt {}): empty {{}} arguments. \
+                         STOP trying this tool. Use a simpler alternative or explain \
+                         the failure to the user.",
+                        strikes_after,
+                    )
+                }
+            } else if truncated_by_limit {
+                "Tool call was not executed: the response hit the output token limit, \
+                 so its arguments may be truncated. Re-issue the tool call with complete arguments."
+                    .to_string()
+            } else if has_truncated {
+                "Tool call was not executed: the provider truncated the argument stream \
+                 mid-generation, so its arguments are incomplete. Re-issue the tool call — \
+                 emit ONE tool call per turn, or shorten long string fields (e.g. message, \
+                 system_prompt) so the full arguments fit in a single response."
+                    .to_string()
+            } else {
+                "Tool call was not executed: it carried an empty argument object `{}`, but \
+                 this tool requires fields. Re-issue it with every required field filled in \
+                 — never send a bare `{}` placeholder. If you need several calls, emit each \
+                 one with complete arguments."
+                    .to_string()
+            };
+
+            // Push the assistant message WITH all tool_calls (protocol requirement),
+            // and tool_results with guidance for the invalid ones.
             self.with_session_mut(session_id, |session| {
                 session.push_assistant_tool_calls(
                     &tool_calls,
@@ -146,7 +205,11 @@ impl RuntimeCore {
                     Some(full_text),
                 );
                 for &i in &invalid_indices {
-                    session.push_tool_result(&tool_calls[i].0, guidance);
+                    session.push_tool_result(&tool_calls[i].0, &guidance);
+                }
+                // Record the strike if all calls were invalid.
+                if !has_valid {
+                    session.run_state.record_truncation();
                 }
             })
             .await?;
@@ -167,6 +230,11 @@ impl RuntimeCore {
                     &String::new(),
                     &String::new(),
                 )
+                .await?;
+                // Valid calls executed — reset truncation counter.
+                self.with_session_mut(session_id, |session| {
+                    session.run_state.truncation_strikes = 0;
+                })
                 .await?;
             }
             return Ok(TurnFlow::Continue);

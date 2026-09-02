@@ -996,6 +996,161 @@ async fn partial_execution_mixed_truncation_and_empty_required() {
 }
 
 #[tokio::test]
+async fn truncation_circuit_breaker_stops_after_three_consecutive_failures() {
+    // Three consecutive turns all produce truncated spawn_agent arguments.
+    // The circuit breaker should trip on the 3rd and return RunOutcome::Failed.
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![
+        // Turn 1: truncated → strikes = 1
+        vec![
+            StreamChunk::ToolCall(serde_json::json!({
+                "delta": {
+                    "tool_calls": [{
+                        "id": "t1",
+                        "function": { "name": "spawn_agent", "arguments": "{\"task_name\":\"x\",\"message\":\"tru" }
+                    }]
+                }
+            })),
+            StreamChunk::Stop { finish_reason: Some("tool_calls".to_string()) },
+        ],
+        // Turn 2: truncated → strikes = 2 (stronger guidance)
+        vec![
+            StreamChunk::ToolCall(serde_json::json!({
+                "delta": {
+                    "tool_calls": [{
+                        "id": "t2",
+                        "function": { "name": "spawn_agent", "arguments": "{\"task_name\":\"x\",\"message\":\"tru" }
+                    }]
+                }
+            })),
+            StreamChunk::Stop { finish_reason: Some("tool_calls".to_string()) },
+        ],
+        // Turn 3: truncated → strikes = 3, circuit breaker trips
+        vec![
+            StreamChunk::ToolCall(serde_json::json!({
+                "delta": {
+                    "tool_calls": [{
+                        "id": "t3",
+                        "function": { "name": "spawn_agent", "arguments": "{\"task_name\":\"x\",\"message\":\"tru" }
+                    }]
+                }
+            })),
+            StreamChunk::Stop { finish_reason: Some("tool_calls".to_string()) },
+        ],
+    ])))
+    .system_prompt("test")
+    .register_tool(SpawnLikeTool)
+    .build()
+    .expect("build");
+
+    let sid = runtime.create_session().await;
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let ec = events.clone();
+    let result = runtime
+        .run_turn(sid.clone(), "do something", move |e| {
+            ec.lock().unwrap().push(e);
+            Ok(())
+        })
+        .await;
+
+    assert!(result.is_ok(), "run_turn should not error: {:?}", result.err());
+    let outcome = result.unwrap();
+    match &outcome {
+        RunOutcome::Failed { error } => {
+            assert!(
+                error.contains("repeatedly truncated"),
+                "error should mention repeated truncation: {}",
+                error,
+            );
+            assert!(
+                error.contains("spawn_agent"),
+                "error should name the failing tool: {}",
+                error,
+            );
+        }
+        other => panic!("expected RunOutcome::Failed, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn truncation_strikes_reset_on_successful_tool_call() {
+    // Turn 1: truncated → strikes = 1
+    // Turn 2: valid call → strikes reset to 0
+    // Turn 3: truncated again → strikes = 1 (not 2!)
+    // Turn 4: text → done
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![
+        // Turn 1: truncated → strikes = 1
+        vec![
+            StreamChunk::ToolCall(serde_json::json!({
+                "delta": {
+                    "tool_calls": [{
+                        "id": "bad1",
+                        "function": { "name": "spawn_agent", "arguments": "{\"task_name\":\"x\",\"message\":\"tru" }
+                    }]
+                }
+            })),
+            StreamChunk::Stop { finish_reason: Some("tool_calls".to_string()) },
+        ],
+        // Turn 2: valid call → strikes reset to 0
+        vec![
+            StreamChunk::ToolCall(serde_json::json!({
+                "delta": {
+                    "tool_calls": [{
+                        "id": "good1",
+                        "function": { "name": "spawn_agent", "arguments": "{\"task_name\":\"y\",\"message\":\"hello\"}" }
+                    }]
+                }
+            })),
+            StreamChunk::Stop { finish_reason: Some("tool_calls".to_string()) },
+        ],
+        // Turn 3: truncated again → strikes = 1 (not 2, because reset happened)
+        vec![
+            StreamChunk::ToolCall(serde_json::json!({
+                "delta": {
+                    "tool_calls": [{
+                        "id": "bad2",
+                        "function": { "name": "spawn_agent", "arguments": "{\"task_name\":\"z\",\"message\":\"tru" }
+                    }]
+                }
+            })),
+            StreamChunk::Stop { finish_reason: Some("tool_calls".to_string()) },
+        ],
+        // Turn 4: text response → normal completion
+        vec![
+            StreamChunk::Text("Done.".to_string()),
+            StreamChunk::Stop { finish_reason: Some("stop".to_string()) },
+        ],
+    ])))
+    .system_prompt("test")
+    .register_tool(SpawnLikeTool)
+    .build()
+    .expect("build");
+
+    let sid = runtime.create_session().await;
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let ec = events.clone();
+    let result = runtime
+        .run_turn(sid.clone(), "do something", move |e| {
+            ec.lock().unwrap().push(e);
+            Ok(())
+        })
+        .await;
+
+    assert!(result.is_ok(), "run_turn should not error: {:?}", result.err());
+    let outcome = result.unwrap();
+    // Should complete normally (not Failed) because strikes were reset by the valid call
+    assert!(
+        matches!(outcome, RunOutcome::Completed),
+        "expected Completed after reset, got {:?}",
+        outcome,
+    );
+
+    // Verify truncation_strikes reflects the last truncation (1, not accumulated)
+    // because the valid call in Turn 2 reset the counter.
+    let session = runtime.session(&sid).await.expect("session");
+    assert_eq!(session.run_state.truncation_strikes, 1);
+}
+
+#[tokio::test]
 async fn run_managed_processes_follow_up_messages() {
     // ScriptedProvider: first call returns text "done", second call (triggered
     // by follow-up) returns "follow-up done". run_managed should process both.

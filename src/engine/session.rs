@@ -55,6 +55,14 @@ pub struct RunState {
     /// Used to restore thinking to its original state after DisableThinking → RestoreThinking cycle.
     #[serde(default)]
     pub original_thinking_enabled: bool,
+
+    /// Number of consecutive LLM turns where the truncation guard fired
+    /// (all tool_calls had invalid/truncated arguments). Reset to 0 when
+    /// at least one valid tool call executes successfully. Used to break
+    /// the re-issue death spiral: after N consecutive truncations, stop
+    /// retrying and fail with an actionable message.
+    #[serde(default)]
+    pub truncation_strikes: usize,
 }
 
 impl RunState {
@@ -66,17 +74,19 @@ impl RunState {
         self.empty_response_strikes = 0;
         self.nudge_count = 0;
         self.thinking_disabled_for_rest_of_run = false;
+        self.truncation_strikes = 0;
         // Note: original_thinking_enabled is NOT reset here
         // It should be set once when the session starts
     }
 
     /// Record tool calls (branch 3: tool calls).
-    /// Resets reasoning_only_strikes and empty_response_strikes.
+    /// Resets reasoning_only_strikes, empty_response_strikes, and truncation_strikes.
     pub fn record_tool_calls(&mut self, n: usize) {
         self.turn_tool_calls += n;
         self.run_has_tool_calls = true;
         self.reasoning_only_strikes = 0;
         self.empty_response_strikes = 0;
+        self.truncation_strikes = 0;
     }
 
     /// Record reasoning-only response (branch 1).
@@ -103,6 +113,13 @@ impl RunState {
         self.reasoning_only_strikes = 0;
         self.empty_response_strikes += 1;
         self.empty_response_strikes
+    }
+
+    /// Record a truncation guard firing (all tool_calls had invalid arguments).
+    /// Returns the new strike count. Caller should check against threshold.
+    pub fn record_truncation(&mut self) -> usize {
+        self.truncation_strikes += 1;
+        self.truncation_strikes
     }
 }
 
@@ -893,6 +910,7 @@ mod validate_tests {
             nudge_count: 3,
             thinking_disabled_for_rest_of_run: true,
             original_thinking_enabled: true,
+            truncation_strikes: 4,
         };
 
         rs.reset_for_new_run();
@@ -902,6 +920,7 @@ mod validate_tests {
         assert_eq!(rs.reasoning_only_strikes, 0);
         assert_eq!(rs.empty_response_strikes, 0);
         assert_eq!(rs.nudge_count, 0);
+        assert_eq!(rs.truncation_strikes, 0);
         assert!(!rs.thinking_disabled_for_rest_of_run);
         // original_thinking_enabled is NOT reset
         assert!(rs.original_thinking_enabled);
@@ -1350,6 +1369,7 @@ mod proptest_tests {
                 nudge_count,
                 thinking_disabled_for_rest_of_run: true,
                 original_thinking_enabled: true,
+                truncation_strikes: 5,
             };
             rs.reset_for_new_run();
             assert_eq!(rs.turn_tool_calls, 0);
@@ -1357,6 +1377,7 @@ mod proptest_tests {
             assert_eq!(rs.reasoning_only_strikes, 0);
             assert_eq!(rs.empty_response_strikes, 0);
             assert_eq!(rs.nudge_count, 0);
+            assert_eq!(rs.truncation_strikes, 0);
             assert!(!rs.thinking_disabled_for_rest_of_run);
             // original_thinking_enabled is NOT reset
             assert!(rs.original_thinking_enabled);
