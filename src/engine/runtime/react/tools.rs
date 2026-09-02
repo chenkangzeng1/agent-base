@@ -100,17 +100,23 @@ impl RuntimeCore {
 
         if !invalid_indices.is_empty() {
             let has_valid = invalid_indices.len() < tool_calls.len();
-            let dominated_any = !truncated_by_limit && invalid_indices.iter().any(|&i| {
-                let args = &tool_calls[i].2;
+            // Determine the guidance variant: if any invalid call was truncated
+            // (parse failure or truncation wrapper), use truncation guidance;
+            // otherwise all invalid calls are empty `{}` for required-field tools.
+            let is_truncated_call = |args: &str| -> bool {
                 serde_json::from_str::<Value>(args)
-                    .map(|v| is_truncation_wrapper(&v) || v.as_object().is_some_and(|o| !o.is_empty()))
+                    .map(|v| is_truncation_wrapper(&v))
                     .unwrap_or(true)
-            });
+            };
+            let has_truncated = invalid_indices
+                .iter()
+                .any(|&i| is_truncated_call(&tool_calls[i].2));
+            let has_empty_required = !has_truncated; // all non-truncated invalids are empty-required
 
             let guidance = if truncated_by_limit {
                 "Tool call was not executed: the response hit the output token limit, \
                  so its arguments may be truncated. Re-issue the tool call with complete arguments."
-            } else if dominated_any {
+            } else if has_truncated {
                 "Tool call was not executed: the provider truncated the argument stream \
                  mid-generation, so its arguments are incomplete. Re-issue the tool call — \
                  emit ONE tool call per turn, or shorten long string fields (e.g. message, \
