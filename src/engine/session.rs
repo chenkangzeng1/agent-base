@@ -271,34 +271,25 @@ impl AgentSession {
         let calls: Vec<ToolCallMessage> = tool_calls
             .iter()
             .map(|(id, name, args)| {
-                // Validate that arguments are valid JSON.
-                // If not (e.g., truncated by token limit), wrap in an error object
-                // so the API doesn't reject the entire request with 400.
+                // Invalid JSON args (provider truncated the stream mid-generation)
+                // are sanitized to an empty object. We deliberately do NOT wrap
+                // them in a descriptive `{error, original_args_preview, message}`
+                // object: "{}" is valid JSON so the next request is never rejected
+                // with 400, and — critically — a rich error object here becomes an
+                // imitation vector: the model replays it verbatim as the next
+                // call's arguments and, because it parses, it slips past the react
+                // truncation guard. The truncation explanation lives in the
+                // paired tool_result, which is where the model reads feedback.
                 let valid_args = if serde_json::from_str::<serde_json::Value>(args).is_ok() {
                     args.clone()
                 } else {
                     tracing::warn!(
                         tool_name = %name,
                         args_len = args.len(),
-                        "tool call arguments are not valid JSON (possibly truncated), wrapping in error object"
+                        "tool call arguments are not valid JSON (provider truncated them), \
+                         sanitizing to empty object; re-issue instruction goes to the tool_result"
                     );
-                    // Find a safe char boundary at or before byte 200 to avoid
-                    // panicking on multi-byte UTF-8 chars (CJK, emoji, etc.).
-                    let max_preview = 200;
-                    let safe_end = if args.len() <= max_preview {
-                        args.len()
-                    } else {
-                        args.char_indices()
-                            .find(|(i, _)| *i >= max_preview)
-                            .map(|(i, _)| i)
-                            .unwrap_or(args.len())
-                    };
-                    serde_json::json!({
-                        "error": "tool_call_arguments_truncated",
-                        "original_args_preview": &args[..safe_end],
-                        "message": "The tool call arguments were truncated or invalid. Please retry with complete arguments."
-                    })
-                    .to_string()
+                    "{}".to_string()
                 };
                 ToolCallMessage {
                     id: id.clone(),
@@ -1205,7 +1196,15 @@ mod validate_tests {
             panic!("expected Assistant message with tool_calls");
         }
 
-        // Truncated (invalid JSON) args should be wrapped in an error object
+        // Truncated (invalid JSON) args must be sanitized to an empty object,
+        // NOT wrapped in a descriptive error object. Two reasons:
+        //   1. "{}" is valid JSON, so the next request is never rejected 400.
+        //   2. a rich `{error, original_args_preview, message}` object in
+        //      assistant history is an imitation vector — the model replays it
+        //      verbatim as the next call's arguments, and because it parses as
+        //      valid JSON it slips past the react truncation guard and resurfaces
+        //      as a downstream ToolArgsInvalid. The truncation explanation
+        //      belongs in the tool_result, not the assistant arguments.
         let truncated_args = r#"{"path": "src/ui/markdown.rs", "content": "#;
         s.push_assistant_tool_calls(
             &[("id2".into(), "write_file".into(), truncated_args.into())],
@@ -1217,11 +1216,11 @@ mod validate_tests {
             ..
         } = s.chat_messages[1]
         {
-            // The arguments should now be valid JSON (the error wrapper)
-            let parsed: serde_json::Value = serde_json::from_str(&tc[0].arguments)
-                .expect("wrapped arguments should be valid JSON");
-            assert_eq!(parsed["error"], "tool_call_arguments_truncated");
-            assert!(parsed["message"].as_str().unwrap().contains("truncated"));
+            assert_eq!(tc[0].arguments, "{}");
+            assert!(
+                !tc[0].arguments.contains("tool_call_arguments_truncated"),
+                "assistant arguments must not carry the poison wrapper object"
+            );
         } else {
             panic!("expected Assistant message with tool_calls");
         }
@@ -1238,7 +1237,8 @@ mod validate_tests {
         let mut bad_args = "あ".repeat(70); // 70 * 3 = 210 bytes
         bad_args.push_str("truncated"); // makes it invalid JSON
 
-        // This must NOT panic — the preview slice should respect char boundaries.
+        // This must NOT panic. Invalid args are sanitized to "{}" (a fixed
+        // literal), so no slicing of the multibyte string happens at all.
         s.push_assistant_tool_calls(&[("id1".into(), "tool".into(), bad_args)], None, None);
 
         if let ChatMessage::Assistant {
@@ -1246,10 +1246,7 @@ mod validate_tests {
             ..
         } = s.chat_messages[0]
         {
-            // Should be wrapped in error object (valid JSON)
-            let parsed: serde_json::Value = serde_json::from_str(&tc[0].arguments)
-                .expect("wrapped arguments should be valid JSON even with multibyte chars");
-            assert_eq!(parsed["error"], "tool_call_arguments_truncated");
+            assert_eq!(tc[0].arguments, "{}");
         } else {
             panic!("expected Assistant message with tool_calls");
         }
@@ -1417,7 +1414,7 @@ mod proptest_tests {
         }
 
         #[test]
-        fn push_assistant_tool_calls_invalid_json_wrapped_safely(
+        fn push_assistant_tool_calls_invalid_json_sanitized_to_empty(
             bad_args in "[a-z\u{4e00}-\u{9fff}]{0,300}"
         ) {
             // Skip if it happens to be valid JSON
@@ -1431,9 +1428,11 @@ mod proptest_tests {
                 None,
             );
             if let ChatMessage::Assistant { tool_calls: Some(ref tc), .. } = s.chat_messages()[0] {
-                let parsed: serde_json::Value = serde_json::from_str(&tc[0].arguments)
-                    .expect("wrapped args must be valid JSON");
-                assert_eq!(parsed["error"], "tool_call_arguments_truncated");
+                // Must be valid JSON (no 400 on replay) AND carry no poison
+                // wrapper the model could echo back as arguments.
+                serde_json::from_str::<serde_json::Value>(&tc[0].arguments)
+                    .expect("sanitized args must be valid JSON");
+                assert_eq!(tc[0].arguments, "{}");
             } else {
                 panic!("expected Assistant with tool_calls");
             }

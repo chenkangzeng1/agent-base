@@ -353,6 +353,14 @@ impl LlmEngine {
         let tool_calls = aggregator
             .partials
             .into_iter()
+            // Drop phantom buckets: a fragment that carried an index but never
+            // a function name is not a real tool call. Some OpenAI-compatible
+            // providers (e.g. mimo) emit an empty `{index, name:""}` fragment;
+            // kept, it lands in assistant history as a name-less tool_call and
+            // the NEXT request is rejected with HTTP 400 "missing a function
+            // name". The stream is fully drained here, so an empty name means
+            // no name ever arrived — this is permanent, not a late fragment.
+            .filter(|(_idx, (_id, name, _args))| !name.is_empty())
             .map(|(idx, (id, name, args))| {
                 let mut tc = serde_json::Map::new();
                 tc.insert("index".to_string(), idx.into());
@@ -961,13 +969,13 @@ mod tests {
             )
             .await
             .unwrap();
-        assert_eq!(result.tool_calls.len(), 1);
-        assert_eq!(result.tool_calls[0]["id"].as_str(), Some(""));
-        assert_eq!(result.tool_calls[0]["function"]["name"].as_str(), Some(""));
-        assert_eq!(
-            result.tool_calls[0]["function"]["arguments"].as_str(),
-            Some("{}")
-        );
+        // A bucket that carries an index but never a function name is a
+        // phantom fragment some OpenAI-compatible providers emit. It must NOT
+        // surface as a tool call — kept, it becomes a name-less assistant
+        // tool_call and the NEXT request is rejected HTTP 400 "missing a
+        // function name". The stream is fully drained here, so an empty name
+        // at assembly time is permanent, not a name that arrives later.
+        assert_eq!(result.tool_calls.len(), 0);
     }
 
     #[tokio::test]

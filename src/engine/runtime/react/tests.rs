@@ -404,6 +404,416 @@ async fn truncation_guard_blocks_tool_calls_on_length_finish_reason() {
 }
 
 #[tokio::test]
+async fn truncation_guard_blocks_tool_calls_on_finish_tool_calls_mimo() {
+    // mimo-v2.5-pro truncates the tool-call argument stream mid-generation
+    // under load but reports `finish_reason=tool_calls` (NOT `length`), so the
+    // length-only guard lets these fall through to tool execution as
+    // ToolArgsInvalid — which feeds ConsecutiveFailureRecovery and aborts the
+    // run ("failed 3 consecutive times"). The widened guard must detect the
+    // structurally-incomplete JSON args regardless of the claimed finish reason
+    // and route through the clean re-issue path instead.
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![
+        // Turn 1: named tool call with a dangling, non-JSON argument string,
+        // provider claims a normal tool_calls finish.
+        vec![
+            StreamChunk::ToolCall(serde_json::json!({
+                "delta": {
+                    "tool_calls": [{
+                        "id": "call_trunc_1",
+                        "function": {
+                            "name": "spawn_agent",
+                            "arguments": "{\"agent_path\": "
+                        }
+                    }]
+                }
+            })),
+            StreamChunk::Stop {
+                finish_reason: Some("tool_calls".to_string()),
+            },
+        ],
+        // Turn 2: model sees the re-issue instruction and replies in text.
+        vec![
+            StreamChunk::Text("Re-issuing the call with complete arguments.".to_string()),
+            StreamChunk::Stop {
+                finish_reason: Some("stop".to_string()),
+            },
+        ],
+    ])))
+    .system_prompt("You are a careful assistant.")
+    .build()
+    .expect("build runtime");
+
+    let sid = runtime.create_session().await;
+
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let events_clone = events.clone();
+    let result = runtime
+        .run_turn(sid.clone(), "spawn a sub-agent", move |event| {
+            events_clone.lock().unwrap().push(event);
+            Ok(())
+        })
+        .await;
+
+    assert!(result.is_ok(), "run_turn should complete: {:?}", result.err());
+
+    let session = runtime.session(&sid).await.expect("session exists");
+    let messages = session.chat_messages().to_vec();
+
+    // The truncated call must NOT have been executed / recorded as a parse
+    // failure; it must have been routed to the re-issue guard.
+    let has_reissue = messages.iter().any(|m| {
+        if let ChatMessage::Tool { content, .. } = m {
+            content.contains("Tool call was not executed")
+                && content.contains("provider truncated the argument stream")
+        } else {
+            false
+        }
+    });
+    assert!(
+        has_reissue,
+        "session should contain a re-issue tool result for the truncated call. Messages: {:#?}",
+        messages
+            .iter()
+            .map(|m| format!("{:?}", m))
+            .collect::<Vec<_>>()
+    );
+
+    // And crucially the raw malformed args must never appear as an executed
+    // ToolArgsInvalid failure (the death-spiral trigger).
+    let has_args_invalid = messages.iter().any(|m| {
+        let s = format!("{:?}", m);
+        s.contains("argument parsing failed") || s.contains("EOF while parsing")
+    });
+    assert!(
+        !has_args_invalid,
+        "truncated args must not surface as a ToolArgsInvalid failure. Messages: {:#?}",
+        messages
+            .iter()
+            .map(|m| format!("{:?}", m))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
+async fn truncation_guard_recognizes_wrapper_echo() {
+    // mimo, having seen a `{error:"tool_call_arguments_truncated",...}` object
+    // in its history, replays it VERBATIM as the next call's arguments. That
+    // payload is valid JSON, so the raw-args structural guard can't catch it —
+    // but it is unmistakably truncation residue. The guard must recognise the
+    // wrapper marker and re-issue instead of executing it (which would surface
+    // as a downstream ToolArgsInvalid, the send_message slip seen in the field).
+    let wrapper = serde_json::json!({
+        "error": "tool_call_arguments_truncated",
+        "message": "The tool call arguments were truncated or invalid. Please retry with complete arguments.",
+        "original_args_preview": "{\"agent_path\": "
+    })
+    .to_string();
+
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![
+        vec![
+            StreamChunk::ToolCall(serde_json::json!({
+                "delta": {
+                    "tool_calls": [{
+                        "id": "call_echo",
+                        "function": {
+                            "name": "send_message",
+                            "arguments": wrapper
+                        }
+                    }]
+                }
+            })),
+            StreamChunk::Stop {
+                finish_reason: Some("tool_calls".to_string()),
+            },
+        ],
+        vec![
+            StreamChunk::Text("Now sending a real message.".to_string()),
+            StreamChunk::Stop {
+                finish_reason: Some("stop".to_string()),
+            },
+        ],
+    ])))
+    .system_prompt("You are a careful assistant.")
+    .build()
+    .expect("build runtime");
+
+    let sid = runtime.create_session().await;
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let events_clone = events.clone();
+    let result = runtime
+        .run_turn(sid.clone(), "continue", move |event| {
+            events_clone.lock().unwrap().push(event);
+            Ok(())
+        })
+        .await;
+    assert!(result.is_ok(), "run_turn should complete: {:?}", result.err());
+
+    let session = runtime.session(&sid).await.expect("session exists");
+    let messages = session.chat_messages().to_vec();
+
+    let has_reissue = messages.iter().any(|m| {
+        if let ChatMessage::Tool { content, .. } = m {
+            content.contains("Tool call was not executed")
+        } else {
+            false
+        }
+    });
+    assert!(
+        has_reissue,
+        "echoed wrapper args must be routed to the re-issue guard. Messages: {:#?}",
+        messages.iter().map(|m| format!("{:?}", m)).collect::<Vec<_>>()
+    );
+
+    let has_args_invalid = messages.iter().any(|m| {
+        let s = format!("{:?}", m);
+        s.contains("argument parsing failed")
+    });
+    assert!(
+        !has_args_invalid,
+        "echoed wrapper must not reach tool execution. Messages: {:#?}",
+        messages.iter().map(|m| format!("{:?}", m)).collect::<Vec<_>>()
+    );
+}
+
+/// Minimal tool whose schema declares required fields — mirrors `spawn_agent`.
+struct SpawnLikeTool;
+
+#[async_trait]
+impl Tool for SpawnLikeTool {
+    fn name(&self) -> &'static str {
+        "spawn_agent"
+    }
+
+    fn description(&self) -> &'static str {
+        "Spawn a sub-agent"
+    }
+
+    fn schema(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "task_name": { "type": "string" },
+                "message": { "type": "string" },
+            },
+            "required": ["task_name", "message"]
+        })
+    }
+
+    async fn call(&self, _args: &Value, _ctx: &ToolContext) -> AgentResult<Vec<Content>> {
+        Ok(vec![Content::text("spawned")])
+    }
+}
+
+/// Minimal tool whose schema has no required fields — mirrors `list_agents`.
+struct NoArgTool;
+
+#[async_trait]
+impl Tool for NoArgTool {
+    fn name(&self) -> &'static str {
+        "list_agents"
+    }
+
+    fn description(&self) -> &'static str {
+        "List running agents"
+    }
+
+    fn schema(&self) -> Value {
+        serde_json::json!({ "type": "object", "properties": {} })
+    }
+
+    async fn call(&self, _args: &Value, _ctx: &ToolContext) -> AgentResult<Vec<Content>> {
+        Ok(vec![Content::text("no agents")])
+    }
+}
+
+#[tokio::test]
+async fn truncation_guard_blocks_empty_args_for_required_field_tool() {
+    // The model, having seen sanitized `spawn_agent {}` entries in its history,
+    // echoes the shape: one real spawn + one empty `{}` in the same turn.
+    // `{}` is valid JSON (case 2 skips it) but the tool's schema requires
+    // task_name + message — case 4 must detect this as degenerate and re-issue
+    // the whole turn, avoiding a ToolArgsInvalid execution failure.
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![
+        // Turn 1: two spawn_agent buckets — one complete, one empty `{}`.
+        vec![
+            StreamChunk::ToolCall(serde_json::json!({
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call_real",
+                            "function": {
+                                "name": "spawn_agent",
+                                "arguments": "{\"task_name\":\"foo\",\"message\":\"do stuff\"}"
+                            }
+                        },
+                        {
+                            "index": 1,
+                            "id": "call_empty",
+                            "function": {
+                                "name": "spawn_agent",
+                                "arguments": "{}"
+                            }
+                        }
+                    ]
+                }
+            })),
+            StreamChunk::Stop {
+                finish_reason: Some("tool_calls".to_string()),
+            },
+        ],
+        // Turn 2: model sees the re-issue instruction and replies.
+        vec![
+            StreamChunk::Text("Re-issuing with complete arguments.".to_string()),
+            StreamChunk::Stop {
+                finish_reason: Some("stop".to_string()),
+            },
+        ],
+    ])))
+    .system_prompt("You are a careful assistant.")
+    .register_tool(SpawnLikeTool)
+    .build()
+    .expect("build runtime");
+
+    let sid = runtime.create_session().await;
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let events_clone = events.clone();
+    let result = runtime
+        .run_turn(sid.clone(), "spawn two agents", move |event| {
+            events_clone.lock().unwrap().push(event);
+            Ok(())
+        })
+        .await;
+
+    assert!(result.is_ok(), "run_turn should complete: {:?}", result.err());
+
+    let session = runtime.session(&sid).await.expect("session exists");
+    let messages = session.chat_messages().to_vec();
+
+    // Must contain a re-issue tool result for the empty-required case.
+    let has_reissue = messages.iter().any(|m| {
+        if let ChatMessage::Tool { content, .. } = m {
+            content.contains("Tool call was not executed")
+                && content.contains("empty argument object")
+                && content.contains("requires fields")
+        } else {
+            false
+        }
+    });
+    assert!(
+        has_reissue,
+        "empty {{}} for a required-field tool must be caught by case 4 guard. Messages: {:#?}",
+        messages
+            .iter()
+            .map(|m| format!("{:?}", m))
+            .collect::<Vec<_>>()
+    );
+
+    // Crucially the empty args must NOT have reached tool execution as a
+    // ToolArgsInvalid failure.
+    let has_args_invalid = messages.iter().any(|m| {
+        let s = format!("{:?}", m);
+        s.contains("argument parsing failed") || s.contains("EOF while parsing")
+    });
+    assert!(
+        !has_args_invalid,
+        "empty {{}} args must not surface as a ToolArgsInvalid failure. Messages: {:#?}",
+        messages
+            .iter()
+            .map(|m| format!("{:?}", m))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
+async fn no_arg_tool_with_empty_object_args_executes_normally() {
+    // A tool with no required fields (like `list_agents`) legitimately receives
+    // `{}` as arguments. The case 4 guard must NOT fire — the tool should
+    // execute normally.
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![
+        // Turn 1: list_agents with `{}` — should execute.
+        vec![
+            StreamChunk::ToolCall(serde_json::json!({
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call_list",
+                        "function": {
+                            "name": "list_agents",
+                            "arguments": "{}"
+                        }
+                    }]
+                }
+            })),
+            StreamChunk::Stop {
+                finish_reason: Some("tool_calls".to_string()),
+            },
+        ],
+        // Turn 2: model reports the result.
+        vec![
+            StreamChunk::Text("No agents running.".to_string()),
+            StreamChunk::Stop {
+                finish_reason: Some("stop".to_string()),
+            },
+        ],
+    ])))
+    .system_prompt("test")
+    .register_tool(NoArgTool)
+    .build()
+    .expect("build runtime");
+
+    let sid = runtime.create_session().await;
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let events_clone = events.clone();
+    let result = runtime
+        .run_turn(sid.clone(), "list agents", move |event| {
+            events_clone.lock().unwrap().push(event);
+            Ok(())
+        })
+        .await;
+
+    assert!(result.is_ok(), "run_turn should complete: {:?}", result.err());
+
+    let session = runtime.session(&sid).await.expect("session exists");
+    let messages = session.chat_messages().to_vec();
+
+    // Must NOT contain a re-issue guidance — no required fields, so {} is valid.
+    let has_reissue = messages.iter().any(|m| {
+        if let ChatMessage::Tool { content, .. } = m {
+            content.contains("Tool call was not executed")
+                && content.contains("empty argument object")
+        } else {
+            false
+        }
+    });
+    assert!(
+        !has_reissue,
+        "no-arg tool with {{}} must execute, not be re-issued. Messages: {:#?}",
+        messages
+            .iter()
+            .map(|m| format!("{:?}", m))
+            .collect::<Vec<_>>()
+    );
+
+    // And must contain the tool's actual output (execution succeeded).
+    let has_output = messages.iter().any(|m| {
+        if let ChatMessage::Tool { content, .. } = m {
+            content.contains("no agents")
+        } else {
+            false
+        }
+    });
+    assert!(
+        has_output,
+        "no-arg tool must have executed and returned output. Messages: {:#?}",
+        messages
+            .iter()
+            .map(|m| format!("{:?}", m))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[tokio::test]
 async fn run_managed_processes_follow_up_messages() {
     // ScriptedProvider: first call returns text "done", second call (triggered
     // by follow-up) returns "follow-up done". run_managed should process both.

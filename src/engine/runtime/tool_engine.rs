@@ -53,6 +53,29 @@ impl ToolEngine {
         self.tools.read().await.definitions_filtered(ctx)
     }
 
+    /// Does the named tool's JSON schema declare at least one required
+    /// parameter?
+    ///
+    /// Used by the react truncation guard to tell a *legitimate* empty-arguments
+    /// call (`{}` for a no-arg tool such as `list_agents`) apart from a
+    /// *degenerate* one: an empty `spawn_agent {}` the model echoed back from
+    /// sanitized history. A call to a required-field tool with `{}` args can
+    /// never succeed, so the guard re-issues it instead of letting it fall
+    /// through to a `ToolArgsInvalid` execution failure. Unknown tools return
+    /// `false` so they take the normal schema-validation path.
+    pub async fn tool_requires_params(&self, name: &str) -> bool {
+        let guard = self.tools.read().await;
+        guard
+            .get(name)
+            .map(|t| {
+                t.schema()
+                    .get("required")
+                    .and_then(Value::as_array)
+                    .is_some_and(|a| !a.is_empty())
+            })
+            .unwrap_or(false)
+    }
+
     #[allow(dead_code, clippy::too_many_arguments)]
     pub async fn execute_tool<F>(
         &self,
@@ -393,17 +416,42 @@ impl ToolEngine {
         let mut failures: Vec<ToolFailure> = Vec::new();
 
         {
+            tracing::info!(
+                session_id = session_id.id,
+                tool_count = tool_calls.len(),
+                "phase1: acquiring tools read lock"
+            );
             let tools_guard = self.tools.read().await;
+            tracing::info!(
+                session_id = session_id.id,
+                tool_count = tool_calls.len(),
+                "phase1: tools read lock acquired, starting loop"
+            );
             for (id, name, args_str) in tool_calls {
+                tracing::info!(
+                    session_id = session_id.id,
+                    tool = name,
+                    args_len = args_str.len(),
+                    "phase1: parsing tool args"
+                );
                 let args: Value = match serde_json::from_str(args_str) {
-                    Ok(args) => args,
+                    Ok(args) => {
+                        tracing::info!(
+                            session_id = session_id.id,
+                            tool = name,
+                            args_len = args_str.len(),
+                            "phase1: args parsed ok"
+                        );
+                        args
+                    }
                     Err(e) => {
-                        tracing::debug!(
+                        tracing::warn!(
                             session_id = session_id.id,
                             tool = name,
                             error = %e,
-                            args = args_str,
-                            "tool args JSON parse failed"
+                            args_len = args_str.len(),
+                            args_preview = &args_str[..args_str.len().min(300)],
+                            "phase1: args parse FAILED"
                         );
                         failures.push(ToolFailure {
                             id: id.clone(),
@@ -416,7 +464,17 @@ impl ToolEngine {
                     }
                 };
 
+                tracing::info!(
+                    session_id = session_id.id,
+                    tool = name,
+                    "phase1: checking tool exists in registry"
+                );
                 if tools_guard.get(name).is_none() {
+                    tracing::warn!(
+                        session_id = session_id.id,
+                        tool = name,
+                        "phase1: tool NOT found"
+                    );
                     failures.push(ToolFailure {
                         id: id.clone(),
                         error: AgentError::tool_not_found(name),
@@ -424,6 +482,11 @@ impl ToolEngine {
                     continue;
                 }
 
+                tracing::info!(
+                    session_id = session_id.id,
+                    tool = name,
+                    "phase1: processing approval"
+                );
                 self.process_approval(
                     session_id,
                     name,
@@ -435,8 +498,19 @@ impl ToolEngine {
                 )
                 .await?;
 
+                tracing::info!(
+                    session_id = session_id.id,
+                    tool = name,
+                    "phase1: approved, pushing to approved list"
+                );
                 approved.push((id.clone(), name.clone(), args, args_str.to_string()));
             }
+            tracing::info!(
+                session_id = session_id.id,
+                approved_count = approved.len(),
+                failure_count = failures.len(),
+                "phase1: loop done, dropping tools guard"
+            );
         } // tools_guard dropped here
 
         if approved.is_empty() {
@@ -450,6 +524,11 @@ impl ToolEngine {
         // Use resubscribe so each task has its own receiver (parallel execution).
         // The shared mutex is only held briefly for try_recv, not for the whole
         // tool call — tools run truly in parallel.
+        tracing::info!(
+            session_id = session_id.id,
+            approved_count = approved.len(),
+            "phase2: starting parallel execution"
+        );
         let shared_rx = Arc::new(tokio::sync::Mutex::new(event_rx.resubscribe()));
 
         let futures: Vec<_> = approved

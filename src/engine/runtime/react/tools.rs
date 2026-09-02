@@ -2,6 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use tokio::sync::broadcast;
 
+use serde_json::Value;
+
 use crate::engine::recovery::ToolErrorAction;
 use crate::engine::runtime::plan_runner::RuntimeCore;
 use crate::engine::runtime::tool_engine::ExecutionContext;
@@ -38,15 +40,84 @@ impl RuntimeCore {
     where
         F: FnMut(RuntimeEvent) -> AgentResult<()> + Send + 'static,
     {
-        // Truncation guard — when the LLM response hit the token limit,
-        // tool call arguments may be incomplete. Fail all tool calls
-        // without executing them, so the LLM can retry with complete args.
-        if finish_reason.is_truncated() {
+        // Truncation guard — a well-formed provider stream always yields
+        // complete JSON for each tool call's arguments. When that breaks, the
+        // call must NOT be executed: re-issue it instead. Three ways it breaks:
+        //   1. finish_reason=length — the model hit the output token limit
+        //      mid-arguments (provider reports this honestly).
+        //   2. finish_reason=tool_calls (or anything else) but a *named* call's
+        //      arguments don't parse as JSON — the provider truncated the
+        //      argument stream and then *mislabelled* the finish as a normal
+        //      tool_calls stop. mimo-v2.5-pro does exactly this under load
+        //      (emits a dangling `{"agent_path": ` with finish_reason=tool_calls
+        //      and never sets length). Checking the structural symptom makes
+        //      the guard independent of a finish_reason we can't trust.
+        //   3. arguments parse as JSON but are a `{error:"tool_call_arguments_truncated",...}`
+        //      wrapper — the model echoed back truncation residue it saw earlier.
+        //      Valid JSON, so case 2's check misses it; recognise it by shape.
+        //   4. arguments parse as a valid *empty object* `{}` for a tool that
+        //      declares required parameters. This is not provider truncation — it
+        //      is the model *mimicking* our own sanitizer: truncated spawn_agent
+        //      args get stored as `{}` (see session.rs, to avoid a 400 on the next
+        //      request), the model sees a `spawn_agent {}` in its history and emits
+        //      a stray empty twin next to a real call. It parses fine, so case 2
+        //      skips it, and it fails typed schema at execution
+        //      ("argument parsing failed: {}"). Detect it via the tool schema.
+        // Left to fall through, cases (2)/(3)/(4) become a ToolArgsInvalid
+        // execution failure that feeds ConsecutiveFailureRecovery and aborts the
+        // run ("failed 3 consecutive times"). Routing them here degrades to a
+        // benign retry that never increments the failure counter.
+        let has_incomplete_args = tool_calls.iter().any(|(_id, name, args)| {
+            if name.is_empty() || args.trim().is_empty() {
+                return false;
+            }
+            match serde_json::from_str::<Value>(args) {
+                Err(_) => true,
+                Ok(v) => is_truncation_wrapper(&v),
+            }
+        });
+        let truncated_by_limit = finish_reason.is_truncated();
+        // Case 4 — only worth a schema lookup when nothing else flagged the turn
+        // and the arguments are a valid, empty JSON object.
+        let mut has_empty_required = false;
+        if !truncated_by_limit && !has_incomplete_args {
+            for (_id, name, args) in &tool_calls {
+                if name.is_empty() {
+                    continue;
+                }
+                let empty_object = serde_json::from_str::<Value>(args)
+                    .map(|v| v.as_object().is_some_and(|o| o.is_empty()))
+                    .unwrap_or(false);
+                if empty_object && self.tool_engine.tool_requires_params(name).await {
+                    has_empty_required = true;
+                    break;
+                }
+            }
+        }
+        if truncated_by_limit || has_incomplete_args || has_empty_required {
+            let guidance = if truncated_by_limit {
+                "Tool call was not executed: the response hit the output token limit, \
+                 so its arguments may be truncated. Re-issue the tool call with complete arguments."
+            } else if has_empty_required {
+                "Tool call was not executed: it carried an empty argument object `{}`, but \
+                 this tool requires fields. Re-issue it with every required field filled in \
+                 — never send a bare `{}` placeholder. If you need several calls, emit each \
+                 one with complete arguments."
+            } else {
+                "Tool call was not executed: the provider truncated the argument stream \
+                 mid-generation, so its arguments are incomplete. Re-issue the tool call — \
+                 emit ONE tool call per turn, or shorten long string fields (e.g. message, \
+                 system_prompt) so the full arguments fit in a single response."
+            };
             tracing::warn!(
                 session_id = session_id.id,
                 turn = turn_count,
                 tool_count = tool_calls.len(),
-                "LLM response truncated (finish_reason=length) — tool calls may have incomplete arguments, marking as errors"
+                finish_reason = ?finish_reason,
+                by_token_limit = truncated_by_limit,
+                by_empty_required = has_empty_required,
+                "tool-call arguments incomplete (truncation/empty) — marking all tool \
+                 calls for re-issue, not executing"
             );
             // Push the assistant message WITH tool_calls so that the
             // subsequent tool_result messages have matching tool_use blocks
@@ -58,11 +129,7 @@ impl RuntimeCore {
                     Some(full_text),
                 );
                 for (tc_id, _, _) in &tool_calls {
-                    session.push_tool_result(
-                        tc_id,
-                        "Tool call was not executed: the response hit the output token limit, \
-                         so its arguments may be truncated. Re-issue the tool call with complete arguments.",
-                    );
+                    session.push_tool_result(tc_id, guidance);
                 }
             })
             .await?;
@@ -503,6 +570,24 @@ fn failing_tool_names(tool_calls: &[(String, String, String)], error: &AgentErro
         AgentError::ToolExecution { name, .. } => vec![name.clone()],
         _ => tool_calls.iter().map(|(_, n, _)| n.clone()).collect(),
     }
+}
+
+/// True when a tool call's (valid) JSON arguments are actually a truncation
+/// error wrapper the model echoed back from history, rather than a real call.
+/// Such an object parses fine, so the structural (invalid-JSON) guard can't see
+/// it, but executing it only reproduces a ToolArgsInvalid failure. Detected by
+/// its distinctive marker key (plus the preview field it always carried).
+fn is_truncation_wrapper(args: &Value) -> bool {
+    let obj = match args.as_object() {
+        Some(o) => o,
+        None => return false,
+    };
+    let marker = obj
+        .get("error")
+        .and_then(Value::as_str)
+        .is_some_and(|s| s == "tool_call_arguments_truncated");
+    let preview = obj.contains_key("original_args_preview");
+    marker || (preview && obj.contains_key("message"))
 }
 
 #[cfg(test)]
