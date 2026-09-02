@@ -67,72 +67,102 @@ impl RuntimeCore {
         // execution failure that feeds ConsecutiveFailureRecovery and aborts the
         // run ("failed 3 consecutive times"). Routing them here degrades to a
         // benign retry that never increments the failure counter.
-        let has_incomplete_args = tool_calls.iter().any(|(_id, name, args)| {
-            if name.is_empty() || args.trim().is_empty() {
-                return false;
-            }
-            match serde_json::from_str::<Value>(args) {
-                Err(_) => true,
-                Ok(v) => is_truncation_wrapper(&v),
-            }
-        });
+        // ── Per-call validity check ──
+        // Check each tool_call individually so we can execute the valid ones
+        // and only re-issue the broken ones (instead of discarding the whole batch).
         let truncated_by_limit = finish_reason.is_truncated();
-        // Case 4 — only worth a schema lookup when nothing else flagged the turn
-        // and the arguments are a valid, empty JSON object.
-        let mut has_empty_required = false;
-        if !truncated_by_limit && !has_incomplete_args {
-            for (_id, name, args) in &tool_calls {
-                if name.is_empty() {
-                    continue;
-                }
-                let empty_object = serde_json::from_str::<Value>(args)
-                    .map(|v| v.as_object().is_some_and(|o| o.is_empty()))
-                    .unwrap_or(false);
-                if empty_object && self.tool_engine.tool_requires_params(name).await {
-                    has_empty_required = true;
-                    break;
-                }
+        let mut invalid_indices: Vec<usize> = Vec::new();
+        for (i, (_id, name, args)) in tool_calls.iter().enumerate() {
+            if name.is_empty() || args.trim().is_empty() {
+                continue;
             }
+            let dominated = serde_json::from_str::<Value>(args)
+                .map(|v| is_truncation_wrapper(&v))
+                .unwrap_or(true); // parse failure = truncated
+            if dominated {
+                invalid_indices.push(i);
+                continue;
+            }
+            // Case 4: empty `{}` for a tool with required fields
+            let empty_object = serde_json::from_str::<Value>(args)
+                .map(|v| v.as_object().is_some_and(|o| o.is_empty()))
+                .unwrap_or(false);
+            if empty_object && self.tool_engine.tool_requires_params(name).await {
+                invalid_indices.push(i);
+                continue;
+            }
+            // Valid — no issue found
         }
-        if truncated_by_limit || has_incomplete_args || has_empty_required {
+        // finish_reason=length means the whole stream was cut — mark all as invalid
+        if truncated_by_limit {
+            invalid_indices = (0..tool_calls.len()).collect();
+        }
+
+        if !invalid_indices.is_empty() {
+            let has_valid = invalid_indices.len() < tool_calls.len();
+            let dominated_any = !truncated_by_limit && invalid_indices.iter().any(|&i| {
+                let args = &tool_calls[i].2;
+                serde_json::from_str::<Value>(args)
+                    .map(|v| is_truncation_wrapper(&v) || v.as_object().is_some_and(|o| !o.is_empty()))
+                    .unwrap_or(true)
+            });
+
             let guidance = if truncated_by_limit {
                 "Tool call was not executed: the response hit the output token limit, \
                  so its arguments may be truncated. Re-issue the tool call with complete arguments."
-            } else if has_empty_required {
-                "Tool call was not executed: it carried an empty argument object `{}`, but \
-                 this tool requires fields. Re-issue it with every required field filled in \
-                 — never send a bare `{}` placeholder. If you need several calls, emit each \
-                 one with complete arguments."
-            } else {
+            } else if dominated_any {
                 "Tool call was not executed: the provider truncated the argument stream \
                  mid-generation, so its arguments are incomplete. Re-issue the tool call — \
                  emit ONE tool call per turn, or shorten long string fields (e.g. message, \
                  system_prompt) so the full arguments fit in a single response."
+            } else {
+                "Tool call was not executed: it carried an empty argument object `{}`, but \
+                 this tool requires fields. Re-issue it with every required field filled in \
+                 — never send a bare `{}` placeholder. If you need several calls, emit each \
+                 one with complete arguments."
             };
+
             tracing::warn!(
                 session_id = session_id.id,
                 turn = turn_count,
                 tool_count = tool_calls.len(),
+                invalid_count = invalid_indices.len(),
                 finish_reason = ?finish_reason,
-                by_token_limit = truncated_by_limit,
-                by_empty_required = has_empty_required,
-                "tool-call arguments incomplete (truncation/empty) — marking all tool \
-                 calls for re-issue, not executing"
+                has_valid_calls = has_valid,
+                "some tool-call arguments incomplete — re-issuing invalid, executing valid"
             );
-            // Push the assistant message WITH tool_calls so that the
-            // subsequent tool_result messages have matching tool_use blocks
-            // (required by Anthropic protocol).
+
+            // Push the assistant message WITH all tool_calls (protocol requirement).
             self.with_session_mut(session_id, |session| {
                 session.push_assistant_tool_calls(
                     &tool_calls,
                     Some(reasoning_text),
                     Some(full_text),
                 );
-                for (tc_id, _, _) in &tool_calls {
-                    session.push_tool_result(tc_id, guidance);
+                for &i in &invalid_indices {
+                    session.push_tool_result(&tool_calls[i].0, guidance);
                 }
             })
             .await?;
+
+            if has_valid {
+                // Execute only the valid tool_calls through the normal path.
+                let valid_calls: Vec<(String, String, String)> = tool_calls
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, _)| !invalid_indices.contains(i))
+                    .map(|(_, tc)| tc.clone())
+                    .collect();
+                self.handle_tool_calls(
+                    session_id,
+                    &valid_calls,
+                    event_rx,
+                    on_event,
+                    &String::new(),
+                    &String::new(),
+                )
+                .await?;
+            }
             return Ok(TurnFlow::Continue);
         }
 
