@@ -73,7 +73,14 @@ impl RuntimeCore {
         let truncated_by_limit = finish_reason.is_truncated();
         let mut invalid_indices: Vec<usize> = Vec::new();
         for (i, (_id, name, args)) in tool_calls.iter().enumerate() {
-            if name.is_empty() || args.trim().is_empty() {
+            if name.is_empty() {
+                continue;
+            }
+            // Empty args for a named tool = truncation (provider cut off
+            // before generating any arguments). Treat as invalid so the
+            // truncation guard / circuit breaker handles it.
+            if args.trim().is_empty() {
+                invalid_indices.push(i);
                 continue;
             }
             let dominated = serde_json::from_str::<Value>(args)

@@ -1174,6 +1174,81 @@ async fn truncation_strikes_reset_on_successful_tool_call() {
 }
 
 #[tokio::test]
+async fn empty_args_counted_as_truncation_strike() {
+    // spawn_agent with completely empty arguments (args_len=0) should be
+    // caught by the truncation guard and count toward circuit breaker.
+    let runtime = AgentBuilder::new(Arc::new(ScriptedProvider::new(vec![
+        // Turn 1: spawn_agent with empty args → strike 1
+        vec![
+            StreamChunk::ToolCall(serde_json::json!({
+                "delta": {
+                    "tool_calls": [{
+                        "id": "e1",
+                        "function": { "name": "spawn_agent", "arguments": "" }
+                    }]
+                }
+            })),
+            StreamChunk::Stop { finish_reason: Some("tool_calls".to_string()) },
+        ],
+        // Turn 2: spawn_agent with empty args → strike 2
+        vec![
+            StreamChunk::ToolCall(serde_json::json!({
+                "delta": {
+                    "tool_calls": [{
+                        "id": "e2",
+                        "function": { "name": "spawn_agent", "arguments": "" }
+                    }]
+                }
+            })),
+            StreamChunk::Stop { finish_reason: Some("tool_calls".to_string()) },
+        ],
+        // Turn 3: spawn_agent with empty args → strike 3, circuit breaker redirect
+        vec![
+            StreamChunk::ToolCall(serde_json::json!({
+                "delta": {
+                    "tool_calls": [{
+                        "id": "e3",
+                        "function": { "name": "spawn_agent", "arguments": "" }
+                    }]
+                }
+            })),
+            StreamChunk::Stop { finish_reason: Some("tool_calls".to_string()) },
+        ],
+        // Turn 4: text response → done
+        vec![
+            StreamChunk::Text("Done.".to_string()),
+            StreamChunk::Stop { finish_reason: Some("stop".to_string()) },
+        ],
+    ])))
+    .system_prompt("test")
+    .register_tool(SpawnLikeTool)
+    .build()
+    .expect("build");
+
+    let sid = runtime.create_session().await;
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let ec = events.clone();
+    let result = runtime
+        .run_turn(sid.clone(), "do something", move |e| {
+            ec.lock().unwrap().push(e);
+            Ok(())
+        })
+        .await;
+
+    assert!(result.is_ok(), "run_turn should not error: {:?}", result.err());
+    let outcome = result.unwrap();
+    assert!(
+        matches!(outcome, RunOutcome::Completed),
+        "expected Completed after redirect, got {:?}",
+        outcome,
+    );
+
+    // Verify the circuit breaker fired (strikes should be 3)
+    let session = runtime.session(&sid).await.expect("session");
+    assert_eq!(session.run_state.truncation_strikes, 3);
+}
+
+#[tokio::test]
 async fn run_managed_processes_follow_up_messages() {
     // ScriptedProvider: first call returns text "done", second call (triggered
     // by follow-up) returns "follow-up done". run_managed should process both.
