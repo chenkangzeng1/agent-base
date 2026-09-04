@@ -47,6 +47,13 @@ pub struct GuardCtx {
     pub reasoning_only_strikes: usize,
     pub empty_response_strikes: usize,
     pub run_has_tool_calls: bool,
+    /// The most recent assistant tool calls were ALL rejected before
+    /// execution (truncated/invalid arguments) and the model was told to
+    /// re-issue them (`RunState.truncation_strikes > 0`). While this is
+    /// true, a text-only response cannot be task completion — the work the
+    /// text describes was never executed (session 20260904_efad759c: a
+    /// fabricated success narrative passed the completion judge).
+    pub last_tool_calls_invalid: bool,
     /// All user messages in the current session, ordered oldest-first.
     /// Guards can use this to reconstruct full conversation context
     /// (e.g. "继续" after a multi-turn discussion).

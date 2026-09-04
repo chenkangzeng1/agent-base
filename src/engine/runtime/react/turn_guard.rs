@@ -58,9 +58,10 @@ impl RuntimeCore {
                     s.run_state.empty_response_strikes,
                     s.run_state.run_has_tool_calls,
                     s.run_state.original_thinking_enabled,
+                    s.run_state.truncation_strikes > 0,
                 )
             })
-            .unwrap_or((0, 0, false, false));
+            .unwrap_or((0, 0, false, false, false));
 
         GuardCtx {
             session_id: turn_ctx.session_id.clone(),
@@ -72,6 +73,7 @@ impl RuntimeCore {
             reasoning_only_strikes: session_data.0,
             empty_response_strikes: session_data.1,
             run_has_tool_calls: session_data.2,
+            last_tool_calls_invalid: session_data.4,
             all_user_inputs: turn_ctx.all_user_inputs.to_vec(),
             is_reasoning_only,
             is_empty_response,
@@ -175,6 +177,7 @@ mod tests {
             reasoning_only_strikes: 0,
             empty_response_strikes: 0,
             run_has_tool_calls: false,
+            last_tool_calls_invalid: false,
             all_user_inputs: vec!["test".to_string()],
             is_reasoning_only: false,
             is_empty_response: false,
@@ -201,6 +204,7 @@ mod tests {
             reasoning_only_strikes: 1,
             empty_response_strikes: 0,
             run_has_tool_calls: false,
+            last_tool_calls_invalid: false,
             all_user_inputs: vec!["test".to_string()],
             is_reasoning_only: true,
             is_empty_response: false,
@@ -231,6 +235,7 @@ mod tests {
             reasoning_only_strikes: 0,
             empty_response_strikes: 0,
             run_has_tool_calls: false,
+            last_tool_calls_invalid: false,
             all_user_inputs: vec!["test".to_string()],
             is_reasoning_only: false,
             is_empty_response: false,
