@@ -214,7 +214,12 @@ impl LlmEngine {
                                 tracing::info!(session_id = session_id.id, ?ttft, "LLM first token received");
                                 first_token = false;
                             }
-                            if !text.is_empty() && !aggregator.is_tool_call {
+                            // Emit unconditionally: some providers interleave
+                            // text between/after tool_call chunks. Suppressing
+                            // on is_tool_call hides real content from the user
+                            // while aggregator.full_text still feeds the model
+                            // context — user sees ≠ model sees.
+                            if !text.is_empty() {
                                 self.event_bus.emit(RuntimeEvent::TextDelta {
                                     session_id: session_id.clone(),
                                     text: text.clone(),
@@ -227,7 +232,9 @@ impl LlmEngine {
                         Ok(StreamChunk::Thought(text)) => {
                             tracing::debug!(session_id = session_id.id, len = text.len(), "llm thought chunk");
                             aggregator.reasoning_text.push_str(&text);
-                            if !text.is_empty() && !aggregator.is_tool_call {
+                            // Same as TextDelta: never suppress on is_tool_call —
+                            // thought chunks after tool_call chunks are real.
+                            if !text.is_empty() {
                                 self.event_bus.emit(RuntimeEvent::ThoughtDelta {
                                     session_id: session_id.clone(),
                                     text,
@@ -702,6 +709,67 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn process_stream_emits_text_after_tool_call_chunks() {
+        // Regression: the old gate `!aggregator.is_tool_call` suppressed every
+        // TextDelta/ThoughtDelta after the first tool_call chunk, but
+        // aggregator.full_text still accumulated them — the user saw nothing
+        // while the model context carried the text (user sees ≠ model sees,
+        // session 20260904_efad759c: 2935 chars of prose rendered nowhere).
+        let bus = EventBus::new(16);
+        let engine = LlmEngine::new(Arc::new(StubProvider("x")), bus.clone());
+        let chunks = vec![
+            Ok(StreamChunk::Text("before".into())),
+            Ok(StreamChunk::ToolCall(serde_json::json!({
+                "delta": { "tool_calls": [
+                    { "index": 0, "id": "call_1", "function": { "name": "shell", "arguments": "{}" } }
+                ] }
+            }))),
+            Ok(StreamChunk::Text("interleaved".into())),
+            Ok(StreamChunk::Thought("late thought".into())),
+        ];
+        let stream = Box::pin(futures_util::stream::iter(chunks));
+        let mut rx = bus.subscribe();
+        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let events_clone = events.clone();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let result = engine
+            .process_stream(
+                &SessionId::new(1),
+                stream,
+                tracing::Span::none(),
+                &mut rx,
+                std::sync::Arc::new(std::sync::Mutex::new(move |e| {
+                    events_clone.lock().unwrap().push(e);
+                    Ok(())
+                })),
+                &cancel,
+            )
+            .await
+            .unwrap();
+
+        assert!(result.is_tool_call);
+        assert_eq!(result.full_text, "beforeinterleaved");
+
+        let events = events.lock().unwrap();
+        let texts: Vec<&str> = events
+            .iter()
+            .filter_map(|e| match e {
+                RuntimeEvent::TextDelta { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(texts, vec!["before", "interleaved"]);
+        let thoughts: Vec<&str> = events
+            .iter()
+            .filter_map(|e| match e {
+                RuntimeEvent::ThoughtDelta { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(thoughts, vec!["late thought"]);
+    }
+
+    #[tokio::test]
     async fn process_stream_flags_reasoning_only_without_promoting() {
         let bus = EventBus::new(16);
         let engine = LlmEngine::new(Arc::new(StubProvider("x")), bus.clone());
@@ -1005,52 +1073,6 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result.finish_reason.as_deref(), Some("length"));
-    }
-
-    #[tokio::test]
-    async fn process_stream_text_and_thought_while_tool_call_skip_emit() {
-        let bus = EventBus::new(16);
-        let engine = LlmEngine::new(Arc::new(StubProvider("x")), bus.clone());
-        let chunks = vec![
-            Ok(StreamChunk::ToolCall(serde_json::json!({
-                "delta": { "tool_calls": [
-                    { "index": 0, "id": "c1", "function": { "name": "t", "arguments": "{}" } }
-                ] }
-            }))),
-            Ok(StreamChunk::Text("ignored".into())),
-            Ok(StreamChunk::Thought("thinking".into())),
-        ];
-        let stream = Box::pin(futures_util::stream::iter(chunks));
-        let mut rx = bus.subscribe();
-        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
-        let events_clone = events.clone();
-        let cancel = tokio_util::sync::CancellationToken::new();
-        let result = engine
-            .process_stream(
-                &SessionId::new(1),
-                stream,
-                tracing::Span::none(),
-                &mut rx,
-                std::sync::Arc::new(std::sync::Mutex::new(move |e| {
-                    events_clone.lock().unwrap().push(e);
-                    Ok(())
-                })),
-                &cancel,
-            )
-            .await
-            .unwrap();
-
-        // Text/Thought are accumulated but NOT emitted once a tool call started.
-        assert_eq!(result.full_text, "ignored");
-        assert_eq!(result.reasoning_text, "thinking");
-        let events = events.lock().unwrap();
-        assert!(
-            events.iter().all(|e| !matches!(
-                e,
-                RuntimeEvent::TextDelta { .. } | RuntimeEvent::ThoughtDelta { .. }
-            )),
-            "no Text/Thought deltas expected, got {events:?}"
-        );
     }
 
     #[test]
