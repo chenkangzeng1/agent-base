@@ -454,7 +454,11 @@ async fn truncation_guard_blocks_tool_calls_on_finish_tool_calls_mimo() {
         })
         .await;
 
-    assert!(result.is_ok(), "run_turn should complete: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "run_turn should complete: {:?}",
+        result.err()
+    );
 
     let session = runtime.session(&sid).await.expect("session exists");
     let messages = session.chat_messages().to_vec();
@@ -546,7 +550,11 @@ async fn truncation_guard_recognizes_wrapper_echo() {
             Ok(())
         })
         .await;
-    assert!(result.is_ok(), "run_turn should complete: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "run_turn should complete: {:?}",
+        result.err()
+    );
 
     let session = runtime.session(&sid).await.expect("session exists");
     let messages = session.chat_messages().to_vec();
@@ -561,7 +569,10 @@ async fn truncation_guard_recognizes_wrapper_echo() {
     assert!(
         has_reissue,
         "echoed wrapper args must be routed to the re-issue guard. Messages: {:#?}",
-        messages.iter().map(|m| format!("{:?}", m)).collect::<Vec<_>>()
+        messages
+            .iter()
+            .map(|m| format!("{:?}", m))
+            .collect::<Vec<_>>()
     );
 
     let has_args_invalid = messages.iter().any(|m| {
@@ -571,7 +582,10 @@ async fn truncation_guard_recognizes_wrapper_echo() {
     assert!(
         !has_args_invalid,
         "echoed wrapper must not reach tool execution. Messages: {:#?}",
-        messages.iter().map(|m| format!("{:?}", m)).collect::<Vec<_>>()
+        messages
+            .iter()
+            .map(|m| format!("{:?}", m))
+            .collect::<Vec<_>>()
     );
 }
 
@@ -685,7 +699,11 @@ async fn truncation_guard_blocks_empty_args_for_required_field_tool() {
         })
         .await;
 
-    assert!(result.is_ok(), "run_turn should complete: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "run_turn should complete: {:?}",
+        result.err()
+    );
 
     let session = runtime.session(&sid).await.expect("session exists");
     let messages = session.chat_messages().to_vec();
@@ -772,7 +790,11 @@ async fn no_arg_tool_with_empty_object_args_executes_normally() {
         })
         .await;
 
-    assert!(result.is_ok(), "run_turn should complete: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "run_turn should complete: {:?}",
+        result.err()
+    );
 
     let session = runtime.session(&sid).await.expect("session exists");
     let messages = session.chat_messages().to_vec();
@@ -857,7 +879,12 @@ async fn partial_execution_valid_calls_execute_invalid_get_guidance() {
     let sid = runtime.create_session().await;
     let events = Arc::new(Mutex::new(Vec::new()));
     let ec = events.clone();
-    let result = runtime.run_turn(sid.clone(), "spawn three", move |e| { ec.lock().unwrap().push(e); Ok(()) }).await;
+    let result = runtime
+        .run_turn(sid.clone(), "spawn three", move |e| {
+            ec.lock().unwrap().push(e);
+            Ok(())
+        })
+        .await;
     assert!(result.is_ok(), "run_turn failed: {:?}", result.err());
 
     let session = runtime.session(&sid).await.expect("session");
@@ -867,20 +894,39 @@ async fn partial_execution_valid_calls_execute_invalid_get_guidance() {
     let has_reissue = messages.iter().any(|m| {
         if let ChatMessage::Tool { content, .. } = m {
             content.contains("incomplete")
-        } else { false }
+        } else {
+            false
+        }
     });
-    assert!(has_reissue, "truncated call must get guidance. Messages: {:#?}",
-        messages.iter().map(|m| format!("{:?}", m)).collect::<Vec<_>>());
+    assert!(
+        has_reissue,
+        "truncated call must get guidance. Messages: {:#?}",
+        messages
+            .iter()
+            .map(|m| format!("{:?}", m))
+            .collect::<Vec<_>>()
+    );
 
     // call_1 and call_3 must have executed (got "spawned" results)
-    let spawned_count = messages.iter().filter(|m| {
-        if let ChatMessage::Tool { content, .. } = m {
-            content.contains("spawned")
-        } else { false }
-    }).count();
-    assert_eq!(spawned_count, 2,
+    let spawned_count = messages
+        .iter()
+        .filter(|m| {
+            if let ChatMessage::Tool { content, .. } = m {
+                content.contains("spawned")
+            } else {
+                false
+            }
+        })
+        .count();
+    assert_eq!(
+        spawned_count,
+        2,
         "exactly 2 valid calls must execute. Messages: {:#?}",
-        messages.iter().map(|m| format!("{:?}", m)).collect::<Vec<_>>());
+        messages
+            .iter()
+            .map(|m| format!("{:?}", m))
+            .collect::<Vec<_>>()
+    );
 }
 
 #[tokio::test]
@@ -911,7 +957,12 @@ async fn partial_execution_all_valid_no_guard() {
     let sid = runtime.create_session().await;
     let events = Arc::new(Mutex::new(Vec::new()));
     let ec = events.clone();
-    let result = runtime.run_turn(sid.clone(), "spawn three", move |e| { ec.lock().unwrap().push(e); Ok(()) }).await;
+    let result = runtime
+        .run_turn(sid.clone(), "spawn three", move |e| {
+            ec.lock().unwrap().push(e);
+            Ok(())
+        })
+        .await;
     assert!(result.is_ok(), "run_turn failed: {:?}", result.err());
 
     let session = runtime.session(&sid).await.expect("session");
@@ -921,17 +972,39 @@ async fn partial_execution_all_valid_no_guard() {
     let has_reissue = messages.iter().any(|m| {
         if let ChatMessage::Tool { content, .. } = m {
             content.contains("Tool call was not executed")
-        } else { false }
+        } else {
+            false
+        }
     });
-    assert!(!has_reissue, "all valid calls must not trigger guard. Messages: {:#?}",
-        messages.iter().map(|m| format!("{:?}", m)).collect::<Vec<_>>());
+    assert!(
+        !has_reissue,
+        "all valid calls must not trigger guard. Messages: {:#?}",
+        messages
+            .iter()
+            .map(|m| format!("{:?}", m))
+            .collect::<Vec<_>>()
+    );
 
     // All 3 should have "spawned" results
-    let spawned_count = messages.iter().filter(|m| {
-        if let ChatMessage::Tool { content, .. } = m { content.contains("spawned") } else { false }
-    }).count();
-    assert_eq!(spawned_count, 3, "all 3 must execute. Messages: {:#?}",
-        messages.iter().map(|m| format!("{:?}", m)).collect::<Vec<_>>());
+    let spawned_count = messages
+        .iter()
+        .filter(|m| {
+            if let ChatMessage::Tool { content, .. } = m {
+                content.contains("spawned")
+            } else {
+                false
+            }
+        })
+        .count();
+    assert_eq!(
+        spawned_count,
+        3,
+        "all 3 must execute. Messages: {:#?}",
+        messages
+            .iter()
+            .map(|m| format!("{:?}", m))
+            .collect::<Vec<_>>()
+    );
 }
 
 #[tokio::test]
@@ -963,7 +1036,12 @@ async fn partial_execution_mixed_truncation_and_empty_required() {
     let sid = runtime.create_session().await;
     let events = Arc::new(Mutex::new(Vec::new()));
     let ec = events.clone();
-    let result = runtime.run_turn(sid.clone(), "spawn mixed", move |e| { ec.lock().unwrap().push(e); Ok(()) }).await;
+    let result = runtime
+        .run_turn(sid.clone(), "spawn mixed", move |e| {
+            ec.lock().unwrap().push(e);
+            Ok(())
+        })
+        .await;
     assert!(result.is_ok(), "run_turn failed: {:?}", result.err());
 
     let session = runtime.session(&sid).await.expect("session");
@@ -973,26 +1051,60 @@ async fn partial_execution_mixed_truncation_and_empty_required() {
     let has_trunc_guidance = messages.iter().any(|m| {
         if let ChatMessage::Tool { content, .. } = m {
             content.contains("incomplete") || content.contains("truncated")
-        } else { false }
+        } else {
+            false
+        }
     });
-    assert!(has_trunc_guidance, "must have truncation guidance. Messages: {:#?}",
-        messages.iter().map(|m| format!("{:?}", m)).collect::<Vec<_>>());
+    assert!(
+        has_trunc_guidance,
+        "must have truncation guidance. Messages: {:#?}",
+        messages
+            .iter()
+            .map(|m| format!("{:?}", m))
+            .collect::<Vec<_>>()
+    );
 
     // Valid call (c_ok) must have executed
-    let spawned_count = messages.iter().filter(|m| {
-        if let ChatMessage::Tool { content, .. } = m { content.contains("spawned") } else { false }
-    }).count();
-    assert_eq!(spawned_count, 1, "only valid call executes. Messages: {:#?}",
-        messages.iter().map(|m| format!("{:?}", m)).collect::<Vec<_>>());
+    let spawned_count = messages
+        .iter()
+        .filter(|m| {
+            if let ChatMessage::Tool { content, .. } = m {
+                content.contains("spawned")
+            } else {
+                false
+            }
+        })
+        .count();
+    assert_eq!(
+        spawned_count,
+        1,
+        "only valid call executes. Messages: {:#?}",
+        messages
+            .iter()
+            .map(|m| format!("{:?}", m))
+            .collect::<Vec<_>>()
+    );
 
     // 2 invalid calls should have guidance results
-    let guidance_count = messages.iter().filter(|m| {
-        if let ChatMessage::Tool { content, .. } = m {
-            content.contains("Tool call was not executed")
-        } else { false }
-    }).count();
-    assert_eq!(guidance_count, 2, "2 invalid calls get guidance. Messages: {:#?}",
-        messages.iter().map(|m| format!("{:?}", m)).collect::<Vec<_>>());
+    let guidance_count = messages
+        .iter()
+        .filter(|m| {
+            if let ChatMessage::Tool { content, .. } = m {
+                content.contains("Tool call was not executed")
+            } else {
+                false
+            }
+        })
+        .count();
+    assert_eq!(
+        guidance_count,
+        2,
+        "2 invalid calls get guidance. Messages: {:#?}",
+        messages
+            .iter()
+            .map(|m| format!("{:?}", m))
+            .collect::<Vec<_>>()
+    );
 }
 
 #[tokio::test]
@@ -1076,7 +1188,11 @@ async fn truncation_circuit_breaker_redirects_then_hard_stops() {
         })
         .await;
 
-    assert!(result.is_ok(), "run_turn should not error: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "run_turn should not error: {:?}",
+        result.err()
+    );
     let outcome = result.unwrap();
     match &outcome {
         RunOutcome::Failed { error } => {
@@ -1158,7 +1274,11 @@ async fn truncation_strikes_reset_on_successful_tool_call() {
         })
         .await;
 
-    assert!(result.is_ok(), "run_turn should not error: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "run_turn should not error: {:?}",
+        result.err()
+    );
     let outcome = result.unwrap();
     // Should complete normally (not Failed) because strikes were reset by the valid call
     assert!(
@@ -1188,7 +1308,9 @@ async fn empty_args_counted_as_truncation_strike() {
                     }]
                 }
             })),
-            StreamChunk::Stop { finish_reason: Some("tool_calls".to_string()) },
+            StreamChunk::Stop {
+                finish_reason: Some("tool_calls".to_string()),
+            },
         ],
         // Turn 2: spawn_agent with empty args → strike 2
         vec![
@@ -1200,7 +1322,9 @@ async fn empty_args_counted_as_truncation_strike() {
                     }]
                 }
             })),
-            StreamChunk::Stop { finish_reason: Some("tool_calls".to_string()) },
+            StreamChunk::Stop {
+                finish_reason: Some("tool_calls".to_string()),
+            },
         ],
         // Turn 3: spawn_agent with empty args → strike 3, circuit breaker redirect
         vec![
@@ -1212,12 +1336,16 @@ async fn empty_args_counted_as_truncation_strike() {
                     }]
                 }
             })),
-            StreamChunk::Stop { finish_reason: Some("tool_calls".to_string()) },
+            StreamChunk::Stop {
+                finish_reason: Some("tool_calls".to_string()),
+            },
         ],
         // Turn 4: text response → done
         vec![
             StreamChunk::Text("Done.".to_string()),
-            StreamChunk::Stop { finish_reason: Some("stop".to_string()) },
+            StreamChunk::Stop {
+                finish_reason: Some("stop".to_string()),
+            },
         ],
     ])))
     .system_prompt("test")
@@ -1235,7 +1363,11 @@ async fn empty_args_counted_as_truncation_strike() {
         })
         .await;
 
-    assert!(result.is_ok(), "run_turn should not error: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "run_turn should not error: {:?}",
+        result.err()
+    );
     let outcome = result.unwrap();
     assert!(
         matches!(outcome, RunOutcome::Completed),

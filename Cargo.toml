@@ -3,7 +3,7 @@ members = ["crates/agent-types"]
 
 [package]
 name = "agent-base"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2024"
 description = "A lightweight Agent Runtime Kernel for building AI agents in Rust"
 license = "MIT"
@@ -13,7 +13,7 @@ keywords = ["agent", "ai", "llm", "runtime", "tool-calling"]
 categories = ["development-tools", "asynchronous"]
 
 [dependencies]
-agent-types = { path = "crates/agent-types" }
+agent-types = { version = "0.1.1" }
 anyhow = "1"
 llm-trait = "0.1.1"
 llm-unified = "0.1.1"

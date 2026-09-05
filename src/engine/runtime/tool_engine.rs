@@ -9,7 +9,8 @@ use crate::engine::recovery::ToolErrorRecovery;
 use crate::engine::runtime::event_bus::EventBus;
 use crate::engine::runtime::session_manager::SessionManager;
 use crate::tool::{
-    ActivationContext, Content, ToolContext, ToolPolicy, ToolRegistry, content_details, content_text,
+    ActivationContext, Content, ToolContext, ToolPolicy, ToolRegistry, content_details,
+    content_text,
 };
 use crate::types::{AgentError, AgentResult, Language, RuntimeEvent, SessionId, UserEvent};
 
@@ -375,7 +376,7 @@ impl ToolEngine {
                     agent_id: None,
                     trace_id: None,
                     denied: true,
-                            details: None,
+                    details: None,
                 });
                 let _ = {
                     let mut cb = on_event.lock().unwrap();
@@ -616,7 +617,7 @@ impl ToolEngine {
         args: &Value,
         tool_args_json: &str,
         ctx: &ExecutionContext,
-        event_rx: &mut broadcast::Receiver<RuntimeEvent>,
+        _event_rx: &mut broadcast::Receiver<RuntimeEvent>,
         on_event: Arc<Mutex<F>>,
     ) -> AgentResult<ToolExecutionResult>
     where
@@ -1370,8 +1371,16 @@ mod tests {
         // Each tool should produce exactly one started + one finished = 4 total.
         let started: Vec<_> = ev.iter().filter(|e| e.starts_with("started:")).collect();
         let finished: Vec<_> = ev.iter().filter(|e| e.starts_with("finished:")).collect();
-        assert_eq!(started.len(), 2, "expected 2 ToolCallStarted, got {started:?}");
-        assert_eq!(finished.len(), 2, "expected 2 ToolCallFinished, got {finished:?}");
+        assert_eq!(
+            started.len(),
+            2,
+            "expected 2 ToolCallStarted, got {started:?}"
+        );
+        assert_eq!(
+            finished.len(),
+            2,
+            "expected 2 ToolCallFinished, got {finished:?}"
+        );
     }
 
     #[tokio::test]

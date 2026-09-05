@@ -24,4 +24,6 @@ pub use guard::{GuardCtx, GuardDecision};
 pub use message::MessageRole;
 pub use plan::{PlanItem, PlanStepStatus, UpdatePlanArgs};
 pub use session::SessionId;
-pub use tool::{ActivationContext, Content, ToolExposure, ToolMetadata, content_details, content_text};
+pub use tool::{
+    ActivationContext, Content, ToolExposure, ToolMetadata, content_details, content_text,
+};

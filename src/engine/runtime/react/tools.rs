@@ -172,9 +172,7 @@ impl RuntimeCore {
                     session.run_state.record_truncation();
                 })
                 .await?;
-                return Ok(TurnFlow::Done(RunOutcome::Failed {
-                    error: error_msg,
-                }));
+                return Ok(TurnFlow::Done(RunOutcome::Failed { error: error_msg }));
             }
 
             if !has_valid && strikes_after >= TRUNCATION_STRIKE_LIMIT {
@@ -281,15 +279,8 @@ impl RuntimeCore {
                     .filter(|(i, _)| !invalid_indices.contains(i))
                     .map(|(_, tc)| tc.clone())
                     .collect();
-                self.handle_tool_calls(
-                    session_id,
-                    &valid_calls,
-                    event_rx,
-                    on_event,
-                    &String::new(),
-                    &String::new(),
-                )
-                .await?;
+                self.handle_tool_calls(session_id, &valid_calls, event_rx, on_event, "", "")
+                    .await?;
                 // Valid calls executed — reset truncation counter.
                 self.with_session_mut(session_id, |session| {
                     session.run_state.truncation_strikes = 0;
@@ -529,7 +520,7 @@ impl RuntimeCore {
                     agent_id: None,
                     trace_id: None,
                     denied: false,
-                            details: None,
+                    details: None,
                 });
                 self.with_session_mut(session_id, |session| {
                     session.close_dangling_tool_calls(&error_summary);
@@ -594,7 +585,7 @@ impl RuntimeCore {
                     agent_id: None,
                     trace_id: None,
                     denied: false,
-                            details: None,
+                    details: None,
                 });
 
                 self.with_session_mut(session_id, |session| {

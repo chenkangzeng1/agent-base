@@ -18,7 +18,9 @@ pub use update_plan::UpdatePlanTool;
 pub use policy::{DenyAllToolPolicy, ToolDecision, ToolPolicy};
 
 // Re-export pure types from agent-types
-pub use agent_types::{ActivationContext, Content, ToolExposure, ToolMetadata, content_details, content_text};
+pub use agent_types::{
+    ActivationContext, Content, ToolExposure, ToolMetadata, content_details, content_text,
+};
 
 #[derive(Clone)]
 pub struct ToolContext {
